@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from backend.config import HarnessSettings
+from camel_harness.harness.config import HarnessSettings
 
 
 def test_default_session_directory_is_global() -> None:

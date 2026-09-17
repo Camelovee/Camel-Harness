@@ -1,6 +1,6 @@
 import pytest
 
-from backend.agent import AgentOptions, AgentRun, RunStatus, StopReason
+from camel_harness import AgentOptions, AgentRun, RunStatus, StopReason
 
 
 def test_agent_run_enforces_step_limit() -> None:

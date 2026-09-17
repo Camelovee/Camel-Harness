@@ -3,8 +3,8 @@ from typing import cast
 
 import pytest
 
-from backend.api import HttpDependencies, create_router
-from backend.harness import Harness
+from camel_harness.backend.api import HttpDependencies, create_router
+from camel_harness.harness import Harness
 
 
 def test_http_router_keeps_public_endpoints_after_module_split() -> None:

@@ -1,4 +1,4 @@
-from backend.types import (
+from camel_harness.types import (
     Message,
     MessageRole,
     TextBlock,

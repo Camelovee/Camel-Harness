@@ -1,7 +1,7 @@
 import json
 
-from backend.agent import AgentStreamEvent, AgentStreamEventType
-from backend.api.sse import encode_sse, stream_sse
+from camel_harness import AgentStreamEvent, AgentStreamEventType
+from camel_harness.backend.api.sse import encode_sse, stream_sse
 
 
 def _event(sequence: int, text: str) -> AgentStreamEvent:

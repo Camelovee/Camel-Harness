@@ -1,7 +1,7 @@
-from backend.tools import ToolExecutor, ToolRegistry
-from backend.tools.builtin import BuiltinToolProvider
-from backend.tools.jsonschema_validator import validate_tool_arguments
-from backend.types import Tool, ToolCall, ToolContext, ToolResult
+from camel_harness.harness.tools.builtin import BuiltinToolProvider
+from camel_harness.tools import ToolExecutor, ToolRegistry
+from camel_harness.tools.jsonschema_validator import validate_tool_arguments
+from camel_harness.types import Tool, ToolCall, ToolContext, ToolResult
 
 
 class DeferredTool(Tool):

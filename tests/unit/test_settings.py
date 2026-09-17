@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from backend.config import HarnessSettings
+from camel_harness.harness.config import HarnessSettings
 
 
 def test_anthropic_is_default_provider() -> None:

@@ -1,20 +1,21 @@
 from collections.abc import AsyncIterator
 
-from backend.agent import Agent, AgentLoop, AgentOptions, AgentStreamEventType
-from backend.compaction import CompactionEngine, ContextManager
-from backend.harness import Harness
-from backend.llm import (
+from camel_harness import Agent, AgentLoop, AgentOptions, AgentStreamEventType
+from camel_harness.harness import Harness
+from camel_harness.harness.compaction import CompactionEngine, ContextManager
+from camel_harness.harness.session import SessionManager
+from camel_harness.harness.session.jsonl import JsonlSessionStorage
+from camel_harness.harness.tools import McpManager
+from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
 )
-from backend.session import SessionManager
-from backend.session.jsonl import JsonlSessionStorage
-from backend.tools import McpManager, ToolExecutor, ToolRegistry
-from backend.tools.jsonschema_validator import validate_tool_arguments
-from backend.types import MessageRole
+from camel_harness.tools import ToolExecutor, ToolRegistry
+from camel_harness.tools.jsonschema_validator import validate_tool_arguments
+from camel_harness.types import MessageRole
 
 
 class TwoChunkLlm(LlmAdapter):

@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from backend.session import SessionManager
-from backend.session.jsonl import JsonlSessionStorage
-from backend.types import Message, MessageRole
+from camel_harness.harness.session import SessionManager
+from camel_harness.harness.session.jsonl import JsonlSessionStorage
+from camel_harness.types import Message, MessageRole
 
 
 async def test_session_metadata_crud_and_file_layout(tmp_path) -> None:

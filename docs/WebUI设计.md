@@ -24,7 +24,7 @@ WebUI 不是 CLI 的简单搬运，而是一个“本地工作区工作台”：
 
 ## 3. 后端边界
 
-FastAPI 位于 `backend.api`，只负责请求校验、状态码、CORS 和 SSE 输出；产品级编排由 `backend.harness.Harness` 完成，低层循环位于 `backend.agent.agent_loop`，运行时装配位于 `backend.runtime`。浏览器不得直接接触 Provider、SessionStorage 或 SDK 类型。
+FastAPI 位于 `camel_harness.backend.api`，只负责请求校验、状态码、CORS 和 SSE 输出；产品级编排由 `camel_harness.harness.Harness` 完成，低层循环位于 `camel_harness.agent_loop`，运行时装配位于 `camel_harness.harness.runtime`。浏览器不得直接接触 Provider、Session 存储或 SDK 类型。
 
 HTTP 内部按四类职责封装：`router.py` 只负责聚合；`routes/` 按资源注册端点；`contracts.py` 维护 Pydantic 请求模型；`responses.py` 统一 SSE 响应。启动期由 `HttpDependencies` 一次性发布完整 Harness，路由统一通过 `require()` 获取，不再维护第二套 ApplicationService 和 DTO。路由文件不承担应用生命周期或事件帧编码。
 

@@ -1,29 +1,28 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from backend.agent import Agent, AgentLoop, AgentOptions, AgentStreamEventType
-from backend.compaction import CompactionEngine, ContextManager
-from backend.harness import Harness
-from backend.llm import (
+from camel_harness import Agent, AgentLoop, AgentOptions, AgentStreamEventType
+from camel_harness.backend.approval import WebApproval
+from camel_harness.harness import Harness
+from camel_harness.harness.compaction import CompactionEngine, ContextManager
+from camel_harness.harness.session import SessionManager
+from camel_harness.harness.session.jsonl import JsonlSessionStorage
+from camel_harness.harness.tools.builtin import BuiltinToolProvider
+from camel_harness.harness.tools.mcp import McpManager
+from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
 )
-from backend.session import SessionManager
-from backend.session.jsonl import JsonlSessionStorage
-from backend.tools import (
-    DefaultPermissionPolicy,
-    McpManager,
+from camel_harness.tools import (
     PermissionService,
     ToolExecutor,
     ToolRegistry,
-    WebApproval,
 )
-from backend.tools.builtin import BuiltinToolProvider
-from backend.tools.jsonschema_validator import validate_tool_arguments
-from backend.types import PermissionMode
+from camel_harness.tools.jsonschema_validator import validate_tool_arguments
+from camel_harness.types import PermissionMode
 
 
 class FakeLlm(LlmAdapter):
@@ -185,7 +184,7 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
     approval = WebApproval(timeout_seconds=2)
-    permission = PermissionService(DefaultPermissionPolicy(), approval)
+    permission = PermissionService(approval)
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
         AgentOptions("fake", "fake-model"),

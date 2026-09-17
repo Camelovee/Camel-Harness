@@ -2,22 +2,22 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from backend.agent import AgentOptions
-from backend.compaction import (
+from camel_harness import AgentOptions
+from camel_harness.harness.compaction import (
     CompactionEngine,
     CompactionTrigger,
     ContextManager,
 )
-from backend.llm import (
+from camel_harness.harness.resources import ProjectRules
+from camel_harness.harness.session import SessionLog, SessionLogEvent
+from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
 )
-from backend.resources import ProjectRules
-from backend.session import SessionLog, SessionLogEvent
-from backend.types import Message, MessageRole, ReasoningBlock, TextBlock
+from camel_harness.types import Message, MessageRole, ReasoningBlock, TextBlock
 
 _OPTIONS = AgentOptions("fake", "fake-model")
 

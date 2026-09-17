@@ -1,13 +1,13 @@
 from collections.abc import AsyncIterator
 
-from backend.llm import (
+from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
 )
-from backend.types import Message, MessageRole
+from camel_harness.types import Message, MessageRole
 
 
 class FlakyAdapter(LlmAdapter):

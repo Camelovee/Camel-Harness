@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Any, cast
 
-from backend.harness import Harness
-from backend.session import SessionManager
-from backend.session.jsonl import JsonlSessionStorage
+from camel_harness.harness import Harness
+from camel_harness.harness.session import SessionManager
+from camel_harness.harness.session.jsonl import JsonlSessionStorage
 
 
 async def _unused_workspace_picker() -> Path | None:

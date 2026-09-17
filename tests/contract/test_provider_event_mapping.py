@@ -3,16 +3,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.llm import (
+from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
 )
-from backend.llm.anthropic import AnthropicLlmAdapter
-from backend.llm.openai import OpenAiLlmAdapter
-from backend.types import (
+from camel_harness.llm.anthropic import AnthropicLlmAdapter
+from camel_harness.llm.openai import OpenAiLlmAdapter
+from camel_harness.types import (
     Message,
     MessageRole,
     ReasoningBlock,

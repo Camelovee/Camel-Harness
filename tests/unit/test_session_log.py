@@ -1,7 +1,7 @@
 import pytest
 
-from backend.session import SessionLog, SessionLogEvent
-from backend.types import Message, MessageRole, TextBlock
+from camel_harness.harness.session import SessionLog, SessionLogEvent
+from camel_harness.types import Message, MessageRole, TextBlock
 
 
 def test_session_log_replays_append_and_replace_operations() -> None:

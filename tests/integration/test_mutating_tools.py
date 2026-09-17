@@ -1,5 +1,5 @@
-from backend.tools.builtin import EditFileTool, RunShellTool, WriteFileTool
-from backend.types import PermissionMode, ToolCall, ToolContext
+from camel_harness.harness.tools.builtin import EditFileTool, RunShellTool, WriteFileTool
+from camel_harness.types import PermissionMode, ToolCall, ToolContext
 
 
 async def test_write_and_edit_file_stay_in_workspace(tmp_path) -> None:

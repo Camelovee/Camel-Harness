@@ -1,6 +1,6 @@
-from backend.session import SessionManager, SessionMetadata
-from backend.session.jsonl import JsonlSessionStorage
-from backend.types import (
+from camel_harness.harness.session import SessionManager, SessionMetadata
+from camel_harness.harness.session.jsonl import JsonlSessionStorage
+from camel_harness.types import (
     Message,
     MessageRole,
     ToolResultBlock,

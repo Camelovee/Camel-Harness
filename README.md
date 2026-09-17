@@ -2,7 +2,7 @@
 
 Camel Harness 是一个受 pi-agent 启发的 Python Agent Runtime。它提供流式 ReAct 循环、OpenAI/Anthropic Provider、可扩展工具、权限审批、MCP、Skill、Memory、子 Agent、上下文压缩和纯本地 JSONL 会话。
 
-项目不再使用 DDD 和多层 Port/Service 结构，而是围绕三个运行核心组织：
+项目不再使用 DDD 和多层 Port/Service 结构，而是按可复用 Agent、产品 Harness 和两种入口组织：
 
 - `AgentLoop`：只处理 LLM、工具和流事件；
 - `Agent`：保存默认模型与预算配置；
@@ -11,24 +11,22 @@ Camel Harness 是一个受 pi-agent 启发的 Python Agent Runtime。它提供�
 ## 架构
 
 ```text
-API / CLI -> Harness -> Agent -> AgentLoop
-                  |         |-> LLM
-                  |         +-> Tools
-                  +-> Session / Compaction / Resources
+Backend / CLI -> Harness -> Agent -> AgentLoop
+                       |         |-> LLM
+                       |         +-> Tools
+                       +-> Session / Compaction / Resources
 ```
 
 ```text
-backend/
-├── agent/        # Agent、AgentLoop、运行状态和子 Agent
-├── compaction/   # 动态上下文与压缩
-├── llm/          # LlmClient、统一事件和官方 SDK Provider
-├── session/      # SessionManager 与 JSONL 存储
-├── tools/        # 工具注册、执行、权限、插件和 MCP
-├── resources/    # Skill、Memory 和 AGENTS.md
-├── types/        # Message、Tool ABC 和公共值对象
-├── api/          # FastAPI、SSE 和 HTTP 请求模型
-├── harness.py    # 产品级运行门面
-└── runtime.py    # 单一组合模块
+src/camel_harness/
+├── agent.py             # 有状态 Agent 门面
+├── agent_loop.py        # 流式 ReAct 核心循环
+├── llm/                 # 官方 SDK Provider 与规范事件
+├── types/               # Message、Tool ABC 和稳定类型
+├── tools/               # 工具注册、执行和权限核心
+├── harness/             # 会话、压缩、资源、产品工具和编排
+├── backend/             # FastAPI、SSE 与浏览器审批
+└── cli/                 # Typer、终端渲染与命令行审批
 ```
 
 详细设计见 [项目架构](docs/项目架构.md)，开发计划见 [路书](docs/路书.md)。
@@ -112,7 +110,7 @@ npm run dev
 
 ## Tool 定义
 
-`Tool` 位于 `backend.types.tool`，具体工具放在 `backend.tools`：
+`Tool` 位于 `camel_harness.types.tool`，具体产品工具放在 `camel_harness.harness.tools`：
 
 ```python
 class ExampleTool(Tool):
@@ -148,9 +146,9 @@ class ExampleTool(Tool):
 ## 质量检查
 
 ```bash
-uv run ruff format --check backend tests
-uv run ruff check backend tests
-uv run mypy backend
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run mypy src/camel_harness
 uv run pytest -q
 uv run lint-imports
 cd webui && npm run build
