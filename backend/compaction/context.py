@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from backend.agent.options import AgentOptions
+from backend.resources import MemoryStore, ProjectRules, Skills
+from backend.session import SessionLog
+
+from .engine import CompactionEngine
+from .result import CompactionResult, CompactionTrigger
+
+
+class ContextManager:
+    """组装项目规则、Skill 和 Memory，形成一次 Turn 的动态上下文。"""
+
+    def __init__(
+        self,
+        compaction: CompactionEngine,
+        project_rules: ProjectRules | None = None,
+        skills: Skills | None = None,
+        memories: MemoryStore | None = None,
+        max_rules_chars: int = 12_000,
+    ) -> None:
+        if max_rules_chars <= 0:
+            raise ValueError("项目规则最大字符数必须大于 0")
+        self._compaction = compaction
+        self._project_rules = project_rules
+        self._skills = skills
+        self._memories = memories
+        self._max_rules_chars = max_rules_chars
+
+    async def build(self, prompt: str, workspace: Path) -> str:
+        """按需组装项目规则、Skill 摘要和与当前任务相关的 Memory。"""
+
+        rules = await self._project_rules.read(workspace) if self._project_rules else ""
+        skills = await self._skills.discover() if self._skills is not None else ()
+        memories = await self._memories.list() if self._memories is not None else ()
+        sections: list[str] = []
+        if rules:
+            sections.append(f"# 项目规则\n{rules[: self._max_rules_chars]}")
+        if skills:
+            manifest = "\n".join(
+                f"- {item.name} ({item.source.value}): {item.description}" for item in skills
+            )
+            sections.append(f"# 可用 Skills\n{manifest}\n需要时调用 skill_load 获取正文。")
+        if memories:
+            manifest = "\n".join(f"- {item.name}: {item.description}" for item in memories)
+            sections.append(f"# 长期 Memory\n{manifest}\n需要时调用 memory_load 获取正文。")
+            tokens = set(re.findall(r"[\w-]+", prompt.lower()))
+            ranked = sorted(
+                memories,
+                key=lambda item: len(tokens & self._memory_tokens(item.name, item.description)),
+                reverse=True,
+            )
+            relevant = [
+                item
+                for item in ranked[:3]
+                if tokens & self._memory_tokens(item.name, item.description)
+            ]
+            if relevant:
+                content = "\n\n".join(f"## {item.name}\n{item.content[:4000]}" for item in relevant)
+                sections.append(f"# 与当前任务相关的 Memory\n{content}")
+        return "\n\n".join(sections)
+
+    async def compact_if_needed(
+        self,
+        session: SessionLog,
+        turn_id: str,
+        options: AgentOptions,
+        *,
+        trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
+    ) -> CompactionResult | None:
+        """委托所持有的压缩引擎裁剪上下文。"""
+
+        return await self._compaction.compact_if_needed(
+            session,
+            turn_id,
+            options,
+            trigger=trigger,
+        )
+
+    @staticmethod
+    def _memory_tokens(name: str, description: str) -> set[str]:
+        return set(re.findall(r"[\w-]+", f"{name} {description}".lower()))

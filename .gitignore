@@ -1,0 +1,16 @@
+.venv/
+.env
+.camel/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+dist/
+build/
+*.egg-info/
+webui/node_modules/
+webui/*.tsbuildinfo
+webui/vite.config.js
+webui/vite.config.d.ts

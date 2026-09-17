@@ -1,0 +1,129 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import type { Session, Workspace } from "../../shared/model";
+import { createWorkspaceSession, chooseLocalWorkspace, fetchWorkspaces, removeSession } from "./api";
+
+type Options = {
+  onError: (message: string) => void;
+  onStatus: (message: string) => void;
+};
+
+export function useWorkspaceSessions({ onError, onStatus }: Options) {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectingWorkspace, setSelectingWorkspace] = useState(false);
+
+  const activeSession = useMemo(
+    () =>
+      workspaces
+        .flatMap((workspace) => workspace.sessions)
+        .find((session) => session.session_id === activeId),
+    [activeId, workspaces],
+  );
+
+  const refresh = useCallback(
+    async (preferredWorkspace?: string | null, preferredSessionId?: string | null) => {
+      const loaded = await fetchWorkspaces();
+      const allSessions = loaded.flatMap((workspace) => workspace.sessions);
+      setWorkspaces(loaded);
+      setActiveWorkspace((current) => preferredWorkspace ?? current ?? loaded[0]?.workspace ?? null);
+      setActiveId((current) => {
+        if (
+          preferredSessionId &&
+          allSessions.some((session) => session.session_id === preferredSessionId)
+        ) {
+          return preferredSessionId;
+        }
+        if (current && allSessions.some((session) => session.session_id === current)) return current;
+        return allSessions[0]?.session_id ?? null;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void refresh().catch((reason: unknown) =>
+      onError(reason instanceof Error ? reason.message : "加载工作区失败"),
+    );
+  }, [onError, refresh]);
+
+  const createForWorkspace = useCallback(
+    async (workspace: string) => {
+      const session = await createWorkspaceSession(workspace);
+      await refresh(workspace, session.session_id);
+    },
+    [refresh],
+  );
+
+  const selectWorkspace = useCallback(async () => {
+    if (selectingWorkspace) return;
+    onError("");
+    setSelectingWorkspace(true);
+    onStatus("正在打开工作区选择器…");
+    try {
+      const selected = await chooseLocalWorkspace();
+      if (!selected) {
+        onStatus("已取消选择");
+        return;
+      }
+      const existing = workspaces.find((workspace) => workspace.workspace === selected);
+      setActiveWorkspace(selected);
+      setActiveId(existing?.sessions[0]?.session_id ?? null);
+      if (!existing) await createForWorkspace(selected);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "选择工作区失败");
+      onStatus("工作区选择失败");
+    } finally {
+      setSelectingWorkspace(false);
+    }
+  }, [createForWorkspace, onError, onStatus, selectingWorkspace, workspaces]);
+
+  const createSession = useCallback(
+    async (workspace = activeWorkspace) => {
+      if (!workspace) {
+        await selectWorkspace();
+        return;
+      }
+      onError("");
+      try {
+        await createForWorkspace(workspace);
+      } catch (reason) {
+        onError(reason instanceof Error ? reason.message : "创建会话失败");
+      }
+    },
+    [activeWorkspace, createForWorkspace, onError, selectWorkspace],
+  );
+
+  const deleteSession = useCallback(
+    async (session: Pick<Session, "session_id">) => {
+      try {
+        await removeSession(session.session_id);
+        await refresh();
+      } catch (reason) {
+        onError(reason instanceof Error ? reason.message : "删除会话失败");
+      }
+    },
+    [onError, refresh],
+  );
+
+  const activateWorkspace = useCallback((workspace: Workspace) => {
+    setActiveWorkspace(workspace.workspace);
+    setActiveId(workspace.sessions[0]?.session_id ?? null);
+  }, []);
+
+  return {
+    workspaces,
+    activeWorkspace,
+    activeId,
+    activeSession,
+    selectingWorkspace,
+    setActiveWorkspace,
+    setActiveId,
+    refresh,
+    selectWorkspace,
+    createSession,
+    deleteSession,
+    activateWorkspace,
+  };
+}
