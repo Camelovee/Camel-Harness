@@ -2,31 +2,27 @@
 
 Camel Harness 是一个受 pi-agent 启发的 Python Agent Runtime。它提供流式 ReAct 循环、OpenAI/Anthropic Provider、可扩展工具、权限审批、MCP、Skill、Memory、子 Agent、上下文压缩和纯本地 JSONL 会话。
 
-项目不再使用 DDD 和多层 Port/Service 结构，而是按可复用 Agent、产品 Harness 和两种入口组织：
+项目不使用 DDD 和多层 Port/Service 结构，而是将 Agent、LLM 与两种入口按依赖方向组织：
 
-- `AgentLoop`：只处理 LLM、工具和流事件；
-- `Agent`：保存默认模型与预算配置；
-- `Harness`：协调会话、资源、压缩、持久化和入口生命周期。
+- `llm`：规范消息、请求、流事件，以及 OpenAI/Anthropic 适配；
+- `agent_loop()`：无状态低层函数，只处理 LLM、工具、预算和流事件；
+- `Agent`：协调会话、资源、压缩、持久化和外部连接。
 
 ## 架构
 
 ```text
-Backend / CLI -> Harness -> Agent -> AgentLoop
-                       |         |-> LLM
-                       |         +-> Tools
-                       +-> Session / Compaction / Resources
+Backend / CLI -> Agent -> agent_loop() -> LLM
+                   |          +--------> Tools
+                   +-> Session / Compaction / Resources
 ```
 
 ```text
-src/camel_harness/
-├── agent.py             # 有状态 Agent 门面
-├── agent_loop.py        # 流式 ReAct 核心循环
-├── llm/                 # 官方 SDK Provider 与规范事件
-├── types/               # Message、Tool ABC 和稳定类型
-├── tools/               # 工具注册、执行和权限核心
-├── harness/             # 会话、压缩、资源、产品工具和编排
-├── backend/             # FastAPI、SSE 与浏览器审批
-└── cli/                 # Typer、终端渲染与命令行审批
+src/
+├── camel_harness/
+│   ├── llm/             # 独立模型协议与厂商适配
+│   └── agent/           # 完整 Agent、循环、工具与产品能力
+├── camel_backend/       # FastAPI、SSE 与浏览器审批
+└── camel_cli/           # Typer、终端渲染与命令行审批
 ```
 
 详细设计见 [项目架构](docs/项目架构.md)，开发计划见 [路书](docs/路书.md)。
@@ -34,7 +30,10 @@ src/camel_harness/
 ## 已实现能力
 
 - 默认 Anthropic Provider，可切换 OpenAI；两者均使用官方 SDK；
+- 使用 `UserMessage | AssistantMessage | ToolResultMessage` 判别联合，系统提示与会话消息分离；
+- Assistant 消息保留规范化 `stop/length/tool_use` 结束原因，截断的工具参数不会被执行；
 - 文本、thinking 和工具调用的实时流式事件；
+- LLM 协议不携带 Session、Turn、Step 等 Agent 运行坐标，由 `agent_loop()` 在公开事件中统一补齐；
 - 流正常结束后批量追加完整 assistant 消息，不保存 chunk；
 - `Tool` ABC 直接字段式定义，支持内置工具、Python Entry Point 和 MCP；
 - 文件、Shell、Skill、Memory、工具搜索和子 Agent 工具；
@@ -110,7 +109,7 @@ npm run dev
 
 ## Tool 定义
 
-`Tool` 位于 `camel_harness.types.tool`，具体产品工具放在 `camel_harness.harness.tools`：
+`Tool` 位于 `camel_harness.agent.tools`，具体工具也按功能放在该包中：
 
 ```python
 class ExampleTool(Tool):
@@ -139,7 +138,7 @@ class ExampleTool(Tool):
 └── context.jsonl
 ```
 
-- `messages.jsonl`：完整 user、assistant 和 tool 消息；
+- `messages.jsonl`：完整 user、assistant 和 toolResult 消息；
 - `context.jsonl`：Append/Replace 上下文投影；
 - `metadata.json`：名称、工作目录、时间、消息数和归档状态。
 
@@ -148,7 +147,7 @@ class ExampleTool(Tool):
 ```bash
 uv run ruff format --check src tests
 uv run ruff check src tests
-uv run mypy src/camel_harness
+uv run mypy src
 uv run pytest -q
 uv run lint-imports
 cd webui && npm run build

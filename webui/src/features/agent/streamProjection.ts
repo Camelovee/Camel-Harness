@@ -168,7 +168,8 @@ function projectToolResult(
     );
     if (
       withoutApproval.some(
-        (message) => message.role === "tool" && message.content[0]?.call_id === callId,
+        (message) =>
+          message.role === "toolResult" && message.content[0]?.call_id === callId,
       )
     ) {
       return withoutApproval;
@@ -177,7 +178,7 @@ function projectToolResult(
       ...withoutApproval,
       {
         id: `tool-${callId}`,
-        role: "tool",
+        role: "toolResult",
         content: [
           {
             type: "tool_result",

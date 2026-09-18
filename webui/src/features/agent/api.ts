@@ -8,16 +8,54 @@ import type {
 } from "../../shared/model";
 
 export async function fetchConversation(sessionId: string): Promise<Message[]> {
-  const result = await apiJson<{ messages: { role: string; content: ContentBlock[] }[] }>(
-    `/sessions/${sessionId}/messages`,
-  );
+  const result = await apiJson<{ messages: StoredMessage[] }>(`/sessions/${sessionId}/messages`);
   return result.messages
-    .filter((message) => ["user", "assistant", "tool"].includes(message.role))
-    .map((message, index) => ({
-      id: `${message.role}-${index}-${message.content.length}`,
-      role: message.role as Message["role"],
+    .map(projectStoredMessage)
+    .filter((message): message is Message => message !== null);
+}
+
+type StoredMessage =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: ContentBlock[] }
+  | {
+      role: "toolResult";
+      tool_call_id: string;
+      tool_name: string;
+      content: string;
+      is_error: boolean;
+    };
+
+function projectStoredMessage(message: StoredMessage, index: number): Message | null {
+  if (message.role === "user") {
+    return {
+      id: `user-${index}-${message.content.length}`,
+      role: "user",
+      content: [{ type: "text", text: message.content }],
+    };
+  }
+  if (message.role === "assistant") {
+    return {
+      id: `assistant-${index}-${message.content.length}`,
+      role: "assistant",
       content: message.content,
-    }));
+    };
+  }
+  if (message.role === "toolResult") {
+    return {
+      id: `tool-${message.tool_call_id}`,
+      role: "toolResult",
+      content: [
+        {
+          type: "tool_result",
+          call_id: message.tool_call_id,
+          name: message.tool_name,
+          content: message.content,
+          is_error: message.is_error,
+        },
+      ],
+    };
+  }
+  return null;
 }
 
 export async function fetchPendingApprovals(): Promise<Approval[]> {

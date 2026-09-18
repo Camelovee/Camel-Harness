@@ -1,8 +1,7 @@
 import asyncio
 
-from camel_harness.backend.approval import WebApproval
-from camel_harness.tools import PermissionRequest
-from camel_harness.types import PermissionMode
+from camel_backend.approval import WebApproval
+from camel_harness.agent.tools import PermissionMode, PermissionRequest
 
 
 async def test_web_approval_can_be_resolved_from_pending_queue() -> None:

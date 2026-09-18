@@ -3,23 +3,27 @@ from collections.abc import AsyncIterator
 import pytest
 
 from camel_harness import AgentOptions
-from camel_harness.harness.compaction import (
+from camel_harness.agent.compaction import (
     CompactionEngine,
     CompactionTrigger,
     ContextManager,
 )
-from camel_harness.harness.resources import ProjectRules
-from camel_harness.harness.session import SessionLog, SessionLogEvent
+from camel_harness.agent.resources import ProjectRules
+from camel_harness.agent.session import SessionLog, SessionLogEvent
 from camel_harness.llm import (
+    AssistantMessage,
     LlmAdapter,
     LlmClient,
     LlmRequest,
+    LlmStopReason,
     LlmStreamEvent,
     LlmStreamEventType,
+    ReasoningBlock,
+    TextBlock,
+    UserMessage,
 )
-from camel_harness.types import Message, MessageRole, ReasoningBlock, TextBlock
 
-_OPTIONS = AgentOptions("fake", "fake-model")
+_OPTIONS = AgentOptions("fake-model")
 
 
 class SummaryLlm(LlmAdapter):
@@ -30,22 +34,10 @@ class SummaryLlm(LlmAdapter):
         return "fake"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield LlmStreamEvent(
-            LlmStreamEventType.TEXT_DELTA,
-            request.session_id,
-            request.turn_id,
-            request.step_id,
-            1,
-            "fake",
-            {"text": "保留目标、决策和待办。"},
-        )
+        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "保留目标、决策和待办。"})
         yield LlmStreamEvent(
             LlmStreamEventType.MESSAGE_COMPLETED,
-            request.session_id,
-            request.turn_id,
-            request.step_id,
-            2,
-            "fake",
+            {"stop_reason": LlmStopReason.STOP.value},
         )
 
 
@@ -78,10 +70,9 @@ def _log(count: int = 8) -> SessionLog:
         SessionLogEvent.append(
             index,
             index,
-            Message.text(
-                MessageRole.USER if index % 2 == 0 else MessageRole.ASSISTANT,
-                f"消息 {index}",
-            ),
+            UserMessage(f"消息 {index}")
+            if index % 2 == 0
+            else AssistantMessage((TextBlock(f"消息 {index}"),), LlmStopReason.STOP),
         )
         for index in range(count)
     )
@@ -91,25 +82,24 @@ def _log(count: int = 8) -> SessionLog:
 async def test_basic_compaction_summarizes_old_three_quarters() -> None:
     engine = _engine()
 
-    result = await engine.compact_if_needed(_log(), "turn-1", _OPTIONS)
+    result = await engine.compact_if_needed(_log(), _OPTIONS)
 
     assert result is not None
     assert result.start_seq == 0
     assert result.end_seq == 5
-    assert result.summary_message.role is MessageRole.USER
-    assert isinstance(result.summary_message.content[0], TextBlock)
-    assert "保留目标、决策和待办。" in result.summary_message.content[0].text
+    assert isinstance(result.summary_message, UserMessage)
+    assert "保留目标、决策和待办。" in result.summary_message.content
 
 
 async def test_basic_compaction_skips_history_below_pressure() -> None:
-    result = await _engine(threshold=100_000).compact_if_needed(_log(), "turn-1", _OPTIONS)
+    result = await _engine(threshold=100_000).compact_if_needed(_log(), _OPTIONS)
 
     assert result is None
 
 
 async def test_context_overflow_trigger_ignores_pressure_threshold() -> None:
     result = await _engine(threshold=100_000).compact_if_needed(
-        _log(), "turn-1", _OPTIONS, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+        _log(), _OPTIONS, trigger=CompactionTrigger.CONTEXT_OVERFLOW
     )
 
     assert result is not None
@@ -123,30 +113,32 @@ async def test_basic_compaction_does_not_reinject_reasoning() -> None:
         pressure_threshold_chars=1,
         min_messages_to_compact=2,
     )
-    reasoning = Message(
-        MessageRole.ASSISTANT,
+    reasoning = AssistantMessage(
         (ReasoningBlock("不应重新注入的推理"), TextBlock("可见结论")),
+        LlmStopReason.STOP,
     )
     log = SessionLog(
         "session-1",
         (
             SessionLogEvent.append(0, 0, reasoning),
-            SessionLogEvent.append(1, 1, Message.text(MessageRole.USER, "继续")),
-            SessionLogEvent.append(2, 2, Message.text(MessageRole.ASSISTANT, "结果")),
+            SessionLogEvent.append(1, 1, UserMessage("继续")),
+            SessionLogEvent.append(
+                2, 2, AssistantMessage((TextBlock("结果"),), LlmStopReason.STOP)
+            ),
         ),
     )
 
     await engine.compact_if_needed(
         log,
-        "turn-1",
         _OPTIONS,
         trigger=CompactionTrigger.CONTEXT_OVERFLOW,
     )
 
-    transcript = adapter.requests[0].messages[1].content[0]
-    assert isinstance(transcript, TextBlock)
-    assert "可见结论" in transcript.text
-    assert "不应重新注入的推理" not in transcript.text
+    transcript = adapter.requests[0].messages[0]
+    assert isinstance(transcript, UserMessage)
+    assert "可见结论" in transcript.content
+    assert "不应重新注入的推理" not in transcript.content
+    assert adapter.requests[0].system_prompt is not None
 
 
 def test_basic_compaction_rejects_invalid_options() -> None:

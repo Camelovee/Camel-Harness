@@ -1,9 +1,9 @@
-from camel_harness.tools import (
+from camel_harness.agent.tools import (
     PermissionAction,
+    PermissionMode,
     PermissionRequest,
     default_permission_decision,
 )
-from camel_harness.types import PermissionMode
 
 
 def _request(risk: str, mode: PermissionMode) -> PermissionRequest:

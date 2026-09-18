@@ -1,13 +1,11 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
-from camel_harness.harness import Harness
-from camel_harness.harness.session import SessionManager
-from camel_harness.harness.session.jsonl import JsonlSessionStorage
-
-
-async def _unused_workspace_picker() -> Path | None:
-    return None
+from camel_backend.api import HttpDependencies
+from camel_backend.api.routes.workspaces import _group_sessions
+from camel_harness.agent import Agent
+from camel_harness.agent.session import SessionManager
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
 async def test_workspaces_are_projected_from_session_directories(tmp_path: Path) -> None:
@@ -18,14 +16,7 @@ async def test_workspaces_are_projected_from_session_directories(tmp_path: Path)
     await sessions.create("second-session", first_workspace, "第二个会话")
     await sessions.create("third-session", second_workspace, "第三个会话")
 
-    harness = Harness(
-        cast(Any, object()),
-        sessions,
-        cast(Any, object()),
-        cast(Any, object()),
-        _unused_workspace_picker,
-    )
-    result = await harness.list_workspaces()
+    result = _group_sessions(await sessions.list())
 
     grouped = dict(result)
     assert {item.session_id for item in grouped[str(first_workspace.resolve())]} == {
@@ -44,12 +35,11 @@ async def test_workspace_selection_uses_injected_platform_function(tmp_path: Pat
     async def select_workspace() -> Path | None:
         return selected
 
-    harness = Harness(
-        cast(Any, object()),
+    dependencies = HttpDependencies(tmp_path)
+    dependencies.bind(
+        cast(Agent, object()),
         sessions,
-        cast(Any, object()),
-        cast(Any, object()),
-        select_workspace,
+        select_workspace=select_workspace,
     )
 
-    assert await harness.select_workspace() == selected
+    assert await dependencies.select_workspace() == selected

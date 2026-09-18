@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from .base import LlmAdapter
-from .request import LlmRequest
-from .stream_event import LlmStreamEvent, LlmStreamEventType
+from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent, LlmStreamEventType
 
 
 class LlmClient:
@@ -17,14 +15,15 @@ class LlmClient:
         self._adapter = adapter
         self._max_attempts = max_attempts
 
+    @property
+    def provider_id(self) -> str:
+        """返回当前 Client 绑定的 Provider。"""
+
+        return self._adapter.provider_id
+
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """执行规范请求；一旦发出事件便不再重试，避免消费者收到重复增量。"""
 
-        if request.provider != self._adapter.provider_id:
-            raise ValueError(
-                f"请求 Provider {request.provider!r} 与 Adapter "
-                f"{self._adapter.provider_id!r} 不匹配"
-            )
         for attempt in range(1, self._max_attempts + 1):
             emitted = False
             pending_failure: LlmStreamEvent | None = None

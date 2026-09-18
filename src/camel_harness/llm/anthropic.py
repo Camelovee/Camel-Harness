@@ -7,12 +7,22 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
-from camel_harness.types import Message, MessageRole, TextBlock, ToolResultBlock, ToolUseBlock
+from .message import (
+    AssistantMessage,
+    LlmStopReason,
+    Message,
+    TextBlock,
+    ToolResultMessage,
+    ToolUseBlock,
+    UserMessage,
+)
+from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent, LlmStreamEventType
 
-from .base import LlmAdapter
-from .event_factory import provider_event
-from .request import LlmRequest
-from .stream_event import LlmStreamEvent, LlmStreamEventType
+
+def create_anthropic_adapter(api_key: str, base_url: str | None = None) -> AnthropicLlmAdapter:
+    """在 LLM 边界内创建 Anthropic 官方 SDK 适配器。"""
+
+    return AnthropicLlmAdapter(AsyncAnthropic(api_key=api_key, base_url=base_url))
 
 
 class AnthropicLlmAdapter(LlmAdapter):
@@ -26,10 +36,10 @@ class AnthropicLlmAdapter(LlmAdapter):
         return "anthropic"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        system, messages = self._convert_messages(request.messages)
+        messages = self._convert_messages(request.messages)
         tools = [
             {
-                "name": tool.qualified_name,
+                "name": tool.name,
                 "description": tool.description,
                 "input_schema": tool.input_schema,
             }
@@ -40,8 +50,8 @@ class AnthropicLlmAdapter(LlmAdapter):
             "max_tokens": request.max_output_tokens,
             "messages": messages,
         }
-        if system:
-            kwargs["system"] = system
+        if request.system_prompt:
+            kwargs["system"] = request.system_prompt
         if tools:
             kwargs["tools"] = tools
         if request.temperature is not None:
@@ -57,62 +67,50 @@ class AnthropicLlmAdapter(LlmAdapter):
                 ),
             }
 
-        sequence = 0
         tool_blocks: dict[int, dict[str, str]] = {}
+        completion: dict[str, LlmStopReason] = {}
         try:
             async with self._client.messages.stream(**kwargs) as sdk_stream:
                 async for event in sdk_stream:
-                    for event_type, data in self._map_event(event, tool_blocks):
-                        sequence += 1
-                        yield provider_event(self.provider_id, request, sequence, event_type, data)
+                    for event_type, data in self._map_event(event, tool_blocks, completion):
+                        yield LlmStreamEvent(event_type, data)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            sequence += 1
-            yield provider_event(
-                self.provider_id,
-                request,
-                sequence,
-                LlmStreamEventType.STREAM_FAILED,
-                {"error": str(exc)},
-            )
+            yield LlmStreamEvent(LlmStreamEventType.STREAM_FAILED, {"error": str(exc)})
             raise
 
     @staticmethod
-    def _convert_messages(messages: tuple[Message, ...]) -> tuple[str, list[dict[str, Any]]]:
-        system_parts: list[str] = []
+    def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         pending_tool_results: list[dict[str, Any]] = []
 
         def flush_tool_results() -> None:
             if pending_tool_results:
-                result.append({"role": "user", "content": tuple(pending_tool_results)})
+                result.append({"role": "user", "content": list(pending_tool_results)})
                 pending_tool_results.clear()
 
         for message in messages:
-            if message.role is MessageRole.SYSTEM:
-                flush_tool_results()
-                system_parts.extend(
-                    block.text for block in message.content if isinstance(block, TextBlock)
+            if isinstance(message, ToolResultMessage):
+                pending_tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": message.call_id,
+                        "content": message.content,
+                        "is_error": message.is_error,
+                    }
                 )
                 continue
 
-            if message.role is MessageRole.TOOL:
-                for block in message.content:
-                    if isinstance(block, ToolResultBlock):
-                        pending_tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.call_id,
-                                "content": block.content,
-                                "is_error": block.is_error,
-                            }
-                        )
+            flush_tool_results()
+            if isinstance(message, UserMessage):
+                result.append(
+                    {"role": "user", "content": [{"type": "text", "text": message.content}]}
+                )
                 continue
 
-            flush_tool_results()
+            assert isinstance(message, AssistantMessage)
             content: list[dict[str, Any]] = []
-            role = "assistant" if message.role is MessageRole.ASSISTANT else "user"
             for block in message.content:
                 # ReasoningBlock 只用于可观测性和 UI 回放，不能冒充普通对话文本。
                 if isinstance(block, TextBlock):
@@ -127,13 +125,15 @@ class AnthropicLlmAdapter(LlmAdapter):
                         }
                     )
             if content:
-                result.append({"role": role, "content": content})
+                result.append({"role": "assistant", "content": content})
         flush_tool_results()
-        return "\n\n".join(system_parts), result
+        return result
 
     @staticmethod
     def _map_event(
-        event: Any, tool_blocks: dict[int, dict[str, str]]
+        event: Any,
+        tool_blocks: dict[int, dict[str, str]],
+        completion: dict[str, LlmStopReason],
     ) -> list[tuple[LlmStreamEventType, dict[str, Any]]]:
         event_type = getattr(event, "type", "")
         if event_type == "message_start":
@@ -190,8 +190,25 @@ class AnthropicLlmAdapter(LlmAdapter):
             data = {"output_tokens": getattr(usage, "output_tokens", 0)} if usage else {}
             reason = getattr(getattr(event, "delta", None), "stop_reason", None)
             if reason:
-                data["finish_reason"] = reason
+                completion["stop_reason"] = AnthropicLlmAdapter._map_stop_reason(reason)
             return [(LlmStreamEventType.USAGE_UPDATED, data)]
         if event_type == "message_stop":
-            return [(LlmStreamEventType.MESSAGE_COMPLETED, {})]
+            reason = completion.get("stop_reason")
+            if reason is None:
+                raise RuntimeError("Anthropic 响应缺少 stop_reason")
+            return [(LlmStreamEventType.MESSAGE_COMPLETED, {"stop_reason": reason.value})]
         return []
+
+    @staticmethod
+    def _map_stop_reason(reason: str) -> LlmStopReason:
+        """把 Anthropic 结束原因收敛为厂商无关语义。"""
+
+        if reason in {"end_turn", "stop_sequence", "pause_turn"}:
+            return LlmStopReason.STOP
+        if reason == "max_tokens":
+            return LlmStopReason.LENGTH
+        if reason == "tool_use":
+            return LlmStopReason.TOOL_USE
+        if reason in {"refusal", "sensitive"}:
+            raise RuntimeError(f"Anthropic 拒绝生成：{reason}")
+        raise RuntimeError(f"Anthropic 返回未知 stop_reason：{reason}")

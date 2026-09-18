@@ -1,17 +1,19 @@
-from camel_harness.harness.session import SessionManager, SessionMetadata
-from camel_harness.harness.session.jsonl import JsonlSessionStorage
-from camel_harness.types import (
-    Message,
-    MessageRole,
-    ToolResultBlock,
+from camel_harness.agent.session import SessionManager, SessionMetadata
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.llm import (
+    AssistantMessage,
+    LlmStopReason,
+    TextBlock,
+    ToolResultMessage,
     ToolUseBlock,
+    UserMessage,
 )
 
 
 async def test_jsonl_store_appends_and_projects_messages(tmp_path) -> None:
     store = JsonlSessionStorage(tmp_path)
     await store.create(SessionMetadata.create("session-1", "测试会话", str(tmp_path)))
-    message = Message.text(MessageRole.USER, "你好")
+    message = UserMessage("你好")
     await store.append_message("session-1", message)
 
     assert await store.messages("session-1") == (message,)
@@ -20,36 +22,37 @@ async def test_jsonl_store_appends_and_projects_messages(tmp_path) -> None:
     assert '"session_id"' not in line
 
 
-async def test_adjacent_tool_results_are_projected_as_one_message(tmp_path) -> None:
+async def test_tool_results_remain_distinct_messages(tmp_path) -> None:
     store = JsonlSessionStorage(tmp_path)
     await store.create(SessionMetadata.create("session-1", "测试会话", str(tmp_path)))
     await store.append_message(
         "session-1",
-        Message(
-            MessageRole.ASSISTANT,
+        AssistantMessage(
             (
                 ToolUseBlock("call-1", "read_file", {}),
                 ToolUseBlock("call-2", "list_files", {}),
             ),
+            LlmStopReason.TOOL_USE,
         ),
     )
     for call_id, name in (("call-1", "read_file"), ("call-2", "list_files")):
         await store.append_message(
             "session-1",
-            Message(
-                MessageRole.TOOL,
-                (ToolResultBlock(call_id, name, "ok", False),),
-            ),
+            ToolResultMessage(call_id, name, "ok"),
         )
 
     messages = await store.messages("session-1")
 
-    assert len(messages) == 2
-    assert messages[0].role is MessageRole.ASSISTANT
+    assert len(messages) == 3
+    assert isinstance(messages[0], AssistantMessage)
     assert isinstance(messages[0].content[0], ToolUseBlock)
-    assert messages[1].role is MessageRole.TOOL
-    assert [block.call_id for block in messages[1].content] == ["call-1", "call-2"]
-    assert all(isinstance(block, ToolResultBlock) for block in messages[1].content)
+    assert all(isinstance(message, ToolResultMessage) for message in messages[1:])
+    assert [
+        message.call_id for message in messages[1:] if isinstance(message, ToolResultMessage)
+    ] == [
+        "call-1",
+        "call-2",
+    ]
 
 
 async def test_context_log_restores_compacted_surface_after_restart(tmp_path) -> None:
@@ -57,15 +60,14 @@ async def test_context_log_restores_compacted_surface_after_restart(tmp_path) ->
     first = SessionManager(JsonlSessionStorage(root))
     await first.create("session-1", tmp_path, "压缩恢复")
     originals = tuple(
-        Message.text(
-            MessageRole.USER if index % 2 == 0 else MessageRole.ASSISTANT,
-            f"消息 {index}",
-        )
+        UserMessage(f"消息 {index}")
+        if index % 2 == 0
+        else AssistantMessage((TextBlock(f"消息 {index}"),), LlmStopReason.STOP)
         for index in range(8)
     )
     for message in originals:
         await first.append_message("session-1", message)
-    summary = Message.text(MessageRole.USER, "[Compacted History]\n\n历史摘要")
+    summary = UserMessage("[Compacted History]\n\n历史摘要")
     await first.replace_context("session-1", 0, 5, summary)
 
     restarted = SessionManager(JsonlSessionStorage(root))

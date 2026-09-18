@@ -1,28 +1,29 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from camel_harness import Agent, AgentLoop, AgentOptions, AgentStreamEventType
-from camel_harness.backend.approval import WebApproval
-from camel_harness.harness import Harness
-from camel_harness.harness.compaction import CompactionEngine, ContextManager
-from camel_harness.harness.session import SessionManager
-from camel_harness.harness.session.jsonl import JsonlSessionStorage
-from camel_harness.harness.tools.builtin import BuiltinToolProvider
-from camel_harness.harness.tools.mcp import McpManager
-from camel_harness.llm import (
-    LlmAdapter,
-    LlmClient,
-    LlmRequest,
-    LlmStreamEvent,
-    LlmStreamEventType,
-)
-from camel_harness.tools import (
+from camel_backend.approval import WebApproval
+from camel_harness import Agent, AgentOptions, AgentStreamEventType
+from camel_harness.agent.compaction import CompactionEngine, ContextManager
+from camel_harness.agent.session import SessionManager
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.agent.tools import (
+    PermissionMode,
     PermissionService,
     ToolExecutor,
     ToolRegistry,
+    validate_tool_arguments,
 )
-from camel_harness.tools.jsonschema_validator import validate_tool_arguments
-from camel_harness.types import PermissionMode
+from camel_harness.agent.tools.builtin import BuiltinToolProvider
+from camel_harness.llm import (
+    AssistantMessage,
+    LlmAdapter,
+    LlmClient,
+    LlmRequest,
+    LlmStopReason,
+    LlmStreamEvent,
+    LlmStreamEventType,
+    ToolResultMessage,
+)
 
 
 class FakeLlm(LlmAdapter):
@@ -39,45 +40,32 @@ class FakeLlm(LlmAdapter):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         self.requests.append(request)
-        common = {
-            "session_id": request.session_id,
-            "turn_id": request.turn_id,
-            "step_id": request.step_id,
-            "provider": "fake",
-        }
         if self.calls == 1:
             yield LlmStreamEvent(
                 LlmStreamEventType.TOOL_CALL_COMPLETED,
-                sequence=1,
-                data={
+                {
                     "call_id": "call-1",
                     "name": "list_files",
                     "arguments": {"path": "."},
                 },
-                **common,
             )
             yield LlmStreamEvent(
                 LlmStreamEventType.TOOL_CALL_COMPLETED,
-                sequence=2,
-                data={
+                {
                     "call_id": "call-2",
                     "name": "read_file",
                     "arguments": {"path": "sample.txt"},
                 },
-                **common,
             )
             yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED, sequence=3, data={}, **common
+                LlmStreamEventType.MESSAGE_COMPLETED,
+                {"stop_reason": LlmStopReason.TOOL_USE.value},
             )
         else:
+            yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "已读取文件"})
             yield LlmStreamEvent(
-                LlmStreamEventType.TEXT_DELTA,
-                sequence=1,
-                data={"text": "已读取文件"},
-                **common,
-            )
-            yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED, sequence=2, data={}, **common
+                LlmStreamEventType.MESSAGE_COMPLETED,
+                {"stop_reason": LlmStopReason.STOP.value},
             )
 
 
@@ -93,40 +81,48 @@ class ApprovalFakeLlm(LlmAdapter):
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
-        common = {
-            "session_id": request.session_id,
-            "turn_id": request.turn_id,
-            "step_id": request.step_id,
-            "provider": "fake",
-        }
         if self.calls == 1:
-            yield LlmStreamEvent(
-                LlmStreamEventType.TEXT_DELTA,
-                sequence=1,
-                data={"text": "我准备写入文件。"},
-                **common,
-            )
+            yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "我准备写入文件。"})
             yield LlmStreamEvent(
                 LlmStreamEventType.TOOL_CALL_COMPLETED,
-                sequence=2,
-                data={
+                {
                     "call_id": "write-call",
                     "name": "write_file",
                     "arguments": {"path": "sample.txt", "content": "内容"},
                 },
-                **common,
             )
             yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED, sequence=3, data={}, **common
+                LlmStreamEventType.MESSAGE_COMPLETED,
+                {"stop_reason": LlmStopReason.TOOL_USE.value},
             )
             return
+        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "文件已写入。"})
         yield LlmStreamEvent(
-            LlmStreamEventType.TEXT_DELTA,
-            sequence=1,
-            data={"text": "文件已写入。"},
-            **common,
+            LlmStreamEventType.MESSAGE_COMPLETED,
+            {"stop_reason": LlmStopReason.STOP.value},
         )
-        yield LlmStreamEvent(LlmStreamEventType.MESSAGE_COMPLETED, sequence=2, data={}, **common)
+
+
+class TruncatedToolLlm(LlmAdapter):
+    """模拟工具参数随输出长度上限被截断的响应。"""
+
+    @property
+    def provider_id(self) -> str:
+        return "fake"
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        yield LlmStreamEvent(
+            LlmStreamEventType.TOOL_CALL_COMPLETED,
+            {
+                "call_id": "truncated-write",
+                "name": "write_file",
+                "arguments": {"path": "should-not-exist.txt", "content": "不应写入"},
+            },
+        )
+        yield LlmStreamEvent(
+            LlmStreamEventType.MESSAGE_COMPLETED,
+            {"stop_reason": LlmStopReason.LENGTH.value},
+        )
 
 
 async def test_agent_completes_a_tool_loop(tmp_path) -> None:
@@ -138,20 +134,17 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     await registry.register_provider(BuiltinToolProvider())
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
-        AgentOptions("fake", "fake-model"),
-        AgentLoop(llm, registry, ToolExecutor(registry, validate_tool_arguments)),
-    )
-    harness = Harness(
-        agent,
+        AgentOptions("fake-model"),
+        llm,
+        registry,
+        ToolExecutor(registry, validate_tool_arguments),
         sessions,
         context,
-        McpManager(tmp_path, tmp_path / ".mcp.json"),
-        _no_workspace,
     )
 
     events = [
         event
-        async for event in harness.run_turn(
+        async for event in agent.run_turn(
             "session-1", "读取文件", tmp_path, max_steps=3, thinking=True
         )
     ]
@@ -161,17 +154,19 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     assert "已读取文件" == "".join(
         str(event.data["text"]) for event in events if event.type is AgentStreamEventType.TEXT_DELTA
     )
-    assert [message.role.value for message in await sessions.messages("session-1")] == [
+    assert [message.role for message in await sessions.messages("session-1")] == [
         "user",
         "assistant",
-        "tool",
+        "toolResult",
+        "toolResult",
         "assistant",
     ]
     tool_messages = [
-        message for message in runtime.requests[1].messages if message.role.value == "tool"
+        message
+        for message in runtime.requests[1].messages
+        if isinstance(message, ToolResultMessage)
     ]
-    assert len(tool_messages) == 1
-    assert len(tool_messages[0].content) == 2
+    assert [message.call_id for message in tool_messages] == ["call-1", "call-2"]
     assert all(request.thinking for request in runtime.requests)
 
 
@@ -187,21 +182,18 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     permission = PermissionService(approval)
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
-        AgentOptions("fake", "fake-model"),
-        AgentLoop(llm, registry, ToolExecutor(registry, validate_tool_arguments, permission)),
-    )
-    harness = Harness(
-        agent,
+        AgentOptions("fake-model"),
+        llm,
+        registry,
+        ToolExecutor(registry, validate_tool_arguments, permission),
         sessions,
         context,
-        McpManager(tmp_path, tmp_path / ".mcp.json"),
-        _no_workspace,
     )
 
     async def collect() -> list:
         return [
             event
-            async for event in harness.run_turn(
+            async for event in agent.run_turn(
                 "session-approval",
                 "写入文件",
                 tmp_path,
@@ -230,5 +222,30 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == "内容"
 
 
-async def _no_workspace() -> None:
-    return None
+async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path) -> None:
+    """达到长度上限时，工具参数即使能解析也不可执行。"""
+
+    llm = LlmClient(TruncatedToolLlm())
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    agent = Agent(
+        AgentOptions("fake-model"),
+        llm,
+        registry,
+        ToolExecutor(registry, validate_tool_arguments),
+        sessions,
+        ContextManager(CompactionEngine(llm)),
+    )
+
+    events = [event async for event in agent.run_turn("session-length", "写文件", tmp_path)]
+    messages = await sessions.messages("session-length")
+
+    assert not (tmp_path / "should-not-exist.txt").exists()
+    assert events[-1].type is AgentStreamEventType.TURN_FAILED
+    assert events[-1].data["stop_reason"] == "model_length"
+    assert [message.role for message in messages] == ["user", "assistant", "toolResult"]
+    assert isinstance(messages[1], AssistantMessage)
+    assert messages[1].stop_reason is LlmStopReason.LENGTH
+    assert isinstance(messages[2], ToolResultMessage)
+    assert messages[2].is_error

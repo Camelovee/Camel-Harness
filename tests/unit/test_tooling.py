@@ -1,7 +1,13 @@
-from camel_harness.harness.tools.builtin import BuiltinToolProvider
-from camel_harness.tools import ToolExecutor, ToolRegistry
-from camel_harness.tools.jsonschema_validator import validate_tool_arguments
-from camel_harness.types import Tool, ToolCall, ToolContext, ToolResult
+from camel_harness.agent.tools import (
+    Tool,
+    ToolCall,
+    ToolContext,
+    ToolExecutor,
+    ToolRegistry,
+    ToolResult,
+    validate_tool_arguments,
+)
+from camel_harness.agent.tools.builtin import BuiltinToolProvider
 
 
 class DeferredTool(Tool):
@@ -23,7 +29,7 @@ def test_deferred_tool_is_activated_by_search() -> None:
     assert registry.llm_definitions() == ()
     found = registry.search_and_activate("browser")
     assert found[0].qualified_name == "plugin__browser_fetch"
-    assert registry.llm_definitions()[0].qualified_name == "plugin__browser_fetch"
+    assert registry.llm_definitions()[0].name == "plugin__browser_fetch"
 
 
 async def test_builtin_tools_implement_abc_contract() -> None:

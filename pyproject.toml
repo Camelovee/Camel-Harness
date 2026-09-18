@@ -29,11 +29,11 @@ dev = [
 ]
 
 [project.scripts]
-camel-harness = "camel_harness.cli.main:app"
-camel-harness-web = "camel_harness.backend.main:main"
+camel-harness = "camel_cli.main:app"
+camel-harness-web = "camel_backend.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/camel_harness"]
+packages = ["src/camel_harness", "src/camel_backend", "src/camel_cli"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -52,63 +52,45 @@ python_version = "3.11"
 strict = true
 
 [tool.importlinter]
-root_package = "camel_harness"
+root_packages = ["camel_harness", "camel_backend", "camel_cli"]
 
 [[tool.importlinter.contracts]]
-name = "公共类型不得依赖运行功能"
+name = "LLM 不得依赖 Agent 或入口层"
 type = "forbidden"
-source_modules = ["camel_harness.types"]
+source_modules = ["camel_harness.llm"]
 forbidden_modules = [
-  "camel_harness.harness",
-  "camel_harness.backend",
-  "camel_harness.cli",
-]
-
-[[tool.importlinter.contracts]]
-name = "低层 Agent Loop 不得依赖 Harness 能力"
-type = "forbidden"
-source_modules = ["camel_harness.agent_loop"]
-forbidden_modules = [
-  "camel_harness.harness",
-  "camel_harness.backend",
-  "camel_harness.cli",
-]
-
-[[tool.importlinter.contracts]]
-name = "Agent 不得依赖应用层"
-type = "forbidden"
-source_modules = [
   "camel_harness.agent",
-  "camel_harness.agent_loop",
-  "camel_harness.events",
-  "camel_harness.llm",
-  "camel_harness.options",
-  "camel_harness.run",
-  "camel_harness.subagent",
-  "camel_harness.tools",
-  "camel_harness.types",
-]
-forbidden_modules = [
-  "camel_harness.harness",
-  "camel_harness.backend",
-  "camel_harness.cli",
+  "camel_backend",
+  "camel_cli",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Harness 不得依赖入口层"
+name = "低层 agent_loop 函数不得依赖产品能力"
 type = "forbidden"
-source_modules = [
-  "camel_harness.harness",
-]
+source_modules = ["camel_harness.agent.agent_loop"]
 forbidden_modules = [
-  "camel_harness.backend",
-  "camel_harness.cli",
+  "camel_harness.agent.compaction",
+  "camel_harness.agent.config",
+  "camel_harness.agent.resources",
+  "camel_harness.agent.runtime",
+  "camel_harness.agent.session",
+  "camel_backend",
+  "camel_cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "Agent 不得依赖入口层"
+type = "forbidden"
+source_modules = ["camel_harness.agent"]
+forbidden_modules = [
+  "camel_backend",
+  "camel_cli",
 ]
 
 [[tool.importlinter.contracts]]
 name = "入口之间不得互相依赖"
 type = "independence"
 modules = [
-  "camel_harness.backend",
-  "camel_harness.cli",
+  "camel_backend",
+  "camel_cli",
 ]

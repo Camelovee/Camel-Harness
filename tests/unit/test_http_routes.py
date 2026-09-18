@@ -3,8 +3,9 @@ from typing import cast
 
 import pytest
 
-from camel_harness.backend.api import HttpDependencies, create_router
-from camel_harness.harness import Harness
+from camel_backend.api import HttpDependencies, create_router
+from camel_harness.agent import Agent
+from camel_harness.agent.session import SessionManager
 
 
 def test_http_router_keeps_public_endpoints_after_module_split() -> None:
@@ -32,9 +33,11 @@ def test_http_dependencies_are_published_as_one_complete_set() -> None:
     with pytest.raises(RuntimeError, match="尚未完成初始化"):
         dependencies.require()
 
-    harness = cast(Harness, object())
-    dependencies.bind(harness)
-    assert dependencies.require() is harness
+    agent = cast(Agent, object())
+    sessions = cast(SessionManager, object())
+    dependencies.bind(agent, sessions)
+    assert dependencies.require() is agent
+    assert dependencies.require_sessions() is sessions
 
     dependencies.clear()
     with pytest.raises(RuntimeError, match="尚未完成初始化"):

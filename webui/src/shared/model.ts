@@ -38,7 +38,7 @@ export type Approval = {
 
 export type Message = {
   id: string;
-  role: "user" | "assistant" | "tool" | "approval";
+  role: "user" | "assistant" | "toolResult" | "approval";
   content: ContentBlock[];
   approval?: Approval;
 };

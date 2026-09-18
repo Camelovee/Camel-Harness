@@ -3,23 +3,59 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).parents[2] / "src/camel_harness"
+SOURCE_ROOT = Path(__file__).parents[2] / "src"
+PACKAGE_ROOT = SOURCE_ROOT / "camel_harness"
 
 
-def test_core_uses_pi_agent_style_package_root() -> None:
-    """Agent 核心位于包根，产品能力进入 Harness 子包。"""
+def test_harness_is_split_into_agent_and_llm_packages() -> None:
+    """Harness 只保留职责清晰的 Agent 与 LLM 两个包。"""
 
-    core_files = {
-        "agent.py",
-        "agent_loop.py",
-        "events.py",
-        "options.py",
-        "run.py",
-        "subagent.py",
+    assert (PACKAGE_ROOT / "agent").is_dir()
+    assert (PACKAGE_ROOT / "llm").is_dir()
+    assert not (PACKAGE_ROOT / "harness").exists()
+    assert not (PACKAGE_ROOT / "types").exists()
+    agent_files = {"agent.py", "agent_loop.py", "events.py", "state.py", "runtime.py"}
+    assert all((PACKAGE_ROOT / "agent" / name).is_file() for name in agent_files)
+
+
+def test_backend_and_cli_are_separate_packages() -> None:
+    """应用入口不得放进可复用的 camel_harness 包。"""
+
+    assert not (PACKAGE_ROOT / "backend").exists()
+    assert not (PACKAGE_ROOT / "cli").exists()
+    assert (SOURCE_ROOT / "camel_backend").is_dir()
+    assert (SOURCE_ROOT / "camel_cli").is_dir()
+    assert not (PACKAGE_ROOT / "agent/workspace.py").exists()
+    assert (SOURCE_ROOT / "camel_backend/workspace.py").is_file()
+
+
+def test_entry_packages_do_not_import_llm_directly() -> None:
+    """入口必须经 Agent 使用 LLM，不能绕过产品边界。"""
+
+    forbidden = {"camel_harness.llm"}
+    assert not _forbidden_imports(SOURCE_ROOT / "camel_backend", forbidden)
+    assert not _forbidden_imports(SOURCE_ROOT / "camel_cli", forbidden)
+
+
+def test_related_small_contracts_stay_consolidated() -> None:
+    """同一变化原因的小型协议不得再次拆成空洞文件。"""
+
+    removed_fragments = {
+        "llm/base.py",
+        "llm/request.py",
+        "llm/stream_event.py",
+        "llm/event_factory.py",
+        "agent/tools/approval.py",
+        "agent/tools/default_permission.py",
+        "agent/tools/permission.py",
+        "agent/tools/permission_service.py",
+        "agent/tools/provider.py",
+        "agent/tools/jsonschema_validator.py",
+        "agent/compaction/result.py",
+        "agent/resources/memory_types.py",
+        "agent/resources/skill_types.py",
     }
-    assert all((PACKAGE_ROOT / name).is_file() for name in core_files)
-    assert not (PACKAGE_ROOT / "agent").exists()
-    assert all((PACKAGE_ROOT / name).is_dir() for name in {"harness", "backend", "cli"})
+    assert not [name for name in removed_fragments if (PACKAGE_ROOT / name).exists()]
 
 
 def test_feature_modules_do_not_restore_ddd_layers() -> None:
@@ -27,67 +63,134 @@ def test_feature_modules_do_not_restore_ddd_layers() -> None:
 
     forbidden = {"models", "services", "ports", "domain", "infra", "application"}
     violations = [
-        path for path in PACKAGE_ROOT.rglob("*") if path.is_dir() and path.name in forbidden
+        path for path in SOURCE_ROOT.rglob("*") if path.is_dir() and path.name in forbidden
     ]
     assert not violations
 
 
-def test_tool_contract_lives_in_agent_types() -> None:
-    """工具契约属于可独立复用的 Agent 包。"""
+def test_tool_contract_lives_in_agent_tools() -> None:
+    """工具运行契约属于 Agent，模型工具定义属于 LLM。"""
 
-    tool_tree = ast.parse((PACKAGE_ROOT / "types/tool.py").read_text("utf-8"))
+    tool_tree = ast.parse((PACKAGE_ROOT / "agent/tools/types.py").read_text("utf-8"))
     names = {node.name for node in tool_tree.body if isinstance(node, ast.ClassDef)}
-    assert {"Tool", "ToolCall", "ToolContext", "ToolDefinition", "ToolResult"} <= names
+    assert {"Tool", "ToolCall", "ToolContext", "ToolResult"} <= names
+    protocol_tree = ast.parse((PACKAGE_ROOT / "llm/protocol.py").read_text("utf-8"))
+    protocol_names = {node.name for node in protocol_tree.body if isinstance(node, ast.ClassDef)}
+    assert "ToolDefinition" in protocol_names
 
 
-def test_agent_does_not_depend_on_application_packages() -> None:
-    """Agent 核心不能反向依赖 Harness 或入口层。"""
+def test_llm_does_not_depend_on_agent_or_entry_packages() -> None:
+    """LLM 是独立底层包，不能反向依赖 Agent 或入口层。"""
 
-    forbidden = {"camel_harness.harness", "camel_harness.backend", "camel_harness.cli"}
-    core_paths = [
-        *(
-            PACKAGE_ROOT / name
-            for name in (
-                "agent.py",
-                "agent_loop.py",
-                "events.py",
-                "options.py",
-                "run.py",
-                "subagent.py",
-            )
-        ),
-        PACKAGE_ROOT / "llm",
-        PACKAGE_ROOT / "tools",
-        PACKAGE_ROOT / "types",
-    ]
-    assert not [item for path in core_paths for item in _forbidden_imports(path, forbidden)]
+    forbidden = {"camel_harness.agent", "camel_backend", "camel_cli"}
+    assert not _forbidden_imports(PACKAGE_ROOT / "llm", forbidden)
 
 
-def test_harness_does_not_depend_on_entry_packages() -> None:
-    """产品编排不能依赖 HTTP 或 CLI 实现。"""
+def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
+    """LLM 请求与事件不得感知 Session、Turn、Step 或 Agent 序号。"""
 
-    assert not _forbidden_imports(
-        PACKAGE_ROOT / "harness", {"camel_harness.backend", "camel_harness.cli"}
+    tree = ast.parse((PACKAGE_ROOT / "llm/protocol.py").read_text("utf-8"))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    def fields(name: str) -> set[str]:
+        return {
+            node.target.id
+            for node in classes[name].body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+
+    assert fields("LlmRequest") == {
+        "model",
+        "messages",
+        "system_prompt",
+        "tools",
+        "max_output_tokens",
+        "temperature",
+        "thinking",
+    }
+    assert fields("LlmStreamEvent") == {"type", "data"}
+    assert fields("ToolDefinition") == {"name", "description", "input_schema"}
+    assert not (PACKAGE_ROOT / "llm/message_codec.py").exists()
+
+
+def test_llm_message_is_a_discriminated_union() -> None:
+    """规范消息用独立类型表达合法形状，不恢复通用 role/content 容器。"""
+
+    tree = ast.parse((PACKAGE_ROOT / "llm/message.py").read_text("utf-8"))
+    classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+    aliases = {
+        node.target.id
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+
+    assert {"UserMessage", "AssistantMessage", "ToolResultMessage"} <= classes
+    assert "Message" in aliases
+    assert "Message" not in classes
+    assert "MessageRole" not in classes
+    assistant = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AssistantMessage"
     )
+    assistant_fields = {
+        node.target.id
+        for node in assistant.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+    assert assistant_fields == {"content", "stop_reason", "role"}
+
+
+def test_agent_does_not_depend_on_entry_packages() -> None:
+    """完整 Agent 不能依赖 HTTP 或 CLI 实现。"""
+
+    assert not _forbidden_imports(PACKAGE_ROOT / "agent", {"camel_backend", "camel_cli"})
+
+
+def test_agent_loop_does_not_depend_on_product_state() -> None:
+    """Agent Loop 只处理模型、工具、预算和流事件。"""
+
+    forbidden = {
+        "camel_harness.agent.compaction",
+        "camel_harness.agent.config",
+        "camel_harness.agent.resources",
+        "camel_harness.agent.runtime",
+        "camel_harness.agent.session",
+    }
+    assert not _forbidden_imports(PACKAGE_ROOT / "agent/agent_loop.py", forbidden)
+
+
+def test_agent_loop_is_a_function_and_agent_surface_stays_minimal() -> None:
+    """低层循环保持无状态函数，Agent 只暴露运行与关闭。"""
+
+    loop_tree = ast.parse((PACKAGE_ROOT / "agent/agent_loop.py").read_text("utf-8"))
+    assert any(
+        isinstance(node, ast.AsyncFunctionDef) and node.name == "agent_loop"
+        for node in loop_tree.body
+    )
+    assert not any(
+        isinstance(node, ast.ClassDef) and node.name == "AgentLoop" for node in loop_tree.body
+    )
+
+    agent_tree = ast.parse((PACKAGE_ROOT / "agent/agent.py").read_text("utf-8"))
+    agent_class = next(
+        node for node in agent_tree.body if isinstance(node, ast.ClassDef) and node.name == "Agent"
+    )
+    public_methods = {
+        node.name
+        for node in agent_class.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and not node.name.startswith("_")
+    }
+    assert public_methods == {"run_turn", "close"}
 
 
 def test_runtime_is_the_only_full_composition_module() -> None:
-    """完整对象图只在 Harness 的 runtime 中装配。"""
+    """完整对象图只在 Agent 的 runtime 中装配。"""
 
-    assert (PACKAGE_ROOT / "harness/runtime.py").is_file()
+    assert (PACKAGE_ROOT / "agent/runtime.py").is_file()
     assert not (PACKAGE_ROOT / "runtime.py").exists()
-    assert not (PACKAGE_ROOT / "harness/bootstrap").exists()
-
-
-def test_types_only_depend_on_standard_library() -> None:
-    """稳定公共类型不得依赖项目运行模块或第三方库。"""
-
-    violations: list[str] = []
-    for path in (PACKAGE_ROOT / "types").glob("*.py"):
-        for module in _absolute_imports(path):
-            if module.startswith("camel_harness."):
-                violations.append(f"{path.name}: {module}")
-    assert not violations
+    assert not (PACKAGE_ROOT / "agent/bootstrap").exists()
 
 
 def _forbidden_imports(root: Path, forbidden: set[str]) -> list[str]:
@@ -96,7 +199,7 @@ def _forbidden_imports(root: Path, forbidden: set[str]) -> list[str]:
     for path in paths:
         for module in _absolute_imports(path):
             if any(module == item or module.startswith(f"{item}.") for item in forbidden):
-                violations.append(f"{path.relative_to(PACKAGE_ROOT)}: {module}")
+                violations.append(f"{path.relative_to(SOURCE_ROOT)}: {module}")
     return violations
 
 

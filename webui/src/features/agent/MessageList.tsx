@@ -59,7 +59,7 @@ export function MessageList({
           <Welcome activeWorkspace={activeWorkspace} onStart={onStart} />
         )}
         {messages.map((message) => {
-          if (message.role === "tool") {
+          if (message.role === "toolResult") {
             return <ToolMessage key={message.id} message={message} />;
           }
           if (message.role === "approval") {

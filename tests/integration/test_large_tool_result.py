@@ -1,7 +1,7 @@
-from camel_harness.harness.tools.file_result_storage import (
+from camel_harness.agent.tools import ToolContext, ToolResult
+from camel_harness.agent.tools.file_result_storage import (
     FileToolResultStorage,
 )
-from camel_harness.types import ToolContext, ToolResult
 
 
 async def test_large_result_is_offloaded_to_workspace(tmp_path) -> None:

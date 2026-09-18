@@ -18,7 +18,6 @@ def test_agent_run_enforces_step_limit() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     (
-        ("provider", ""),
         ("model", ""),
         ("max_output_tokens", 0),
         ("max_steps", 0),
@@ -29,7 +28,13 @@ def test_agent_run_enforces_step_limit() -> None:
 def test_agent_options_reject_invalid_values(field: str, value: str | int) -> None:
     """AgentOptions 在进入运行循环前拒绝无效模型与预算配置。"""
 
-    values: dict[str, object] = {"provider": "fake", "model": "fake-model"}
+    values: dict[str, object] = {"model": "fake-model"}
     values[field] = value
     with pytest.raises(ValueError):
         AgentOptions(**values)  # type: ignore[arg-type]
+
+
+def test_agent_options_do_not_duplicate_bound_llm_provider() -> None:
+    """Provider 由 LlmClient 绑定，不在 AgentOptions 中维护第二份状态。"""
+
+    assert not hasattr(AgentOptions("fake-model"), "provider")

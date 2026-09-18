@@ -1,4 +1,4 @@
-from camel_harness.harness.resources import MemoryEntry, MemoryStore, Skills, SkillSource
+from camel_harness.agent.resources import MemoryEntry, MemoryStore, Skills, SkillSource
 
 
 async def test_skill_evolution_creates_snapshot_and_can_rollback(tmp_path) -> None:

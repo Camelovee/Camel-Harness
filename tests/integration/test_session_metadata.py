@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from camel_harness.harness.session import SessionManager
-from camel_harness.harness.session.jsonl import JsonlSessionStorage
-from camel_harness.types import Message, MessageRole
+from camel_harness.agent.session import SessionManager
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.llm import AssistantMessage, LlmStopReason, TextBlock, UserMessage
 
 
 async def test_session_metadata_crud_and_file_layout(tmp_path) -> None:
@@ -37,13 +37,15 @@ async def test_appending_messages_updates_metadata(tmp_path) -> None:
     root = tmp_path / "global-sessions"
     sessions = SessionManager(JsonlSessionStorage(root))
     await sessions.create("session-1", tmp_path, "批量写入")
-    await sessions.append_message("session-1", Message.text(MessageRole.USER, "问题"))
-    await sessions.append_message("session-1", Message.text(MessageRole.ASSISTANT, "回答"))
+    await sessions.append_message("session-1", UserMessage("问题"))
+    await sessions.append_message(
+        "session-1", AssistantMessage((TextBlock("回答"),), LlmStopReason.STOP)
+    )
 
     metadata = await sessions.get("session-1")
     assert metadata is not None
     assert metadata.message_count == 2
-    assert metadata.last_message_type == MessageRole.ASSISTANT.value
+    assert metadata.last_message_type == "assistant"
     session_dir = root / "session-1"
     assert len((session_dir / "messages.jsonl").read_text("utf-8").splitlines()) == 2
     persisted = json.loads((session_dir / "metadata.json").read_text("utf-8"))
@@ -78,6 +80,6 @@ async def test_session_directory_symlink_cannot_escape_global_root(tmp_path) -> 
     repository = JsonlSessionStorage(root)
 
     with pytest.raises(ValueError, match="符号链接"):
-        await repository.append_message("escaped", Message.text(MessageRole.USER, "越界"))
+        await repository.append_message("escaped", UserMessage("越界"))
 
     assert not (outside / "messages.jsonl").exists()
