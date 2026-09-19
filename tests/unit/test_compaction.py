@@ -3,12 +3,18 @@ from collections.abc import AsyncIterator
 import pytest
 
 from camel_harness import AgentOptions
-from camel_harness.agent.compaction import (
+from camel_harness.agent.context import (
     CompactionEngine,
     CompactionTrigger,
     ContextManager,
 )
-from camel_harness.agent.resources import ProjectRules
+from camel_harness.agent.resources import (
+    MemoryEntry,
+    MemoryStore,
+    ProjectRules,
+    Skills,
+    SkillSource,
+)
 from camel_harness.agent.session import SessionLog, SessionLogEvent
 from camel_harness.llm import (
     AssistantMessage,
@@ -153,7 +159,26 @@ async def test_context_manager_loads_workspace_rules(tmp_path) -> None:
     (tmp_path / "AGENTS.md").write_text("只修改工作区内文件", encoding="utf-8")
     context = ContextManager(CompactionEngine(LlmClient(SummaryLlm())), ProjectRules())
 
-    result = await context.build("继续实现", tmp_path)
+    result = await context.build_system_context("继续实现", tmp_path)
 
     assert "# 项目规则" in result
     assert "只修改工作区内文件" in result
+
+
+async def test_context_manager_injects_resources_without_management_tools(tmp_path) -> None:
+    skills = Skills(tmp_path, user_root=tmp_path / "user-skills")
+    await skills.save("python-style", "Python style", "使用类型注解", SkillSource.WORKSPACE)
+    memories = MemoryStore(tmp_path)
+    await memories.save(MemoryEntry("architecture", "architecture decision", "保持线性会话"))
+    context = ContextManager(
+        CompactionEngine(LlmClient(SummaryLlm())),
+        skills=skills,
+        memories=memories,
+    )
+
+    result = await context.build_system_context("review architecture decision", tmp_path)
+
+    assert "使用类型注解" in result
+    assert "保持线性会话" in result
+    assert "skill_load" not in result
+    assert "memory_load" not in result

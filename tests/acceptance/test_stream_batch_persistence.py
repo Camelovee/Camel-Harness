@@ -1,7 +1,9 @@
 from collections.abc import AsyncIterator
 
-from camel_harness import Agent, AgentOptions, AgentStreamEventType
-from camel_harness.agent.compaction import CompactionEngine, ContextManager
+import pytest
+
+from camel_harness import Agent, AgentOptions
+from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import (
@@ -61,22 +63,28 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
         sessions,
         context,
     )
-    stream = agent.run_turn("session-1", "测试批量存储", tmp_path)
+    stream = agent.run("session-1", "测试批量存储", tmp_path)
 
-    first = await anext(stream)
+    prefix = []
+    async for event in stream:
+        prefix.append(event)
+        if (
+            event.type == "message_update"
+            and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
+        ):
+            break
+    first = prefix[-1]
 
-    assert first.type is AgentStreamEventType.TEXT_DELTA
-    assert first.data["text"] == "你"
+    assert first.type == "message_update"
+    assert first.assistant_event.data["text"] == "你"
     before_completion = await sessions.messages("session-1")
     assert [message.role for message in before_completion] == ["user"]
 
     remaining = [event async for event in stream]
 
-    assert [event.sequence for event in (first, *remaining)] == [1, 2, 3, 4, 5]
-    assert [event.type.value for event in remaining[-2:]] == [
-        "step_completed",
-        "turn_completed",
-    ]
+    all_events = [*prefix, *remaining]
+    assert [event.sequence for event in all_events] == list(range(1, len(all_events) + 1))
+    assert [event.type for event in remaining[-2:]] == ["turn_end", "agent_end"]
     persisted = await sessions.messages("session-1")
     assert [message.role for message in persisted] == [
         "user",
@@ -101,25 +109,25 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     llm = LlmClient(InterruptedLlm())
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
-        AgentOptions("fake-model", max_steps=1),
+        AgentOptions("fake-model", max_turns=1),
         llm,
         registry,
         ToolExecutor(registry, validate_tool_arguments),
         sessions,
         context,
     )
-    stream = agent.run_turn("session-failed", "测试失败流", tmp_path, system_prompt="system")
+    stream = agent.run("session-failed", "测试失败流", tmp_path, system_prompt="system")
 
     first = await anext(stream)
-    assert first.type.value == "text_delta"
+    while first.type != "message_update":
+        first = await anext(stream)
+    assert first.assistant_event.type is LlmStreamEventType.TEXT_DELTA
     failed = await anext(stream)
-    assert failed.type.value == "turn_failed"
-    try:
+    assert failed.type == "agent_end"
+    assert failed.status == "failed"
+    assert failed.error == "流中断"
+    with pytest.raises(StopAsyncIteration):
         await anext(stream)
-    except ConnectionError:
-        pass
-    else:
-        raise AssertionError("流中断必须向调用方传播")
 
     persisted = await sessions.messages("session-failed")
     assert [message.role for message in persisted] == ["user"]

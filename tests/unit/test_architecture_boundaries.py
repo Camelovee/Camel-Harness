@@ -14,8 +14,9 @@ def test_harness_is_split_into_agent_and_llm_packages() -> None:
     assert (PACKAGE_ROOT / "llm").is_dir()
     assert not (PACKAGE_ROOT / "harness").exists()
     assert not (PACKAGE_ROOT / "types").exists()
-    agent_files = {"agent.py", "agent_loop.py", "events.py", "state.py", "runtime.py"}
+    agent_files = {"agent.py", "events.py", "state.py", "runtime.py"}
     assert all((PACKAGE_ROOT / "agent" / name).is_file() for name in agent_files)
+    assert not (PACKAGE_ROOT / "agent/agent_loop.py").exists()
 
 
 def test_backend_and_cli_are_separate_packages() -> None:
@@ -52,10 +53,37 @@ def test_related_small_contracts_stay_consolidated() -> None:
         "agent/tools/provider.py",
         "agent/tools/jsonschema_validator.py",
         "agent/compaction/result.py",
+        "agent/compaction/context.py",
         "agent/resources/memory_types.py",
         "agent/resources/skill_types.py",
+        "agent/tools/knowledge.py",
+        "agent/tools/memory.py",
+        "agent/tools/plugins.py",
+        "agent/tools/search.py",
+        "agent/tools/skill.py",
     }
     assert not [name for name in removed_fragments if (PACKAGE_ROOT / name).exists()]
+    assert (PACKAGE_ROOT / "agent/tools/subagent.py").is_file()
+
+
+def test_context_manager_is_separate_from_session_persistence() -> None:
+    """ContextManager 位于独立目录，不持有 SessionManager 或 JSONL 存储。"""
+
+    manager_path = PACKAGE_ROOT / "agent/context/manager.py"
+    tree = ast.parse(manager_path.read_text("utf-8"))
+    classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+    identifiers = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    relative_modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.level > 0 and node.module
+    }
+
+    assert "ContextManager" in classes
+    assert not (PACKAGE_ROOT / "agent/compaction/context.py").exists()
+    assert not list((PACKAGE_ROOT / "agent/compaction").glob("*.py"))
+    assert not {"SessionManager", "JsonlSessionStorage"} & identifiers
+    assert not {"session.manager", "session.jsonl"} & relative_modules
 
 
 def test_feature_modules_do_not_restore_ddd_layers() -> None:
@@ -79,6 +107,20 @@ def test_tool_contract_lives_in_agent_tools() -> None:
     assert "ToolDefinition" in protocol_names
 
 
+def test_default_toolset_stays_small() -> None:
+    """默认工具只保留 pi-agent 式的核心文件与 Shell 能力。"""
+
+    tree = ast.parse((PACKAGE_ROOT / "agent/tools/builtin.py").read_text("utf-8"))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert {"ReadFileTool", "WriteFileTool", "EditFileTool", "RunShellTool"} <= imported
+    assert not {"ListFilesTool", "GrepSearchTool"} & imported
+
+
 def test_llm_does_not_depend_on_agent_or_entry_packages() -> None:
     """LLM 是独立底层包，不能反向依赖 Agent 或入口层。"""
 
@@ -87,7 +129,7 @@ def test_llm_does_not_depend_on_agent_or_entry_packages() -> None:
 
 
 def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
-    """LLM 请求与事件不得感知 Session、Turn、Step 或 Agent 序号。"""
+    """LLM 请求与事件不得感知 Session、Run、Turn 或 Agent 序号。"""
 
     tree = ast.parse((PACKAGE_ROOT / "llm/protocol.py").read_text("utf-8"))
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
@@ -147,32 +189,14 @@ def test_agent_does_not_depend_on_entry_packages() -> None:
     assert not _forbidden_imports(PACKAGE_ROOT / "agent", {"camel_backend", "camel_cli"})
 
 
-def test_agent_loop_does_not_depend_on_product_state() -> None:
-    """Agent Loop 只处理模型、工具、预算和流事件。"""
-
-    forbidden = {
-        "camel_harness.agent.compaction",
-        "camel_harness.agent.config",
-        "camel_harness.agent.resources",
-        "camel_harness.agent.runtime",
-        "camel_harness.agent.session",
-    }
-    assert not _forbidden_imports(PACKAGE_ROOT / "agent/agent_loop.py", forbidden)
-
-
-def test_agent_loop_is_a_function_and_agent_surface_stays_minimal() -> None:
-    """低层循环保持无状态函数，Agent 只暴露运行与关闭。"""
-
-    loop_tree = ast.parse((PACKAGE_ROOT / "agent/agent_loop.py").read_text("utf-8"))
-    assert any(
-        isinstance(node, ast.AsyncFunctionDef) and node.name == "agent_loop"
-        for node in loop_tree.body
-    )
-    assert not any(
-        isinstance(node, ast.ClassDef) and node.name == "AgentLoop" for node in loop_tree.body
-    )
+def test_agent_owns_loop_and_keeps_public_surface_minimal() -> None:
+    """ReAct 循环由 Agent 内部编排，不再建立独立 loop 入口。"""
 
     agent_tree = ast.parse((PACKAGE_ROOT / "agent/agent.py").read_text("utf-8"))
+    assert not any(
+        isinstance(node, ast.AsyncFunctionDef) and node.name == "agent_loop"
+        for node in agent_tree.body
+    )
     agent_class = next(
         node for node in agent_tree.body if isinstance(node, ast.ClassDef) and node.name == "Agent"
     )
@@ -182,7 +206,65 @@ def test_agent_loop_is_a_function_and_agent_surface_stays_minimal() -> None:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         and not node.name.startswith("_")
     }
-    assert public_methods == {"run_turn", "close"}
+    assert public_methods == {"run", "close"}
+    private_methods = {
+        node.name
+        for node in agent_class.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("_")
+    }
+    assert {"_run_turn", "_load_context", "_execute_calls"} <= private_methods
+    assert "_save_message" not in private_methods
+
+
+def test_agent_events_are_a_lifecycle_union() -> None:
+    """Agent 事件用判别联合表达生命周期，不恢复通用 data 容器。"""
+
+    tree = ast.parse((PACKAGE_ROOT / "agent/events.py").read_text("utf-8"))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    aliases = {
+        node.target.id
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+
+    assert "AgentEvent" in aliases
+    assert "AgentStreamEvent" not in classes
+    assert {
+        "AgentStartEvent",
+        "AgentEndEvent",
+        "TurnStartEvent",
+        "TurnEndEvent",
+        "MessageStartEvent",
+        "MessageUpdateEvent",
+        "MessageEndEvent",
+        "ToolExecutionStartEvent",
+        "ToolExecutionEndEvent",
+        "ApprovalRequestedEvent",
+    } <= classes.keys()
+    assert all(
+        "data"
+        not in {
+            node.target.id
+            for node in event_class.body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        for event_class in classes.values()
+    )
+
+
+def test_agent_loop_is_not_exported_as_a_second_entry_point() -> None:
+    """Harness 根包和 Agent 包都只对外提供 Agent 对象。"""
+
+    for path in (PACKAGE_ROOT / "__init__.py", PACKAGE_ROOT / "agent/__init__.py"):
+        tree = ast.parse(path.read_text("utf-8"))
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        assert "agent_loop" not in names | imported
 
 
 def test_runtime_is_the_only_full_composition_module() -> None:

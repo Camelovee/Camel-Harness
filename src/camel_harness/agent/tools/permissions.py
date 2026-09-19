@@ -52,7 +52,6 @@ class PermissionDecision:
 
 
 ApprovalPendingListener = Callable[[str, PermissionRequest, str], Awaitable[None]]
-PermissionDecider = Callable[[PermissionRequest], PermissionDecision]
 
 
 class ApprovalHandler(ABC):
@@ -100,10 +99,8 @@ class PermissionService:
     def __init__(
         self,
         approval: ApprovalHandler | None = None,
-        decide: PermissionDecider = default_permission_decision,
     ) -> None:
         self._approval = approval
-        self._decide = decide
 
     async def authorize(
         self,
@@ -112,7 +109,7 @@ class PermissionService:
     ) -> PermissionDecision:
         """返回包含审批结果的最终权限决策。"""
 
-        decision = self._decide(request)
+        decision = default_permission_decision(request)
         if decision.action is not PermissionAction.ASK:
             return decision
         if self._approval is None:

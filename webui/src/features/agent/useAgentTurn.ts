@@ -5,10 +5,10 @@ import { errorText } from "../../shared/presentation";
 import {
   fetchConversation,
   fetchPendingApprovals,
-  streamAgentTurn,
+  streamAgentRun,
   submitApproval,
 } from "./api";
-import { projectStreamEvent } from "./streamProjection";
+import { projectAgentEvent } from "./streamProjection";
 
 type Options = {
   activeId: string | null;
@@ -30,7 +30,6 @@ export function useAgentTurn(options: Options) {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const lastSequence = useRef(0);
-  const lastStepId = useRef<string | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -96,7 +95,6 @@ export function useAgentTurn(options: Options) {
       onStatus("正在连接 Agent…");
       setActivities([]);
       lastSequence.current = 0;
-      lastStepId.current = null;
       setStreamAssistantId(null);
       setMessages((current) => [
         ...current,
@@ -105,11 +103,10 @@ export function useAgentTurn(options: Options) {
       const assistantIds = new Map<string, string>();
       const toolIds = new Map<string, string>();
       try {
-        await streamAgentTurn(activeId, { prompt: value, permissionMode, thinking }, (event) =>
-          projectStreamEvent(event, assistantIds, toolIds, {
+        await streamAgentRun(activeId, { prompt: value, permissionMode, thinking }, (event) =>
+          projectAgentEvent(event, assistantIds, toolIds, {
             activeId,
             lastSequence,
-            lastStepId,
             setMessages,
             setStreamAssistantId,
             setActivities,

@@ -31,7 +31,7 @@ def main(
     ] = "default",
     resume: Annotated[bool, typer.Option("--resume", help="恢复当前工作区最近会话")] = False,
 ) -> None:
-    """运行一次流式 Harness Agent Turn。"""
+    """运行一次流式 Harness Agent。"""
 
     settings = AgentSettings()
     overrides: dict[str, str] = {}

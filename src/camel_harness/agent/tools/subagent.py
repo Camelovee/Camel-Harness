@@ -5,13 +5,12 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from camel_harness.llm import LlmClient, Message, UserMessage
+from camel_harness.llm import LlmClient, LlmStreamEventType
 
-from ..agent_loop import agent_loop
-from ..compaction import ContextManager
-from ..events import AgentStreamEventType
+from ..agent import Agent
+from ..context import ContextManager
 from ..session import SessionManager
-from ..state import AgentOptions, AgentRun, SessionId
+from ..state import AgentOptions, SessionId
 from .executor import ToolExecutor
 from .permissions import PermissionService
 from .registry import ToolProvider, ToolRegistry
@@ -27,7 +26,7 @@ from .types import (
 
 
 class SubagentType(StrEnum):
-    """内置子 Agent 委派预设。"""
+    """内置子 Agent 的最小任务预设。"""
 
     EXPLORE = "explore"
     PLAN = "plan"
@@ -38,7 +37,6 @@ class SubagentType(StrEnum):
 class SubagentRequest:
     """父 Agent 发起的一次隔离委派。"""
 
-    parent_session_id: str
     task: str
     agent_type: SubagentType
     workspace: Path
@@ -56,22 +54,12 @@ class SubagentResult:
 
 SubagentRunner = Callable[[SubagentRequest], Awaitable[SubagentResult]]
 
-_READ_ONLY_TOOLS = frozenset(
-    {
-        "read_file",
-        "list_files",
-        "grep_search",
-        "skill_list",
-        "skill_load",
-        "memory_list",
-        "memory_load",
-    }
-)
+_READ_ONLY_TOOLS = frozenset({"read_file"})
 _GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
 
 
 class LocalSubagentRunner:
-    """复用 Agent Loop，但使用隔离会话、预算和工具目录。"""
+    """复用 Agent 执行隔离任务，但不向子 Agent 暴露二次委派能力。"""
 
     def __init__(
         self,
@@ -95,7 +83,7 @@ class LocalSubagentRunner:
         allowed = _GENERAL_TOOLS if request.agent_type is SubagentType.GENERAL else _READ_ONLY_TOOLS
         registry = self._registry.subset(allowed)
         executor = ToolExecutor(registry, self._validate_arguments, self._permission)
-        options = replace(self._options, max_steps=8)
+        options = replace(self._options, max_turns=8)
         session_id = f"sub-{SessionId.new().value}"
         mode = (
             request.permission_mode
@@ -103,44 +91,30 @@ class LocalSubagentRunner:
             else PermissionMode.PLAN
         )
         prompt = f"你是 {request.agent_type.value} 子 Agent。只完成被委派任务并返回精炼结果。"
+        agent = Agent(
+            options,
+            self._llm,
+            registry,
+            executor,
+            self._sessions,
+            self._context,
+        )
         await self._sessions.ensure(session_id, request.workspace, "子 Agent")
-        await self._sessions.append_message(session_id, UserMessage(request.task))
-        dynamic_context = await self._context.build(request.task, request.workspace)
-        if dynamic_context:
-            prompt = f"{prompt}\n\n{dynamic_context}"
-
-        async def load_context(run: AgentRun, active_options: AgentOptions) -> tuple[Message, ...]:
-            log = await self._sessions.context_log(session_id)
-            compacted = await self._context.compact_if_needed(log, active_options)
-            if compacted is not None:
-                await self._sessions.replace_context(
-                    session_id,
-                    compacted.start_seq,
-                    compacted.end_seq,
-                    compacted.summary_message,
-                )
-                run.record_tokens(compacted.input_tokens, compacted.output_tokens)
-            return await self._sessions.context_messages(session_id)
-
-        async def on_message(message: Message) -> None:
-            await self._sessions.append_message(session_id, message)
 
         parts: list[str] = []
         try:
-            async for event in agent_loop(
-                llm=self._llm,
-                tools=registry,
-                tool_executor=executor,
-                session_id=session_id,
-                workspace=request.workspace,
+            async for event in agent.run(
+                session_id,
+                request.task,
+                request.workspace,
                 system_prompt=prompt,
-                options=options,
-                load_context=load_context,
-                on_message=on_message,
                 permission_mode=mode,
             ):
-                if event.type is AgentStreamEventType.TEXT_DELTA:
-                    parts.append(str(event.data.get("text", "")))
+                if (
+                    event.type == "message_update"
+                    and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
+                ):
+                    parts.append(str(event.assistant_event.data.get("text", "")))
         except Exception as exc:
             return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)
         return SubagentResult(session_id, "".join(parts), True)
@@ -170,7 +144,6 @@ class DelegateTaskTool(Tool):
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         result = await self._runner(
             SubagentRequest(
-                parent_session_id=context.session_id,
                 task=str(call.arguments["task"]),
                 agent_type=SubagentType(str(call.arguments["agent_type"])),
                 workspace=context.workspace,
@@ -187,7 +160,7 @@ class DelegateTaskTool(Tool):
 
 
 class SubagentToolProvider(ToolProvider):
-    """提供子 Agent 委派工具。"""
+    """提供唯一的子 Agent 委派工具。"""
 
     def __init__(self, runner: SubagentRunner) -> None:
         self._runner = runner

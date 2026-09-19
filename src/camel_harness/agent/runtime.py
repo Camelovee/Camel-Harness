@@ -11,8 +11,8 @@ from camel_harness.llm import (
 )
 
 from .agent import Agent
-from .compaction import CompactionEngine, ContextManager
 from .config import AgentSettings
+from .context import CompactionEngine, ContextManager
 from .resources import MemoryStore, ProjectRules, Skills
 from .session import SessionManager
 from .session.jsonl import JsonlSessionStorage
@@ -26,10 +26,7 @@ from .tools import (
 )
 from .tools.builtin import BuiltinToolProvider
 from .tools.file_result_storage import FileToolResultStorage
-from .tools.knowledge import KnowledgeToolProvider
 from .tools.mcp import McpManager
-from .tools.plugins import EntryPointToolProvider
-from .tools.search import ToolSearchProvider
 from .tools.subagent import LocalSubagentRunner, SubagentToolProvider
 
 logger = logging.getLogger(__name__)
@@ -56,13 +53,11 @@ async def build_agent(
 
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
-    await registry.register_provider(KnowledgeToolProvider(skills, memories))
-    plugins = EntryPointToolProvider()
-    await registry.register_provider(plugins)
     mcp = McpManager(workspace, workspace / settings.mcp_config)
     await mcp.start()
     await registry.register_provider(mcp)
-    await registry.register_provider(ToolSearchProvider(registry))
+    for error in mcp.errors:
+        logger.warning("MCP 工具加载失败：%s", error)
 
     permission = PermissionService(approval)
     executor = ToolExecutor(
@@ -98,8 +93,7 @@ async def build_agent(
         options,
     )
     await registry.register_provider(SubagentToolProvider(subagent.run))
-    for error in (*mcp.errors, *plugins.errors):
-        logger.warning("Agent 扩展加载失败：%s", error)
+
     return Agent(
         options,
         llm,

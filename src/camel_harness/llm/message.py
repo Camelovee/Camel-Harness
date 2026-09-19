@@ -32,7 +32,7 @@ AssistantContent: TypeAlias = TextBlock | ReasoningBlock | ToolUseBlock
 
 
 class LlmStopReason(StrEnum):
-    """单次模型响应的规范结束原因，不表示 Agent Turn 的终态。"""
+    """单次模型响应的规范结束原因，不表示 Agent Run 的终态。"""
 
     STOP = "stop"
     LENGTH = "length"

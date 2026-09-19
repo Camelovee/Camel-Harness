@@ -19,7 +19,7 @@ def test_http_router_keeps_public_endpoints_after_module_split() -> None:
     assert (
         str(router.url_path_for("session_messages", session_id="s")) == "/api/sessions/s/messages"
     )
-    assert str(router.url_path_for("run_turn", session_id="s")) == "/api/sessions/s/turns"
+    assert str(router.url_path_for("run_agent", session_id="s")) == "/api/sessions/s/runs"
     assert str(router.url_path_for("workspaces")) == "/api/workspaces"
     assert str(router.url_path_for("select_workspace")) == "/api/workspaces/select"
     assert str(router.url_path_for("approvals")) == "/api/approvals"

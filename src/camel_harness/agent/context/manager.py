@@ -3,15 +3,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from camel_harness.agent.resources import MemoryStore, ProjectRules, Skills
-from camel_harness.agent.session import SessionLog
-from camel_harness.agent.state import AgentOptions
-
-from .engine import CompactionEngine, CompactionResult, CompactionTrigger
+from ..resources import MemoryStore, ProjectRules, Skills
+from ..session.log import SessionLog
+from ..state import AgentOptions
+from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
 
 
 class ContextManager:
-    """组装项目规则、Skill 和 Memory，形成一次 Turn 的动态上下文。"""
+    """为 Agent 提供动态系统上下文和历史压缩能力。"""
 
     def __init__(
         self,
@@ -29,8 +28,8 @@ class ContextManager:
         self._memories = memories
         self._max_rules_chars = max_rules_chars
 
-    async def build(self, prompt: str, workspace: Path) -> str:
-        """按需组装项目规则、Skill 摘要和与当前任务相关的 Memory。"""
+    async def build_system_context(self, prompt: str, workspace: Path) -> str:
+        """组装项目规则、Skill 索引和与当前任务相关的 Memory。"""
 
         rules = await self._project_rules.read(workspace) if self._project_rules else ""
         skills = await self._skills.discover() if self._skills is not None else ()
@@ -39,23 +38,22 @@ class ContextManager:
         if rules:
             sections.append(f"# 项目规则\n{rules[: self._max_rules_chars]}")
         if skills:
-            manifest = "\n".join(
-                f"- {item.name} ({item.source.value}): {item.description}" for item in skills
+            content = "\n\n".join(
+                f"## {item.name} ({item.source.value})\n{item.description}\n\n{item.instructions}"
+                for item in skills
             )
-            sections.append(f"# 可用 Skills\n{manifest}\n需要时调用 skill_load 获取正文。")
+            sections.append(f"# Skills\n{content}")
         if memories:
             manifest = "\n".join(f"- {item.name}: {item.description}" for item in memories)
-            sections.append(f"# 长期 Memory\n{manifest}\n需要时调用 memory_load 获取正文。")
+            sections.append(f"# 长期 Memory 索引\n{manifest}")
             tokens = set(re.findall(r"[\w-]+", prompt.lower()))
             ranked = sorted(
                 memories,
-                key=lambda item: len(tokens & self._memory_tokens(item.name, item.description)),
+                key=lambda item: len(tokens & _memory_tokens(item.name, item.description)),
                 reverse=True,
             )
             relevant = [
-                item
-                for item in ranked[:3]
-                if tokens & self._memory_tokens(item.name, item.description)
+                item for item in ranked[:3] if tokens & _memory_tokens(item.name, item.description)
             ]
             if relevant:
                 content = "\n\n".join(f"## {item.name}\n{item.content[:4000]}" for item in relevant)
@@ -69,14 +67,10 @@ class ContextManager:
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> CompactionResult | None:
-        """委托所持有的压缩引擎裁剪上下文。"""
+        """根据只读 SessionLog 生成压缩计划，不执行会话持久化。"""
 
-        return await self._compaction.compact_if_needed(
-            session,
-            options,
-            trigger=trigger,
-        )
+        return await self._compaction.compact_if_needed(session, options, trigger=trigger)
 
-    @staticmethod
-    def _memory_tokens(name: str, description: str) -> set[str]:
-        return set(re.findall(r"[\w-]+", f"{name} {description}".lower()))
+
+def _memory_tokens(name: str, description: str) -> set[str]:
+    return set(re.findall(r"[\w-]+", f"{name} {description}".lower()))

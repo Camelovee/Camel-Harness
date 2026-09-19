@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 
 from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
@@ -44,78 +43,6 @@ class ReadFileTool(Tool):
         selected = lines[start - 1 : start - 1 + limit]
         numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(selected, start=start))
         return ToolResult(call.call_id, call.name, numbered)
-
-
-class ListFilesTool(Tool):
-    """列出工作区目录中的文件。"""
-
-    name = "list_files"
-    description = "递归列出工作区目录下的文件。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "default": "."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 5000},
-        },
-        "additionalProperties": False,
-    }
-    capabilities = frozenset({"filesystem.read"})
-
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        base = resolve_in_workspace(context.workspace, str(call.arguments.get("path", ".")))
-        limit = int(call.arguments.get("limit", 500))
-
-        def collect() -> str:
-            paths = []
-            for item in base.rglob("*"):
-                if item.is_file():
-                    paths.append(str(item.relative_to(context.workspace)))
-                    if len(paths) >= limit:
-                        break
-            return "\n".join(sorted(paths))
-
-        return ToolResult(call.call_id, call.name, await asyncio.to_thread(collect))
-
-
-class GrepSearchTool(Tool):
-    """在工作区文本文件中执行受限制的正则搜索。"""
-
-    name = "grep_search"
-    description = "使用正则表达式搜索工作区文本，返回文件、行号和内容。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "pattern": {"type": "string", "minLength": 1},
-            "path": {"type": "string", "default": "."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
-        },
-        "required": ["pattern"],
-        "additionalProperties": False,
-    }
-    capabilities = frozenset({"filesystem.read"})
-
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        base = resolve_in_workspace(context.workspace, str(call.arguments.get("path", ".")))
-        pattern = re.compile(str(call.arguments["pattern"]))
-        limit = int(call.arguments.get("limit", 200))
-
-        def search() -> str:
-            matches: list[str] = []
-            candidates = [base] if base.is_file() else base.rglob("*")
-            for path in candidates:
-                if not path.is_file() or path.stat().st_size > 2_000_000:
-                    continue
-                try:
-                    for number, line in enumerate(path.read_text("utf-8").splitlines(), start=1):
-                        if pattern.search(line):
-                            matches.append(f"{path.relative_to(context.workspace)}:{number}:{line}")
-                            if len(matches) >= limit:
-                                return "\n".join(matches)
-                except (UnicodeDecodeError, OSError):
-                    continue
-            return "\n".join(matches)
-
-        return ToolResult(call.call_id, call.name, await asyncio.to_thread(search))
 
 
 class WriteFileTool(Tool):

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class ProjectRules:
-    """集中读取工作区项目规则，避免 Agent Loop 直接处理文件。"""
+    """集中读取工作区项目规则，避免 Agent 直接处理文件细节。"""
 
     async def read(self, workspace: Path) -> str:
         """读取工作区根目录的 AGENTS.md；文件不存在时返回空字符串。"""

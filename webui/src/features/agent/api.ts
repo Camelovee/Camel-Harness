@@ -1,31 +1,20 @@
 import { apiJson, apiPath } from "../../shared/api";
 import type {
+  AgentEvent,
   Approval,
-  ContentBlock,
   Message,
   PermissionMode,
-  StreamEvent,
+  WireMessage,
 } from "../../shared/model";
 
 export async function fetchConversation(sessionId: string): Promise<Message[]> {
-  const result = await apiJson<{ messages: StoredMessage[] }>(`/sessions/${sessionId}/messages`);
+  const result = await apiJson<{ messages: WireMessage[] }>(`/sessions/${sessionId}/messages`);
   return result.messages
     .map(projectStoredMessage)
     .filter((message): message is Message => message !== null);
 }
 
-type StoredMessage =
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: ContentBlock[] }
-  | {
-      role: "toolResult";
-      tool_call_id: string;
-      tool_name: string;
-      content: string;
-      is_error: boolean;
-    };
-
-function projectStoredMessage(message: StoredMessage, index: number): Message | null {
+function projectStoredMessage(message: WireMessage, index: number): Message | null {
   if (message.role === "user") {
     return {
       id: `user-${index}-${message.content.length}`,
@@ -70,18 +59,18 @@ export async function submitApproval(requestId: string, approved: boolean): Prom
   });
 }
 
-type TurnRequest = {
+type RunRequest = {
   prompt: string;
   permissionMode: PermissionMode;
   thinking: boolean;
 };
 
-export async function streamAgentTurn(
+export async function streamAgentRun(
   sessionId: string,
-  request: TurnRequest,
-  onEvent: (event: StreamEvent) => void,
+  request: RunRequest,
+  onEvent: (event: AgentEvent) => void,
 ): Promise<void> {
-  const response = await fetch(apiPath(`/sessions/${sessionId}/turns`), {
+  const response = await fetch(apiPath(`/sessions/${sessionId}/runs`), {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({
@@ -109,11 +98,11 @@ export async function streamAgentTurn(
   if (buffer.trim()) emitFrame(buffer, onEvent);
 }
 
-function emitFrame(frame: string, onEvent: (event: StreamEvent) => void): void {
+function emitFrame(frame: string, onEvent: (event: AgentEvent) => void): void {
   const data = frame
     .split("\n")
     .filter((line) => line.startsWith("data: "))
     .map((line) => line.slice(6))
     .join("\n");
-  if (data) onEvent(JSON.parse(data) as StreamEvent);
+  if (data) onEvent(JSON.parse(data) as AgentEvent);
 }

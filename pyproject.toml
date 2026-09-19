@@ -65,20 +65,6 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "低层 agent_loop 函数不得依赖产品能力"
-type = "forbidden"
-source_modules = ["camel_harness.agent.agent_loop"]
-forbidden_modules = [
-  "camel_harness.agent.compaction",
-  "camel_harness.agent.config",
-  "camel_harness.agent.resources",
-  "camel_harness.agent.runtime",
-  "camel_harness.agent.session",
-  "camel_backend",
-  "camel_cli",
-]
-
-[[tool.importlinter.contracts]]
 name = "Agent 不得依赖入口层"
 type = "forbidden"
 source_modules = ["camel_harness.agent"]

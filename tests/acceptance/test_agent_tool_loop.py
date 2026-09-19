@@ -2,8 +2,8 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from camel_backend.approval import WebApproval
-from camel_harness import Agent, AgentOptions, AgentStreamEventType
-from camel_harness.agent.compaction import CompactionEngine, ContextManager
+from camel_harness import Agent, AgentOptions, StopReason
+from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import (
@@ -45,8 +45,8 @@ class FakeLlm(LlmAdapter):
                 LlmStreamEventType.TOOL_CALL_COMPLETED,
                 {
                     "call_id": "call-1",
-                    "name": "list_files",
-                    "arguments": {"path": "."},
+                    "name": "read_file",
+                    "arguments": {"path": "sample.txt", "max_lines": 1},
                 },
             )
             yield LlmStreamEvent(
@@ -144,15 +144,23 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
 
     events = [
         event
-        async for event in agent.run_turn(
-            "session-1", "读取文件", tmp_path, max_steps=3, thinking=True
-        )
+        async for event in agent.run("session-1", "读取文件", tmp_path, max_turns=3, thinking=True)
     ]
 
     assert runtime.calls == 2
-    assert any(event.type is AgentStreamEventType.TOOL_RESULT for event in events)
+    assert events[0].type == "agent_start"
+    assert events[-1].type == "agent_end"
+    assert events[-1].status == "completed"
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert len({event.run_id for event in events}) == 1
+    assert [event.type for event in events].count("turn_start") == 2
+    assert [event.type for event in events].count("turn_end") == 2
+    assert any(event.type == "tool_execution_end" for event in events)
     assert "已读取文件" == "".join(
-        str(event.data["text"]) for event in events if event.type is AgentStreamEventType.TEXT_DELTA
+        str(event.assistant_event.data["text"])
+        for event in events
+        if event.type == "message_update"
+        and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
     )
     assert [message.role for message in await sessions.messages("session-1")] == [
         "user",
@@ -171,7 +179,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
 
 
 async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
-    """审批事件应在本 Step 的 assistant 流结束后发送，并在决定后继续工具结果。"""
+    """审批事件应在本 Turn 的 assistant 流结束后发送，并在决定后继续工具结果。"""
 
     runtime = ApprovalFakeLlm()
     llm = LlmClient(runtime)
@@ -193,11 +201,11 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     async def collect() -> list:
         return [
             event
-            async for event in agent.run_turn(
+            async for event in agent.run(
                 "session-approval",
                 "写入文件",
                 tmp_path,
-                max_steps=3,
+                max_turns=3,
                 permission_mode=PermissionMode.DEFAULT,
             )
         ]
@@ -215,9 +223,13 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     events = await stream_task
 
     types = [event.type for event in events]
-    approval_index = types.index(AgentStreamEventType.APPROVAL_REQUESTED)
-    completed_index = types.index(AgentStreamEventType.MESSAGE_COMPLETED)
-    result_index = types.index(AgentStreamEventType.TOOL_RESULT)
+    approval_index = types.index("approval_requested")
+    completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == "message_end" and event.message.role == "assistant"
+    )
+    result_index = types.index("tool_execution_end")
     assert completed_index < approval_index < result_index
     assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == "内容"
 
@@ -238,12 +250,13 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
         ContextManager(CompactionEngine(llm)),
     )
 
-    events = [event async for event in agent.run_turn("session-length", "写文件", tmp_path)]
+    events = [event async for event in agent.run("session-length", "写文件", tmp_path)]
     messages = await sessions.messages("session-length")
 
     assert not (tmp_path / "should-not-exist.txt").exists()
-    assert events[-1].type is AgentStreamEventType.TURN_FAILED
-    assert events[-1].data["stop_reason"] == "model_length"
+    assert events[-1].type == "agent_end"
+    assert events[-1].status == "failed"
+    assert events[-1].stop_reason is StopReason.MODEL_LENGTH
     assert [message.role for message in messages] == ["user", "assistant", "toolResult"]
     assert isinstance(messages[1], AssistantMessage)
     assert messages[1].stop_reason is LlmStopReason.LENGTH

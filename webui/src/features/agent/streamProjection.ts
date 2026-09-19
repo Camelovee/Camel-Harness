@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import type { Activity, Approval, Message, StreamEvent } from "../../shared/model";
+import type { Activity, AgentEvent, Approval, Message } from "../../shared/model";
 import { appendBlockText } from "../../shared/presentation";
 
 type MutableValue<T> = { current: T };
@@ -8,7 +8,6 @@ type MutableValue<T> = { current: T };
 type ProjectionContext = {
   activeId: string | null;
   lastSequence: MutableValue<number>;
-  lastStepId: MutableValue<string | null>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setStreamAssistantId: Dispatch<SetStateAction<string | null>>;
   setActivities: Dispatch<SetStateAction<Activity[]>>;
@@ -17,24 +16,20 @@ type ProjectionContext = {
   onStatus: (message: string) => void;
 };
 
-export function projectStreamEvent(
-  event: StreamEvent,
+export function projectAgentEvent(
+  event: AgentEvent,
   assistantIds: Map<string, string>,
   toolIds: Map<string, string>,
   context: ProjectionContext,
 ): void {
-  if (event.step_id && event.step_id !== context.lastStepId.current) {
-    context.lastStepId.current = event.step_id;
-    context.lastSequence.current = 0;
-  }
   if (event.sequence <= context.lastSequence.current) return;
   context.lastSequence.current = event.sequence;
-  const stepId = event.step_id ?? "unknown";
-  const ensureAssistant = () => {
-    const existing = assistantIds.get(stepId);
+
+  const ensureAssistant = (messageId: string) => {
+    const existing = assistantIds.get(messageId);
     if (existing) return existing;
-    const assistantId = `assistant-${stepId}-${Date.now()}-${assistantIds.size}`;
-    assistantIds.set(stepId, assistantId);
+    const assistantId = `assistant-${messageId}`;
+    assistantIds.set(messageId, assistantId);
     context.setStreamAssistantId(assistantId);
     context.setMessages((current) => [
       ...current,
@@ -43,81 +38,95 @@ export function projectStreamEvent(
     return assistantId;
   };
 
-  if (event.type === "text_delta" || event.type === "reasoning_delta") {
-    const assistantId = ensureAssistant();
-    const type = event.type === "text_delta" ? "text" : "reasoning";
-    const delta = String(event.data.text ?? "");
-    context.setMessages((current) =>
-      current.map((message) =>
-        message.id === assistantId
-          ? { ...message, content: appendBlockText(message.content, type, delta) }
-          : message,
-      ),
-    );
-    context.onStatus(event.type === "text_delta" ? "正在生成回答…" : "正在分析…");
+  if (event.type === "agent_start") {
+    context.onStatus("Agent 正在运行…");
     return;
   }
-  if (event.type === "tool_call_started") {
-    ensureAssistant();
-    const callId = String(event.data.call_id ?? `${event.data.name}-${Date.now()}`);
-    const activityId = `${callId}-${Date.now()}`;
-    toolIds.set(callId, activityId);
+  if (event.type === "turn_start") {
+    context.onStatus(`正在处理第 ${event.turn} 个 Turn…`);
+    return;
+  }
+  if (event.type === "message_start") {
+    if (event.role === "assistant") ensureAssistant(event.message_id);
+    return;
+  }
+  if (event.type === "message_update") {
+    projectMessageUpdate(event, ensureAssistant, context);
+    return;
+  }
+  if (event.type === "tool_execution_start") {
+    const activityId = `${event.call_id}-${Date.now()}`;
+    toolIds.set(event.call_id, activityId);
     context.setActivities((current) => [
       ...current,
-      { id: activityId, name: String(event.data.name ?? "工具"), status: "running" },
+      { id: activityId, name: event.name, status: "running" },
     ]);
-    context.onStatus(`正在调用 ${String(event.data.name ?? "工具")}…`);
-    return;
-  }
-  if (event.type === "tool_call_completed") {
-    ensureAssistant();
+    context.onStatus(`正在调用 ${event.name}…`);
     return;
   }
   if (event.type === "approval_requested") {
-    projectApproval(event, ensureAssistant, context);
+    projectApproval(event, context);
     return;
   }
-  if (event.type === "tool_result") {
-    projectToolResult(event, toolIds, context);
+  if (event.type === "tool_execution_end") {
+    projectToolExecutionEnd(event, toolIds, context);
     return;
   }
-  if (event.type === "message_completed" || event.type === "turn_completed") {
-    if (event.type === "message_completed") ensureAssistant();
-    context.onStatus("回答完成");
+  if (event.type === "message_end") {
+    if (event.message.role === "toolResult") {
+      appendToolResultMessage(event.message_id, event.message, context);
+    }
     return;
   }
-  if (event.type === "turn_failed" || event.type === "stream_failed") {
-    context.onError(String(event.data.error ?? "Agent 运行失败"));
-    context.onStatus("运行失败");
+  if (event.type === "turn_end") {
+    context.onStatus("Turn 已完成");
     return;
   }
-  if (event.type === "turn_cancelled" || event.type === "stream_cancelled") {
-    context.onStatus("运行已取消");
+  if (event.type === "agent_end") {
+    if (event.status === "failed") {
+      context.onError(event.error || "Agent 运行失败");
+      context.onStatus("运行失败");
+    } else if (event.status === "cancelled") {
+      context.onStatus("运行已取消");
+    } else {
+      context.onStatus("回答完成");
+    }
   }
 }
 
-function projectApproval(
-  event: StreamEvent,
-  ensureAssistant: () => string,
+function projectMessageUpdate(
+  event: Extract<AgentEvent, { type: "message_update" }>,
+  ensureAssistant: (messageId: string) => string,
   context: ProjectionContext,
 ): void {
-  const requestId = String(event.data.request_id ?? "");
-  if (!requestId) return;
-  ensureAssistant();
+  const update = event.assistant_event;
+  if (update.type !== "text_delta" && update.type !== "reasoning_delta") return;
+  const assistantId = ensureAssistant(event.message_id);
+  const type = update.type === "text_delta" ? "text" : "reasoning";
+  const delta = String(update.data.text ?? "");
+  context.setMessages((current) =>
+    current.map((message) =>
+      message.id === assistantId
+        ? { ...message, content: appendBlockText(message.content, type, delta) }
+        : message,
+    ),
+  );
+  context.onStatus(update.type === "text_delta" ? "正在生成回答…" : "正在分析…");
+}
+
+function projectApproval(
+  event: Extract<AgentEvent, { type: "approval_requested" }>,
+  context: ProjectionContext,
+): void {
   const approval: Approval = {
-    request_id: requestId,
-    session_id: String(event.session_id ?? context.activeId ?? ""),
-    call_id: String(event.data.call_id ?? ""),
-    tool_name: String(event.data.name ?? "工具"),
-    capabilities: Array.isArray(event.data.capabilities)
-      ? event.data.capabilities.map(String)
-      : [],
-    risk: String(event.data.risk ?? ""),
-    arguments:
-      typeof event.data.arguments === "object" && event.data.arguments !== null
-        ? (event.data.arguments as Record<string, unknown>)
-        : {},
-    reason: String(event.data.reason ?? "该工具可能修改当前环境"),
+    request_id: event.request_id,
+    session_id: event.session_id || context.activeId || "",
+    call_id: event.call_id,
+    tool_name: event.name,
+    capabilities: event.capabilities,
+    risk: event.risk,
+    arguments: event.arguments,
+    reason: event.reason,
     status: "pending",
   };
   context.setMessages((current) =>
@@ -139,53 +148,57 @@ function projectApproval(
   context.onStatus("等待工具审批…");
 }
 
-function projectToolResult(
-  event: StreamEvent,
+function projectToolExecutionEnd(
+  event: Extract<AgentEvent, { type: "tool_execution_end" }>,
   toolIds: Map<string, string>,
   context: ProjectionContext,
 ): void {
-  const callId = String(event.data.call_id ?? "");
-  const activityId = toolIds.get(callId);
+  const result = event.result;
+  const activityId = toolIds.get(result.call_id);
   if (activityId) {
     context.setActivities((current) =>
       current.map((activity) =>
         activity.id === activityId
           ? {
               ...activity,
-              status: event.data.is_error ? "error" : "success",
-              result: String(event.data.content ?? ""),
+              status: result.is_error ? "error" : "success",
+              result: result.content,
             }
           : activity,
       ),
     );
   }
   context.setApprovals((current) =>
-    current.filter((approval) => approval.call_id !== callId),
+    current.filter((approval) => approval.call_id !== result.call_id),
   );
+}
+
+function appendToolResultMessage(
+  messageId: string,
+  message: Extract<
+    Extract<AgentEvent, { type: "message_end" }>["message"],
+    { role: "toolResult" }
+  >,
+  context: ProjectionContext,
+): void {
   context.setMessages((current) => {
     const withoutApproval = current.filter(
-      (message) => !(message.role === "approval" && message.approval?.call_id === callId),
+      (item) =>
+        !(item.role === "approval" && item.approval?.call_id === message.tool_call_id),
     );
-    if (
-      withoutApproval.some(
-        (message) =>
-          message.role === "toolResult" && message.content[0]?.call_id === callId,
-      )
-    ) {
-      return withoutApproval;
-    }
+    if (withoutApproval.some((item) => item.id === messageId)) return withoutApproval;
     return [
       ...withoutApproval,
       {
-        id: `tool-${callId}`,
+        id: messageId,
         role: "toolResult",
         content: [
           {
             type: "tool_result",
-            call_id: callId,
-            name: String(event.data.name ?? "工具"),
-            content: String(event.data.content ?? ""),
-            is_error: Boolean(event.data.is_error),
+            call_id: message.tool_call_id,
+            name: message.tool_name,
+            content: message.content,
+            is_error: message.is_error,
           },
         ],
       },

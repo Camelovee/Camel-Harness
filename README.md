@@ -1,19 +1,19 @@
 # Camel Harness
 
-Camel Harness 是一个受 pi-agent 启发的 Python Agent Runtime。它提供流式 ReAct 循环、OpenAI/Anthropic Provider、可扩展工具、权限审批、MCP、Skill、Memory、子 Agent、上下文压缩和纯本地 JSONL 会话。
+Camel Harness 是一个受 pi-agent 启发的 Python Agent Runtime。它提供流式 ReAct 循环、OpenAI/Anthropic Provider、精简可扩展工具、子 Agent 委派、权限审批、MCP、动态上下文、压缩和纯本地 JSONL 会话。
 
 项目不使用 DDD 和多层 Port/Service 结构，而是将 Agent、LLM 与两种入口按依赖方向组织：
 
 - `llm`：规范消息、请求、流事件，以及 OpenAI/Anthropic 适配；
-- `agent_loop()`：无状态低层函数，只处理 LLM、工具、预算和流事件；
-- `Agent`：协调会话、资源、压缩、持久化和外部连接。
+- `Agent`：统一编排 Run/Turn 生命周期、LLM、工具、会话、上下文和持久化；
+- `Backend / CLI`：只提供 HTTP/SSE 或终端入口。
 
 ## 架构
 
 ```text
-Backend / CLI -> Agent -> agent_loop() -> LLM
-                   |          +--------> Tools
-                   +-> Session / Compaction / Resources
+Backend / CLI -> Agent -> LLM
+                   +----> Tools
+                   +----> Session / Context / Resources
 ```
 
 ```text
@@ -32,15 +32,19 @@ src/
 - 默认 Anthropic Provider，可切换 OpenAI；两者均使用官方 SDK；
 - 使用 `UserMessage | AssistantMessage | ToolResultMessage` 判别联合，系统提示与会话消息分离；
 - Assistant 消息保留规范化 `stop/length/tool_use` 结束原因，截断的工具参数不会被执行；
-- 文本、thinking 和工具调用的实时流式事件；
-- LLM 协议不携带 Session、Turn、Step 等 Agent 运行坐标，由 `agent_loop()` 在公开事件中统一补齐；
+- `AgentEvent` 判别联合完整描述 Agent、Turn、Message、Tool 和 Approval 生命周期；
+- 文本、thinking、usage 和工具调用增量通过 `message_update.assistant_event` 实时转发；
+- LLM 协议不携带 Session、Run、Turn 等 Agent 运行坐标，由 `Agent` 在公开事件中统一补齐；
+- 事件 `sequence` 在整个 Run 内单调递增，可用于 SSE 排序和去重；
 - 流正常结束后批量追加完整 assistant 消息，不保存 chunk；
-- `Tool` ABC 直接字段式定义，支持内置工具、Python Entry Point 和 MCP；
-- 文件、Shell、Skill、Memory、工具搜索和子 Agent 工具；
+- `Tool` ABC 直接字段式定义，支持显式注册和 MCP；
+- 默认提供 read/write/edit/shell 四个核心工具与 `delegate_task`；子 Agent 使用隔离会话和白名单工具集，不能递归委派；
+- Skill 和 Memory 由 `ContextManager` 检索后注入系统上下文；
 - Plan、Accept Edits、Default 和 YOLO 权限模式；
 - 浏览器异步审批与 CLI 审批；
 - `~/.camel/sessions/<session-id>/` 下的 JSONL 会话恢复；
 - 追加式上下文投影和历史压缩；
+- Session 独立管理会话；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
 - FastAPI + React WebUI 与 Typer CLI。
 
 ## 安装
@@ -76,8 +80,8 @@ export CAMEL_MODEL="gpt-5"
 | `CAMEL_PROVIDER` | `anthropic` | `anthropic` 或 `openai` |
 | `CAMEL_MODEL` | `claude-sonnet-4-6` | 模型名称 |
 | `CAMEL_MAX_OUTPUT_TOKENS` | `4096` | 单次模型最大输出 |
-| `CAMEL_MAX_TOTAL_TOKENS` | `200000` | 单 Turn 总预算 |
-| `CAMEL_MAX_DURATION_SECONDS` | `900` | 单 Turn 总时限 |
+| `CAMEL_MAX_TOTAL_TOKENS` | `200000` | 单次 Run 总预算 |
+| `CAMEL_MAX_DURATION_SECONDS` | `900` | 单次 Run 总时限 |
 | `CAMEL_SESSION_DIR` | `~/.camel/sessions` | 全局会话目录 |
 
 ## 运行
@@ -127,7 +131,7 @@ class ExampleTool(Tool):
         return ToolResult(call.call_id, call.name, str(call.arguments["text"]))
 ```
 
-新增工具不需要修改 Agent Loop，只需通过 `ToolProvider` 注册。
+新增工具不需要修改 Agent 主流程，只需通过 `ToolProvider` 显式注册。默认运行时不扫描 Python Entry Point，避免工具集在不可见的情况下膨胀；外部能力通过 `.mcp.json` 按项目接入。
 
 ## 会话格式
 

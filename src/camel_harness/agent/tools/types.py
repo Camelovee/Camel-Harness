@@ -72,14 +72,10 @@ class Tool(ABC):
 
     namespace = "builtin"
     name = ""
-    label = ""
     description = ""
     parameters: dict[str, Any] = {}
-    version = "1"
     capabilities: frozenset[str] = frozenset()
-    tags: frozenset[str] = frozenset()
     risk = ToolRisk.READ
-    deferred = False
     timeout_seconds = 30.0
 
     @property

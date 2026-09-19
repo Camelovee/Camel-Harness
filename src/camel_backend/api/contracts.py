@@ -17,12 +17,12 @@ class SessionUpdateBody(BaseModel):
     archived: bool | None = None
 
 
-class TurnBody(BaseModel):
-    """浏览器发起 Agent Turn 的 HTTP 请求体。"""
+class RunBody(BaseModel):
+    """浏览器发起一次 Agent Run 的 HTTP 请求体。"""
 
     prompt: str = Field(min_length=1, max_length=100_000)
     permission_mode: Literal["default", "accept_edits", "plan", "yolo"] = "default"
-    max_steps: int = Field(default=20, ge=1, le=100)
+    max_turns: int = Field(default=20, ge=1, le=100)
     thinking: bool = False
 
 

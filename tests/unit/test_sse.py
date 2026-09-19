@@ -1,18 +1,18 @@
 import json
 
 from camel_backend.api.sse import encode_sse, stream_sse
-from camel_harness import AgentStreamEvent, AgentStreamEventType
+from camel_harness.agent.events import MessageUpdateEvent
+from camel_harness.llm import LlmStreamEvent, LlmStreamEventType
 
 
-def _event(sequence: int, text: str) -> AgentStreamEvent:
-    return AgentStreamEvent(
-        type=AgentStreamEventType.TEXT_DELTA,
+def _event(sequence: int, text: str) -> MessageUpdateEvent:
+    return MessageUpdateEvent(
         session_id="session-1",
-        turn_id="turn-1",
-        step_id="step-1",
+        run_id="run-1",
         sequence=sequence,
-        source="fake",
-        data={"text": text},
+        turn_id="turn-1",
+        message_id="message-1",
+        assistant_event=LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": text}),
     )
 
 
@@ -20,11 +20,12 @@ def test_encode_sse_preserves_event_identity_and_payload() -> None:
     frame = encode_sse(_event(3, "你好"))
 
     lines = frame.splitlines()
-    assert lines[:2] == ["id: 3", "event: text_delta"]
+    assert lines[:2] == ["id: 3", "event: message_update"]
     payload = json.loads(lines[2].removeprefix("data: "))
     assert payload["session_id"] == "session-1"
     assert payload["sequence"] == 3
-    assert payload["data"] == {"text": "你好"}
+    assert payload["run_id"] == "run-1"
+    assert payload["assistant_event"] == {"type": "text_delta", "data": {"text": "你好"}}
     assert frame.endswith("\n\n")
 
 

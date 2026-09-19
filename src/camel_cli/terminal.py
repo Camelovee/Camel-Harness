@@ -5,7 +5,7 @@ from pathlib import Path
 
 import typer
 
-from camel_harness.agent import Agent, AgentStreamEventType
+from camel_harness.agent import Agent
 from camel_harness.agent.tools import PermissionMode
 
 
@@ -18,19 +18,19 @@ async def run_once(
 ) -> None:
     """消费规范流式事件并投影为终端输出。"""
 
-    async for event in agent.run_turn(
+    async for event in agent.run(
         session_id,
         prompt,
         workspace,
         permission_mode=PermissionMode(permission_mode),
     ):
-        if event.type is AgentStreamEventType.TEXT_DELTA:
-            typer.echo(str(event.data.get("text", "")), nl=False)
-        elif event.type is AgentStreamEventType.TOOL_CALL_STARTED:
-            typer.echo(f"\n[调用工具] {event.data.get('name', '')}")
-        elif event.type is AgentStreamEventType.TOOL_RESULT:
-            status = "失败" if event.data.get("is_error") else "完成"
-            typer.echo(f"[工具{status}] {event.data.get('name', '')}")
+        if event.type == "message_update" and event.assistant_event.type == "text_delta":
+            typer.echo(str(event.assistant_event.data.get("text", "")), nl=False)
+        elif event.type == "tool_execution_start":
+            typer.echo(f"\n[调用工具] {event.name}")
+        elif event.type == "tool_execution_end":
+            status = "失败" if event.result.is_error else "完成"
+            typer.echo(f"[工具{status}] {event.result.name}")
     typer.echo()
 
 

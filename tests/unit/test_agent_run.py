@@ -3,16 +3,16 @@ import pytest
 from camel_harness import AgentOptions, AgentRun, RunStatus, StopReason
 
 
-def test_agent_run_enforces_step_limit() -> None:
-    run = AgentRun("session", "turn", max_steps=1)
+def test_agent_run_enforces_turn_limit() -> None:
+    run = AgentRun("session", "run", max_turns=1)
     run.start()
 
-    assert run.next_step() == 1
-    with pytest.raises(RuntimeError, match="最大 Step"):
-        run.next_step()
+    assert run.next_turn() == 1
+    with pytest.raises(RuntimeError, match="最大 Turn"):
+        run.next_turn()
 
     assert run.status is RunStatus.FAILED
-    assert run.stop_reason is StopReason.MAX_STEPS
+    assert run.stop_reason is StopReason.MAX_TURNS
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ def test_agent_run_enforces_step_limit() -> None:
     (
         ("model", ""),
         ("max_output_tokens", 0),
-        ("max_steps", 0),
+        ("max_turns", 0),
         ("max_total_tokens", 0),
         ("max_duration_seconds", 0),
     ),
