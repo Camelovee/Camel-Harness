@@ -1,30 +1,46 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { PermissionMode } from "../../shared/model";
+import type { ModelProfile, PermissionMode } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
 
 type Props = {
   active: boolean;
   activeWorkspace: string | null;
   running: boolean;
+  switchingModel: boolean;
   status: string;
+  models: ModelProfile[];
+  selectedModelId: string;
+  thinking: boolean;
+  onModelChange: (modelId: string) => void;
   onSend: (
     prompt: string,
     permissionMode: PermissionMode,
     thinking: boolean,
+    modelId: string,
   ) => Promise<boolean>;
+  canResume: boolean;
+  onAbort: () => Promise<void>;
+  onResume: (permissionMode: PermissionMode, thinking: boolean, modelId: string) => Promise<void>;
 };
 
 export function Composer({
   active,
   activeWorkspace,
   running,
+  switchingModel,
   status,
+  models,
+  selectedModelId,
+  thinking,
+  onModelChange,
   onSend,
+  canResume,
+  onAbort,
+  onResume,
 }: Props) {
   const [prompt, setPrompt] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
-  const [thinking, setThinking] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -36,9 +52,8 @@ export function Composer({
 
   async function submit() {
     const value = prompt.trim();
-    if (!value || !active || running) return;
-    setPrompt("");
-    await onSend(value, permissionMode, thinking);
+    if (!value || !active || !selectedModelId || switchingModel) return;
+    if (await onSend(value, permissionMode, thinking, selectedModelId)) setPrompt("");
     inputRef.current?.focus();
   }
 
@@ -47,7 +62,7 @@ export function Composer({
       <div className={`composer-box ${!active ? "disabled" : ""}`}>
         <textarea
           ref={inputRef}
-          disabled={!active}
+          disabled={!active || !selectedModelId}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
@@ -56,7 +71,7 @@ export function Composer({
               void submit();
             }
           }}
-          placeholder={active ? "输入消息，开始与 Agent 协作…" : "先选择工作区并创建会话"}
+          placeholder={!active ? "先选择工作区并创建会话" : selectedModelId ? "输入消息，开始与 Agent 协作…" : "请先在设置中配置模型"}
           rows={2}
         />
         <div className="composer-toolbar">
@@ -64,16 +79,21 @@ export function Composer({
             {activeWorkspace ? workspaceName(activeWorkspace) : "未选择工作区"}
           </span>
           <div className="composer-right">
-            <button
-              type="button"
-              className={`thinking-toggle ${thinking ? "active" : ""}`}
-              aria-pressed={thinking}
-              disabled={!active || running}
-              onClick={() => setThinking((current) => !current)}
-              title="请求支持的模型返回思考过程"
+            <select
+              className="model-select"
+              aria-label="选择模型"
+              value={selectedModelId}
+              onChange={(event) => onModelChange(event.target.value)}
+              disabled={!active || running || switchingModel || !models.length}
+              title="为当前会话选择模型"
             >
-              ✦ 思考
-            </button>
+              {!selectedModelId && <option value="">配置模型</option>}
+              {models.map((profile) => (
+                <option key={profile.id} value={profile.id} disabled={!profile.configured}>
+                  {profile.name} · {profile.model}{!profile.configured ? " · 未配置" : ""}
+                </option>
+              ))}
+            </select>
             <select
               value={permissionMode}
               onChange={(event) => setPermissionMode(event.target.value as PermissionMode)}
@@ -85,12 +105,35 @@ export function Composer({
               <option value="yolo">YOLO</option>
             </select>
             <button
+              type="button"
               className="send-button"
-              disabled={!prompt.trim() || !active || running}
+              disabled={!prompt.trim() || !active || !selectedModelId || switchingModel}
               onClick={() => void submit()}
+              title={running ? "追加运行中输入" : "发送消息"}
             >
-              {running ? "…" : "↑"}
+              {running ? "↳" : "↑"}
             </button>
+            {running && (
+              <button
+                type="button"
+                className="stop-button"
+                onClick={() => void onAbort()}
+                title="暂停当前 Run"
+                aria-label="暂停当前 Run"
+              >
+                <span className="stop-icon" aria-hidden="true" />
+              </button>
+            )}
+            {!running && canResume && (
+              <button
+                type="button"
+                onClick={() => void onResume(permissionMode, thinking, selectedModelId)}
+                disabled={!selectedModelId || switchingModel}
+                title="从最后一个完整消息边界继续"
+              >
+                继续
+              </button>
+            )}
           </div>
         </div>
       </div>

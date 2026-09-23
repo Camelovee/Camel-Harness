@@ -1,16 +1,20 @@
-from collections.abc import AsyncIterator
+from collections.abc import Awaitable, Callable
 
 from fastapi.responses import StreamingResponse
 
-from camel_backend.api.sse import stream_sse
-from camel_harness import AgentEvent
+from camel_backend.api.sse import open_agent_sse
+from camel_harness import Agent
 
 
-def agent_stream_response(events: AsyncIterator[AgentEvent]) -> StreamingResponse:
+async def agent_stream_response(
+    agent: Agent,
+    operation: Callable[[], Awaitable[None]],
+) -> StreamingResponse:
     """把公开 Agent 事件流封装为无代理缓冲的 SSE 响应。"""
 
+    events = await open_agent_sse(agent, operation)
     return StreamingResponse(
-        stream_sse(events),
+        events,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

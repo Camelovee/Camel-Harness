@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from collections import deque
+from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import uuid4
+
+from camel_harness.llm import UserMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,3 +141,31 @@ class AgentRun:
         if self.total_tokens > self.max_total_tokens:
             self.fail(StopReason.BUDGET_EXCEEDED)
             raise RuntimeError("Agent 已超过本轮 token 预算")
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedInput:
+    """尚未到达安全消费点的运行中用户输入。"""
+
+    input_id: str
+    message: UserMessage
+
+
+@dataclass(frozen=True, slots=True)
+class SteerResult:
+    """一次运行中输入成功入队后的公开确认。"""
+
+    input_id: str
+    run_id: str
+
+
+@dataclass(slots=True)
+class RunControl:
+    """一个 Agent 当前唯一 Run 的瞬时控制状态。"""
+
+    run: AgentRun
+    done: asyncio.Event
+    owner_task: asyncio.Task[object] | None = None
+    steering: deque[QueuedInput] = field(default_factory=deque)
+    accepting_input: bool = True
+    abort_requested: bool = False

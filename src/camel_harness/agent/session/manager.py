@@ -80,6 +80,7 @@ class SessionManager:
         name: str | None = None,
         workspace: Path | None = None,
         archived: bool | None = None,
+        model_id: str | None = None,
     ) -> SessionMetadata:
         """更新会话名称、工作目录或归档状态。"""
 
@@ -90,6 +91,7 @@ class SessionManager:
             name=name,
             workspace=str(workspace.resolve()) if workspace is not None else None,
             archived=archived,
+            model_id=model_id,
         )
         await self._repository.update_metadata(updated)
         return updated

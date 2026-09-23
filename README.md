@@ -33,6 +33,7 @@ src/
 - 使用 `UserMessage | AssistantMessage | ToolResultMessage` 判别联合，系统提示与会话消息分离；
 - Assistant 消息保留规范化 `stop/length/tool_use` 结束原因，截断的工具参数不会被执行；
 - `AgentEvent` 判别联合完整描述 Agent、Turn、Message、Tool 和 Approval 生命周期；
+- Agent 自己持有单一 Run 任务，WebUI、CLI 和子 Agent 通过轻量 `subscribe()` 观察事件；
 - 文本、thinking、usage 和工具调用增量通过 `message_update.assistant_event` 实时转发；
 - LLM 协议不携带 Session、Run、Turn 等 Agent 运行坐标，由 `Agent` 在公开事件中统一补齐；
 - 事件 `sequence` 在整个 Run 内单调递增，可用于 SSE 排序和去重；
@@ -45,6 +46,9 @@ src/
 - `~/.camel/sessions/<session-id>/` 下的 JSONL 会话恢复；
 - 追加式上下文投影和历史压缩；
 - Session 独立管理会话；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
+- 一个 Agent 只绑定一个 Session 和 Workspace，运行期间支持 steering、主动停止和基于完整 JSONL 消息的恢复；
+- WebUI 提供运行中追加、停止与继续，CLI 提供运行中输入、`/cancel` 和 `/resume`；
+- SSE 仅在 Backend 传输层使用 `yield`，断开连接时显式中止对应 Run；
 - FastAPI + React WebUI 与 Typer CLI。
 
 ## 安装
@@ -83,6 +87,8 @@ export CAMEL_MODEL="gpt-5"
 | `CAMEL_MAX_TOTAL_TOKENS` | `200000` | 单次 Run 总预算 |
 | `CAMEL_MAX_DURATION_SECONDS` | `900` | 单次 Run 总时限 |
 | `CAMEL_SESSION_DIR` | `~/.camel/sessions` | 全局会话目录 |
+
+WebUI 左下角“设置”可添加多个 Anthropic/OpenAI 模型配置，填写模型 ID、API Key 和可选接口地址，并设置默认模型与思考模式。对话输入框可为当前会话选择模型，选择保存在该会话元数据中；切换模型从下一次 Run 生效。自定义配置保存在本机 `~/.camel/web-settings.json`（若自定义了 `CAMEL_SESSION_DIR`，则位于其父目录），文件权限为 `0600`。浏览器接口不会返回已保存的 API Key；留空密钥时使用对应 Provider 的环境变量。
 
 ## 运行
 

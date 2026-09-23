@@ -328,6 +328,7 @@ class JsonlSessionStorage:
             "updatedTime": metadata.updated_at,
             "messageCount": metadata.message_count,
             "lastMessageType": metadata.last_message_type,
+            "modelId": metadata.model_id,
             "archived": metadata.archived,
             "version": metadata.schema_version,
         }
@@ -342,6 +343,7 @@ class JsonlSessionStorage:
         try:
             raw: dict[str, Any] = json.loads(path.read_text("utf-8"))
             last_message_type = raw.get("lastMessageType")
+            model_id = raw.get("modelId")
             return SessionMetadata(
                 session_id=str(raw["id"]),
                 name=str(raw["name"]),
@@ -352,6 +354,7 @@ class JsonlSessionStorage:
                 last_message_type=(
                     str(last_message_type) if last_message_type is not None else None
                 ),
+                model_id=str(model_id) if model_id is not None else None,
                 archived=bool(raw["archived"]),
                 schema_version=int(raw["version"]),
             )

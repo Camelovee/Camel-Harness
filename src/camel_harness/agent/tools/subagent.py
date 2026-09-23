@@ -9,6 +9,7 @@ from camel_harness.llm import LlmClient, LlmStreamEventType
 
 from ..agent import Agent
 from ..context import ContextManager
+from ..events import AgentEvent
 from ..session import SessionManager
 from ..state import AgentOptions, SessionId
 from .executor import ToolExecutor
@@ -91,7 +92,10 @@ class LocalSubagentRunner:
             else PermissionMode.PLAN
         )
         prompt = f"你是 {request.agent_type.value} 子 Agent。只完成被委派任务并返回精炼结果。"
+        await self._sessions.ensure(session_id, request.workspace, "子 Agent")
         agent = Agent(
+            session_id,
+            request.workspace,
             options,
             self._llm,
             registry,
@@ -99,24 +103,27 @@ class LocalSubagentRunner:
             self._sessions,
             self._context,
         )
-        await self._sessions.ensure(session_id, request.workspace, "子 Agent")
 
         parts: list[str] = []
+
+        def collect_text(event: AgentEvent) -> None:
+            if (
+                event.type == "message_update"
+                and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
+            ):
+                parts.append(str(event.assistant_event.data.get("text", "")))
+
+        unsubscribe = agent.subscribe(collect_text)
         try:
-            async for event in agent.run(
-                session_id,
+            await agent.run(
                 request.task,
-                request.workspace,
                 system_prompt=prompt,
                 permission_mode=mode,
-            ):
-                if (
-                    event.type == "message_update"
-                    and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
-                ):
-                    parts.append(str(event.assistant_event.data.get("text", "")))
+            )
         except Exception as exc:
             return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)
+        finally:
+            unsubscribe()
         return SubagentResult(session_id, "".join(parts), True)
 
 

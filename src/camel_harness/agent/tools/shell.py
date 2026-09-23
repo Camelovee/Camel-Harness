@@ -49,6 +49,15 @@ class RunShellTool(Tool):
             process.kill()
             await process.wait()
             return ToolResult(call.call_id, call.name, "Shell 命令执行超时", is_error=True)
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except TimeoutError:
+                    process.kill()
+                    await process.wait()
+            raise
         text = output.decode("utf-8", errors="replace")
         if len(text) > 50_000:
             text = f"{text[:50_000]}\n…输出已截断，共 {len(text)} 字符"

@@ -1,6 +1,10 @@
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
+from typing import cast
 
-from camel_backend.api.sse import encode_sse, stream_sse
+from camel_backend.api.sse import encode_sse, open_agent_sse, stream_sse
+from camel_harness import Agent, AgentEvent
 from camel_harness.agent.events import MessageUpdateEvent
 from camel_harness.llm import LlmStreamEvent, LlmStreamEventType
 
@@ -45,3 +49,48 @@ async def test_stream_sse_does_not_buffer_events() -> None:
     assert "data:" in first
     assert released_second is False
     assert len([frame async for frame in stream]) == 1
+
+
+class FakeAgent:
+    """只实现 SSE 桥接所需的订阅和取消表面。"""
+
+    def __init__(self) -> None:
+        self.listener: Callable[[AgentEvent], Awaitable[None] | None] | None = None
+        self.cancelled = asyncio.Event()
+
+    def subscribe(
+        self,
+        listener: Callable[[AgentEvent], Awaitable[None] | None],
+    ) -> Callable[[], None]:
+        self.listener = listener
+
+        def unsubscribe() -> None:
+            self.listener = None
+
+        return unsubscribe
+
+    async def emit(self, event: AgentEvent) -> None:
+        assert self.listener is not None
+        result = self.listener(event)
+        if result is not None:
+            await result
+
+    async def abort(self) -> bool:
+        self.cancelled.set()
+        return True
+
+
+async def test_agent_sse_disconnect_explicitly_aborts_run() -> None:
+    fake = FakeAgent()
+
+    async def operation() -> None:
+        await fake.emit(_event(1, "开始"))
+        await fake.cancelled.wait()
+
+    stream = await open_agent_sse(cast(Agent, fake), operation)
+    assert "开始" in await anext(stream)
+
+    await stream.aclose()
+
+    assert fake.cancelled.is_set()
+    assert fake.listener is None

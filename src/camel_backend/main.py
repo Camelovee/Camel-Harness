@@ -13,7 +13,9 @@ from camel_backend.api import (
     create_api_app,
 )
 from camel_backend.approval import WebApproval
+from camel_backend.web_settings import WebSettingsStore
 from camel_backend.workspace import NativeWorkspacePicker
+from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.runtime import build_agent, build_session_manager
 
@@ -29,19 +31,29 @@ def create_app(workspace: Path | None = None) -> FastAPI:
         settings = AgentSettings()
         approval = WebApproval()
         sessions = build_session_manager(settings)
-        workspace_picker = NativeWorkspacePicker()
-        agent = await build_agent(
-            settings,
-            resolved_workspace,
-            approval=approval,
-            sessions=sessions,
+        web_settings = WebSettingsStore(
+            settings.resolved_session_dir().parent / "web-settings.json", settings
         )
-        dependencies.bind(agent, sessions, approval, workspace_picker.select)
+        workspace_picker = NativeWorkspacePicker()
+
+        async def create_session_agent(
+            session_id: str, agent_workspace: Path, model_settings: AgentSettings
+        ) -> Agent:
+            return await build_agent(
+                model_settings,
+                session_id,
+                agent_workspace,
+                approval=approval,
+                sessions=sessions,
+            )
+
+        dependencies.bind(
+            create_session_agent, sessions, approval, workspace_picker.select, web_settings
+        )
         try:
             yield
         finally:
-            dependencies.clear()
-            await agent.close()
+            await dependencies.close()
 
     frontend_dist = Path(__file__).resolve().parents[2] / "webui" / "dist"
     return create_api_app(dependencies, lifespan, frontend_dist)

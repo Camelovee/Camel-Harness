@@ -134,6 +134,8 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     await registry.register_provider(BuiltinToolProvider())
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
+        "session-1",
+        tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
@@ -142,10 +144,10 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         context,
     )
 
-    events = [
-        event
-        async for event in agent.run("session-1", "读取文件", tmp_path, max_turns=3, thinking=True)
-    ]
+    events: list = []
+    unsubscribe = agent.subscribe(events.append)
+    await agent.run("读取文件", max_turns=3, thinking=True)
+    unsubscribe()
 
     assert runtime.calls == 2
     assert events[0].type == "agent_start"
@@ -190,6 +192,8 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     permission = PermissionService(approval)
     context = ContextManager(CompactionEngine(llm))
     agent = Agent(
+        "session-approval",
+        tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
@@ -199,16 +203,17 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     )
 
     async def collect() -> list:
-        return [
-            event
-            async for event in agent.run(
-                "session-approval",
+        events: list = []
+        unsubscribe = agent.subscribe(events.append)
+        try:
+            await agent.run(
                 "写入文件",
-                tmp_path,
                 max_turns=3,
                 permission_mode=PermissionMode.DEFAULT,
             )
-        ]
+            return events
+        finally:
+            unsubscribe()
 
     stream_task = asyncio.create_task(collect())
     pending: tuple = ()
@@ -242,6 +247,8 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
     agent = Agent(
+        "session-length",
+        tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
@@ -250,7 +257,10 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
         ContextManager(CompactionEngine(llm)),
     )
 
-    events = [event async for event in agent.run("session-length", "写文件", tmp_path)]
+    events: list = []
+    unsubscribe = agent.subscribe(events.append)
+    await agent.run("写文件")
+    unsubscribe()
     messages = await sessions.messages("session-length")
 
     assert not (tmp_path / "should-not-exist.txt").exists()

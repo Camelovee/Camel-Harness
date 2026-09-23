@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Session, Workspace } from "../../shared/model";
-import { createWorkspaceSession, chooseLocalWorkspace, fetchWorkspaces, removeSession } from "./api";
+import { createWorkspaceSession, chooseLocalWorkspace, fetchWorkspaces, removeSession, saveSessionModel } from "./api";
 
 type Options = {
   onError: (message: string) => void;
@@ -13,6 +13,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectingWorkspace, setSelectingWorkspace] = useState(false);
+  const [switchingModel, setSwitchingModel] = useState(false);
 
   const activeSession = useMemo(
     () =>
@@ -112,12 +113,39 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     setActiveId(workspace.sessions[0]?.session_id ?? null);
   }, []);
 
+  const changeModel = useCallback(async (modelId: string) => {
+    if (!activeId) return;
+    const sessionId = activeId;
+    const previousModelId = activeSession?.model_id ?? null;
+    setSwitchingModel(true);
+    setWorkspaces((current) => current.map((item) => ({
+      ...item,
+      sessions: item.sessions.map((session) => session.session_id === sessionId
+        ? { ...session, model_id: modelId }
+        : session),
+    })));
+    try {
+      await saveSessionModel(sessionId, modelId);
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "切换模型失败");
+      setWorkspaces((current) => current.map((item) => ({
+        ...item,
+        sessions: item.sessions.map((session) => session.session_id === sessionId
+          ? { ...session, model_id: previousModelId }
+          : session),
+      })));
+    } finally {
+      setSwitchingModel(false);
+    }
+  }, [activeId, activeSession?.model_id, onError]);
+
   return {
     workspaces,
     activeWorkspace,
     activeId,
     activeSession,
     selectingWorkspace,
+    switchingModel,
     setActiveWorkspace,
     setActiveId,
     refresh,
@@ -125,5 +153,6 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     createSession,
     deleteSession,
     activateWorkspace,
+    changeModel,
   };
 }

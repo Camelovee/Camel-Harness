@@ -3,9 +3,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Activity, Approval, Message, PermissionMode } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import {
+  abortAgentRun,
   fetchConversation,
   fetchPendingApprovals,
+  steerAgentRun,
   streamAgentRun,
+  streamAgentResume,
   submitApproval,
 } from "./api";
 import { projectAgentEvent } from "./streamProjection";
@@ -30,10 +33,13 @@ export function useAgentTurn(options: Options) {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const lastSequence = useRef(0);
+  const streamAssistantIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let current = true;
     setMessages([]);
+    streamAssistantIdRef.current = null;
+    setStreamAssistantId(null);
     if (activeId) {
       void fetchConversation(activeId)
         .then((loaded) => {
@@ -87,26 +93,34 @@ export function useAgentTurn(options: Options) {
   }, [activeId, approvals]);
 
   const sendPrompt = useCallback(
-    async (prompt: string, permissionMode: PermissionMode, thinking: boolean) => {
+    async (prompt: string, permissionMode: PermissionMode, thinking: boolean, modelId: string) => {
       const value = prompt.trim();
-      if (!value || !activeId || running) return false;
+      if (!value || !activeId || !modelId) return false;
       onError("");
+      if (running) {
+        try {
+          await steerAgentRun(activeId, value);
+          onStatus("运行中输入已排队…");
+          return true;
+        } catch (reason) {
+          onError(errorText(reason, "追加运行中输入失败"));
+          return false;
+        }
+      }
       setRunning(true);
       onStatus("正在连接 Agent…");
       setActivities([]);
       lastSequence.current = 0;
+      streamAssistantIdRef.current = null;
       setStreamAssistantId(null);
-      setMessages((current) => [
-        ...current,
-        { id: `user-${Date.now()}`, role: "user", content: [{ type: "text", text: value }] },
-      ]);
       const assistantIds = new Map<string, string>();
       const toolIds = new Map<string, string>();
       try {
-        await streamAgentRun(activeId, { prompt: value, permissionMode, thinking }, (event) =>
+        await streamAgentRun(activeId, { prompt: value, permissionMode, thinking, modelId }, (event) =>
           projectAgentEvent(event, assistantIds, toolIds, {
             activeId,
             lastSequence,
+            streamAssistantId: streamAssistantIdRef,
             setMessages,
             setStreamAssistantId,
             setActivities,
@@ -115,12 +129,61 @@ export function useAgentTurn(options: Options) {
             onStatus,
           }),
         );
+        setMessages(await fetchConversation(activeId));
         await refreshWorkspaces(activeWorkspace, activeId);
         return true;
       } catch (reason) {
         onError(errorText(reason, "发送失败"));
         onStatus("连接失败");
         return false;
+      } finally {
+        setRunning(false);
+      }
+    },
+    [activeId, activeWorkspace, onError, onStatus, refreshWorkspaces, running],
+  );
+
+  const abortRun = useCallback(async () => {
+    if (!activeId || !running) return;
+    try {
+      await abortAgentRun(activeId);
+      onStatus("正在停止 Agent…");
+    } catch (reason) {
+      onError(errorText(reason, "停止 Agent 失败"));
+    }
+  }, [activeId, onError, onStatus, running]);
+
+  const resumeRun = useCallback(
+    async (permissionMode: PermissionMode, thinking: boolean, modelId: string) => {
+      if (!activeId || !modelId || running) return;
+      onError("");
+      setRunning(true);
+      onStatus("正在恢复 Agent…");
+      setActivities([]);
+      lastSequence.current = 0;
+      streamAssistantIdRef.current = null;
+      setStreamAssistantId(null);
+      const assistantIds = new Map<string, string>();
+      const toolIds = new Map<string, string>();
+      try {
+        await streamAgentResume(activeId, { permissionMode, thinking, modelId }, (event) =>
+          projectAgentEvent(event, assistantIds, toolIds, {
+            activeId,
+            lastSequence,
+            streamAssistantId: streamAssistantIdRef,
+            setMessages,
+            setStreamAssistantId,
+            setActivities,
+            setApprovals,
+            onError,
+            onStatus,
+          }),
+        );
+        setMessages(await fetchConversation(activeId));
+        await refreshWorkspaces(activeWorkspace, activeId);
+      } catch (reason) {
+        onError(errorText(reason, "恢复失败"));
+        onStatus("恢复失败");
       } finally {
         setRunning(false);
       }
@@ -151,6 +214,13 @@ export function useAgentTurn(options: Options) {
     [onError],
   );
 
+  const conversation = messages.filter(
+    (message) => message.role === "user" || message.role === "assistant" || message.role === "toolResult",
+  );
+  const lastMessage = conversation[conversation.length - 1];
+  const canResume =
+    !running && (lastMessage?.role === "user" || lastMessage?.role === "toolResult");
+
   return {
     messages,
     running,
@@ -158,6 +228,9 @@ export function useAgentTurn(options: Options) {
     activities,
     resolvingApprovalId,
     sendPrompt,
+    abortRun,
+    resumeRun,
+    canResume,
     resolveApproval,
   };
 }

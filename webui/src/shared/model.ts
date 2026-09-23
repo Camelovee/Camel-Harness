@@ -5,6 +5,33 @@ export type Session = {
   updated_at: string;
   message_count: number;
   archived: boolean;
+  model_id: string | null;
+};
+
+export type ModelProfile = {
+  id: string;
+  name: string;
+  provider: "anthropic" | "openai";
+  model: string;
+  base_url: string | null;
+  configured: boolean;
+  has_api_key: boolean;
+  read_only: boolean;
+};
+
+export type WebSettings = {
+  models: ModelProfile[];
+  default_model_id: string;
+  thinking: boolean;
+};
+
+export type ModelInput = {
+  name: string;
+  provider: ModelProfile["provider"];
+  model: string;
+  base_url: string;
+  api_key: string;
+  clear_api_key: boolean;
 };
 
 export type Workspace = {

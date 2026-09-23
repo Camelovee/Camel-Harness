@@ -11,6 +11,7 @@ type Props = {
   onActivateSession: (workspace: string, sessionId: string) => void;
   onCreateSession: (workspace: string) => void;
   onDeleteSession: (sessionId: string, name: string) => void;
+  onOpenSettings: () => void;
 };
 
 export function WorkspaceSidebar({
@@ -23,6 +24,7 @@ export function WorkspaceSidebar({
   onActivateSession,
   onCreateSession,
   onDeleteSession,
+  onOpenSettings,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -123,7 +125,16 @@ export function WorkspaceSidebar({
           </div>
         )}
       </div>
-      <div className="sidebar-note">工作区只保存在当前本机用户环境</div>
+      <div className="sidebar-footer">
+        <button type="button" className="settings-entry" onClick={onOpenSettings}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9.7 2.8h4.6l.6 2.1 1.8.8 2-.9 3.2 3.2-.9 2 .8 1.8 2.1.6v4.6l-2.1.6-.8 1.8.9 2-3.2 3.2-2-.9-1.8.8-.6 2.1H9.7l-.6-2.1-1.8-.8-2 .9-3.2-3.2.9-2-.8-1.8-2.1-.6v-4.6l2.1-.6.8-1.8-.9-2 3.2-3.2 2 .9 1.8-.8z" transform="translate(0 -2) scale(.96)" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          <span>设置</span>
+        </button>
+        <span className="sidebar-note">本机工作区</span>
+      </div>
     </aside>
   );
 }

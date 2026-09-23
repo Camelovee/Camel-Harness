@@ -45,37 +45,35 @@ def main(
 
     async def execute() -> None:
         sessions = build_session_manager(settings)
+        resolved_session_id = session_id
+        if resolved_session_id is None and resume:
+            workspace_sessions = tuple(
+                session
+                for session in await sessions.list()
+                if session.workspace == str(resolved_workspace)
+            )
+            resolved_session_id = workspace_sessions[0].session_id if workspace_sessions else None
+        resolved_session_id = resolved_session_id or SessionId.new().value
+        metadata = await sessions.get(resolved_session_id)
+        agent_workspace = Path(metadata.workspace) if metadata is not None else resolved_workspace
+        await sessions.ensure(resolved_session_id, agent_workspace, "新会话")
         agent = await build_agent(
             settings,
-            resolved_workspace,
+            resolved_session_id,
+            agent_workspace,
             ConsoleApproval(),
             sessions=sessions,
         )
         try:
-            resolved_session_id = session_id
-            if resolved_session_id is None and resume:
-                workspace_sessions = tuple(
-                    session
-                    for session in await sessions.list()
-                    if session.workspace == str(resolved_workspace)
-                )
-                resolved_session_id = (
-                    workspace_sessions[0].session_id if workspace_sessions else None
-                )
-            resolved_session_id = resolved_session_id or SessionId.new().value
             if prompt is None:
                 await run_repl(
                     agent,
-                    resolved_session_id,
-                    resolved_workspace,
                     permission_mode,
                 )
             else:
                 await run_once(
                     agent,
                     prompt,
-                    resolved_session_id,
-                    resolved_workspace,
                     permission_mode,
                 )
         finally:

@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from camel_harness.agent import SessionId
+from camel_harness.agent import AgentBusyError, SessionId
 from camel_harness.agent.session import message_to_dict
 
 from ..contracts import SessionCreateBody, SessionUpdateBody
@@ -42,15 +42,21 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
     @router.patch("/sessions/{session_id}")
     async def update_session(session_id: str, body: SessionUpdateBody) -> dict[str, Any]:
         try:
-            result = await dependencies.require_sessions().update(
-                session_id, name=body.name, archived=body.archived
+            result = await dependencies.update_session(
+                session_id, name=body.name, archived=body.archived, model_id=body.model_id
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="会话不存在") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except AgentBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
 
     @router.delete("/sessions/{session_id}", status_code=204)
     async def delete_session(session_id: str) -> None:
+        if not await dependencies.release_agent(session_id):
+            raise HTTPException(status_code=409, detail="活动 Run 结束前不能删除会话")
         deleted = await dependencies.require_sessions().delete(session_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="会话不存在")

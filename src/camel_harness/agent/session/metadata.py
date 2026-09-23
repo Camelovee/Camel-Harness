@@ -21,6 +21,7 @@ class SessionMetadata:
     updated_at: str
     message_count: int = 0
     last_message_type: str | None = None
+    model_id: str | None = None
     archived: bool = False
     schema_version: int = 1
 
@@ -43,6 +44,7 @@ class SessionMetadata:
         name: str | None = None,
         workspace: str | None = None,
         archived: bool | None = None,
+        model_id: str | None = None,
     ) -> SessionMetadata:
         """返回更新后的不可变元数据，并保留创建时间。"""
 
@@ -54,6 +56,7 @@ class SessionMetadata:
             name=resolved_name,
             workspace=self.workspace if workspace is None else workspace,
             archived=self.archived if archived is None else archived,
+            model_id=self.model_id if model_id is None else model_id,
             updated_at=_utc_now(),
         )
 

@@ -206,7 +206,18 @@ def test_agent_owns_loop_and_keeps_public_surface_minimal() -> None:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         and not node.name.startswith("_")
     }
-    assert public_methods == {"run", "close"}
+    assert public_methods == {
+        "abort",
+        "close",
+        "is_running",
+        "resume",
+        "run",
+        "session_id",
+        "steer",
+        "subscribe",
+        "wait_for_idle",
+        "workspace",
+    }
     private_methods = {
         node.name
         for node in agent_class.body

@@ -4,6 +4,8 @@ import { Composer } from "../features/agent/Composer";
 import { MessageList } from "../features/agent/MessageList";
 import { TrajectoryView } from "../features/agent/TrajectoryView";
 import { useAgentTurn } from "../features/agent/useAgentTurn";
+import { SettingsDialog } from "../features/settings/SettingsDialog";
+import { useWebSettings } from "../features/settings/useWebSettings";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
 import { useWorkspaceSessions } from "../features/workspaces/useWorkspaceSessions";
 import type { WorkbenchTab } from "../shared/model";
@@ -17,10 +19,13 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<WorkbenchTab>("chat");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const onError = useCallback((message: string) => setError(message || null), []);
   const onStatus = useCallback((message: string) => setStatus(message), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const workspace = useWorkspaceSessions({ onError, onStatus });
+  const webSettings = useWebSettings(onError);
   const agent = useAgentTurn({
     activeId: workspace.activeId,
     activeWorkspace: workspace.activeWorkspace,
@@ -45,6 +50,12 @@ export default function App() {
       ? workspace.createSession()
       : workspace.selectWorkspace());
 
+  const models = webSettings.settings?.models ?? [];
+  const selectedModel =
+    models.find((model) => model.id === workspace.activeSession?.model_id && model.configured) ??
+    models.find((model) => model.id === webSettings.settings?.default_model_id && model.configured) ??
+    models.find((model) => model.configured);
+
   return (
     <div className="app-shell">
       <WorkspaceSidebar
@@ -60,6 +71,7 @@ export default function App() {
         }}
         onCreateSession={(workspacePath) => void workspace.createSession(workspacePath)}
         onDeleteSession={(sessionId, name) => setDeleteTarget({ sessionId, name })}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       <main className="main-area">
@@ -112,12 +124,40 @@ export default function App() {
           active={Boolean(workspace.activeSession)}
           activeWorkspace={workspace.activeWorkspace}
           running={agent.running}
+          switchingModel={workspace.switchingModel}
           status={status}
+          models={models}
+          selectedModelId={selectedModel?.id ?? ""}
+          thinking={webSettings.settings?.thinking ?? false}
+          onModelChange={(modelId) => void workspace.changeModel(modelId)}
           onSend={agent.sendPrompt}
+          canResume={agent.canResume}
+          onAbort={agent.abortRun}
+          onResume={agent.resumeRun}
         />
       </main>
 
       {error && <ErrorToast message={error} onClose={() => setError(null)} />}
+      {settingsOpen && (
+        <SettingsDialog
+          settings={webSettings.settings}
+          saving={webSettings.saving}
+          onClose={closeSettings}
+          onSavePreferences={webSettings.savePreferences}
+          onSaveModel={webSettings.saveModel}
+          onDeleteModel={async (modelId) => {
+            const saved = await webSettings.deleteModel(modelId);
+            if (saved) {
+              try {
+                await workspace.refresh();
+              } catch {
+                onError("模型已删除，但会话列表刷新失败，请刷新页面");
+              }
+            }
+            return saved;
+          }}
+        />
+      )}
       {deleteTarget && (
         <DeleteSessionDialog
           name={deleteTarget.name}

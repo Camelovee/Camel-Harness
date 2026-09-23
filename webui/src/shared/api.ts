@@ -6,7 +6,20 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    throw new Error((await response.text()) || `请求失败：${response.status}`);
+    const body = await response.text();
+    let message = body || `请求失败：${response.status}`;
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (
+        typeof parsed === "object" && parsed !== null &&
+        "detail" in parsed && typeof parsed.detail === "string"
+      ) {
+        message = parsed.detail;
+      }
+    } catch {
+      // 非 JSON 错误仍保留原始响应。
+    }
+    throw new Error(message);
   }
   return response.status === 204 ? (undefined as T) : response.json();
 }

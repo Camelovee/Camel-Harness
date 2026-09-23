@@ -23,7 +23,10 @@ Backend / CLI -> Agent -> LLM
 - `camel_harness.llm` 拥有规范消息、模型请求、工具定义和流事件，不得依赖 `agent`、Backend 或 CLI。
 - LLM 请求和事件不得包含 `session_id`、`run_id`、`turn_id` 或 Agent 事件序号；这些运行坐标由 `Agent` 注入 `AgentEvent`。
 - 不单独建立 `agent_loop` 模块或对外函数；`Agent` 内部完整编排会话、ReAct Turn、上下文压缩、资源加载和完整消息保存点。
-- `Agent` 的公共方法只保留 `run()` 和 `close()`；Session CRUD、工作区选择、审批查询和扩展诊断由入口层持有。
+- 一个 `Agent` 实例只绑定一个 Session 和 Workspace，同时最多运行一个 Run；Backend 只能在入口层按 `session_id` 定位 Agent，不得让 Agent 管理 Session 字典。
+- `Agent` 的公开表面只包含 `run()`、`steer()`、`abort()`、`resume()`、`wait_for_idle()`、`subscribe()` 和 `close()`；Session CRUD、工作区选择、审批查询和扩展诊断由入口层持有。
+- Agent 必须持有当前 Run 的执行任务；WebUI、CLI 和子 Agent 通过 `subscribe()` 观察事件，不得通过消费 Agent async generator 驱动运行。
+- 运行中输入只使用一条内存 steering FIFO，并在完整 Turn 后消费；不得提前加入 Follow-up 队列、持久化 Inbox、全局调度器或可脱离 Agent 生命周期的后台 Run 系统。
 - `AgentEvent` 必须是 Agent/Turn/Message/Tool/Approval 生命周期的判别联合，不得恢复通用 `type + data` 容器；Provider 增量只能出现在 `message_update.assistant_event`。
 - 公开事件使用 `session_id + run_id + turn_id`运行坐标，`sequence` 必须在整个 Run 内单调递增。
 - `agent_end` 是正常、失败和取消 Run 的唯一终态事件；可恢复运行错误通过该事件传递，不在其后再抛出破坏 SSE。
@@ -38,6 +41,7 @@ Backend / CLI -> Agent -> LLM
 - `AssistantMessage.stop_reason` 必须使用厂商无关的 `LlmStopReason`；它与 Agent Run 级 `StopReason` 是两个独立概念。
 - `length` 结束的工具调用禁止执行，必须写入错误工具结果以保持消息链完整。
 - 模型增量实时转发；只有流正常结束后才能保存完整 assistant 消息，禁止保存 chunk。
+- 中断必须向 LLM、审批和工具协程传播；不得保存未完成 assistant，已落盘但缺少结果的工具调用必须补充错误 `ToolResultMessage`，恢复时不得自动重试历史工具。
 - `Tool` ABC 及 `ToolContext`、`ToolCall`、`ToolResult` 位于 `camel_harness.agent.tools.types`；给模型使用的 `ToolDefinition` 位于 `camel_harness.llm`，只包含最终工具名、描述和输入 Schema，不感知 namespace。
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
 - 所有会话默认存储在 `~/.camel/sessions/<session-id>/`，包含 `metadata.json`、`messages.jsonl` 和 `context.jsonl`。

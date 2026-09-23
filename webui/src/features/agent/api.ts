@@ -63,6 +63,7 @@ type RunRequest = {
   prompt: string;
   permissionMode: PermissionMode;
   thinking: boolean;
+  modelId: string;
 };
 
 export async function streamAgentRun(
@@ -70,15 +71,51 @@ export async function streamAgentRun(
   request: RunRequest,
   onEvent: (event: AgentEvent) => void,
 ): Promise<void> {
-  const response = await fetch(apiPath(`/sessions/${sessionId}/runs`), {
+  await streamAgentResponse(`/sessions/${sessionId}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({
       prompt: request.prompt,
       permission_mode: request.permissionMode,
       thinking: request.thinking,
+      model_id: request.modelId,
     }),
+  }, onEvent);
+}
+
+export async function streamAgentResume(
+  sessionId: string,
+  request: Omit<RunRequest, "prompt">,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  await streamAgentResponse(`/sessions/${sessionId}/runs/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({
+      permission_mode: request.permissionMode,
+      thinking: request.thinking,
+      model_id: request.modelId,
+    }),
+  }, onEvent);
+}
+
+export async function steerAgentRun(sessionId: string, content: string): Promise<void> {
+  await apiJson(`/sessions/${sessionId}/runs/current/steer`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
   });
+}
+
+export async function abortAgentRun(sessionId: string): Promise<void> {
+  await apiJson(`/sessions/${sessionId}/runs/current/abort`, { method: "POST" });
+}
+
+async function streamAgentResponse(
+  path: string,
+  init: RequestInit,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const response = await fetch(apiPath(path), init);
   if (!response.ok || !response.body) {
     throw new Error((await response.text()) || "Agent 流连接失败");
   }

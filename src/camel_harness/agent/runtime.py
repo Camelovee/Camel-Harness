@@ -40,6 +40,7 @@ def build_session_manager(settings: AgentSettings) -> SessionManager:
 
 async def build_agent(
     settings: AgentSettings,
+    session_id: str,
     workspace: Path,
     approval: ApprovalHandler,
     sessions: SessionManager | None = None,
@@ -95,6 +96,8 @@ async def build_agent(
     await registry.register_provider(SubagentToolProvider(subagent.run))
 
     return Agent(
+        session_id,
+        workspace,
         options,
         llm,
         registry,

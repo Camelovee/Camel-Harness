@@ -6,6 +6,7 @@ from .routes import (
     create_approvals_router,
     create_health_router,
     create_sessions_router,
+    create_settings_router,
     create_workspaces_router,
 )
 
@@ -17,6 +18,7 @@ def create_router(dependencies: HttpDependencies) -> APIRouter:
 
     router.include_router(create_health_router())
     router.include_router(create_sessions_router(dependencies))
+    router.include_router(create_settings_router(dependencies))
     router.include_router(create_workspaces_router(dependencies))
     router.include_router(create_agent_router(dependencies))
     router.include_router(create_approvals_router(dependencies))

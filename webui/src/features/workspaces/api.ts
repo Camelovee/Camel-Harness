@@ -20,3 +20,10 @@ export async function createWorkspaceSession(workspace: string): Promise<Session
 export async function removeSession(sessionId: string): Promise<void> {
   await apiJson<void>(`/sessions/${sessionId}`, { method: "DELETE" });
 }
+
+export async function saveSessionModel(sessionId: string, modelId: string): Promise<void> {
+  await apiJson<Session>(`/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ model_id: modelId }),
+  });
+}

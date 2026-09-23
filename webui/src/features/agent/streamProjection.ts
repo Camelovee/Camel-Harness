@@ -8,6 +8,7 @@ type MutableValue<T> = { current: T };
 type ProjectionContext = {
   activeId: string | null;
   lastSequence: MutableValue<number>;
+  streamAssistantId: MutableValue<string | null>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setStreamAssistantId: Dispatch<SetStateAction<string | null>>;
   setActivities: Dispatch<SetStateAction<Activity[]>>;
@@ -30,6 +31,7 @@ export function projectAgentEvent(
     if (existing) return existing;
     const assistantId = `assistant-${messageId}`;
     assistantIds.set(messageId, assistantId);
+    context.streamAssistantId.current = assistantId;
     context.setStreamAssistantId(assistantId);
     context.setMessages((current) => [
       ...current,
@@ -73,6 +75,13 @@ export function projectAgentEvent(
     return;
   }
   if (event.type === "message_end") {
+    if (event.message.role === "user") {
+      appendUserMessage(event.message_id, event.message.content, context);
+    }
+    if (event.message.role === "assistant") {
+      context.streamAssistantId.current = null;
+      context.setStreamAssistantId(null);
+    }
     if (event.message.role === "toolResult") {
       appendToolResultMessage(event.message_id, event.message, context);
     }
@@ -83,6 +92,12 @@ export function projectAgentEvent(
     return;
   }
   if (event.type === "agent_end") {
+    const incompleteId = context.streamAssistantId.current;
+    if (incompleteId) {
+      context.setMessages((current) => current.filter((message) => message.id !== incompleteId));
+      context.streamAssistantId.current = null;
+      context.setStreamAssistantId(null);
+    }
     if (event.status === "failed") {
       context.onError(event.error || "Agent 运行失败");
       context.onStatus("运行失败");
@@ -92,6 +107,21 @@ export function projectAgentEvent(
       context.onStatus("回答完成");
     }
   }
+}
+
+function appendUserMessage(
+  messageId: string,
+  content: string,
+  context: ProjectionContext,
+): void {
+  context.setMessages((current) =>
+    current.some((message) => message.id === messageId)
+      ? current
+      : [
+          ...current,
+          { id: messageId, role: "user", content: [{ type: "text", text: content }] },
+        ],
+  );
 }
 
 function projectMessageUpdate(
