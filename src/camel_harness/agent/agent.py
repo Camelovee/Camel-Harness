@@ -141,23 +141,12 @@ class Agent:
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("用户消息不能为空")
-        options = replace(
-            self._options,
-            max_turns=self._options.max_turns if max_turns is None else max_turns,
-            thinking=self._options.thinking if thinking is None else thinking,
-        )
-        run = AgentRun(
-            session_id=self._session_id,
-            run_id=RunId.new().value,
-            max_turns=options.max_turns,
-            max_total_tokens=options.max_total_tokens,
-        )
         control = await self._start_run(
-            run,
             prompt=prompt,
             system_prompt=system_prompt,
             permission_mode=permission_mode,
-            options=options,
+            max_turns=max_turns,
+            thinking=thinking,
         )
         await self._wait_for_control(control)
 
@@ -175,23 +164,12 @@ class Agent:
         plan = analyze_resume(messages)
         if not plan.resumable:
             raise AgentResumeError(plan.reason)
-        options = replace(
-            self._options,
-            max_turns=self._options.max_turns if max_turns is None else max_turns,
-            thinking=self._options.thinking if thinking is None else thinking,
-        )
-        run = AgentRun(
-            session_id=self._session_id,
-            run_id=RunId.new().value,
-            max_turns=options.max_turns,
-            max_total_tokens=options.max_total_tokens,
-        )
         control = await self._start_run(
-            run,
             prompt=None,
             system_prompt=system_prompt,
             permission_mode=permission_mode,
-            options=options,
+            max_turns=max_turns,
+            thinking=thinking,
             initial_tool_results=plan.missing_tool_results,
         )
         await self._wait_for_control(control)
@@ -256,21 +234,32 @@ class Agent:
 
     async def _start_run(
         self,
-        run: AgentRun,
         *,
         prompt: str | None,
         system_prompt: str,
         permission_mode: PermissionMode,
-        options: AgentOptions,
+        max_turns: int | None,
+        thinking: bool | None,
         initial_tool_results: tuple[ToolResultMessage, ...] = (),
     ) -> RunControl:
         """原子登记活动 Run，并把执行任务交给 Agent 持有。"""
 
+        options = replace(
+            self._options,
+            max_turns=self._options.max_turns if max_turns is None else max_turns,
+            thinking=self._options.thinking if thinking is None else thinking,
+        )
         async with self._run_lock:
             if self._closed:
                 raise RuntimeError("Agent 已关闭")
             if self._run_control is not None:
                 raise AgentBusyError("Agent 正在运行，请使用 steer() 或等待完成")
+            run = AgentRun(
+                session_id=self._session_id,
+                run_id=RunId.new().value,
+                max_turns=options.max_turns,
+                max_total_tokens=options.max_total_tokens,
+            )
             control = RunControl(run, asyncio.Event())
             self._run_control = control
             control.owner_task = asyncio.create_task(
@@ -445,6 +434,41 @@ class Agent:
         )
         assistant_message_id = uuid4().hex
         await self._emit(message_start_event(run, turn_id, assistant_message_id, "assistant"))
+        assistant_message, calls = await self._collect_assistant_message(
+            run,
+            turn_id,
+            assistant_message_id,
+            request,
+        )
+        await self._sessions.append_message(run.session_id, assistant_message)
+        await self._emit(message_end_event(run, turn_id, assistant_message_id, assistant_message))
+
+        tool_results: list[ToolResultMessage] = []
+        if assistant_message.stop_reason is LlmStopReason.LENGTH:
+            await self._reject_truncated_calls(run, turn_id, calls, tool_results)
+        elif assistant_message.stop_reason is LlmStopReason.TOOL_USE:
+            await self._execute_calls(
+                run=run,
+                turn_id=turn_id,
+                calls=calls,
+                call_counts=call_counts,
+                permission_mode=permission_mode,
+                tool_results=tool_results,
+            )
+        await self._emit(turn_end_event(run, turn_id, assistant_message, tuple(tool_results)))
+        if assistant_message.stop_reason is LlmStopReason.LENGTH:
+            run.fail(StopReason.MODEL_LENGTH)
+        return assistant_message.stop_reason
+
+    async def _collect_assistant_message(
+        self,
+        run: AgentRun,
+        turn_id: str,
+        message_id: str,
+        request: LlmRequest,
+    ) -> tuple[AssistantMessage, list[ToolCall]]:
+        """实时发送模型增量，仅在完整结束后组装规范消息。"""
+
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         calls: list[ToolCall] = []
@@ -476,9 +500,7 @@ class Agent:
                 LlmStreamEventType.STREAM_STARTED,
                 LlmStreamEventType.MESSAGE_COMPLETED,
             }:
-                await self._emit(
-                    message_update_event(run, turn_id, assistant_message_id, llm_event)
-                )
+                await self._emit(message_update_event(run, turn_id, message_id, llm_event))
 
         if completion_reason is None:
             raise RuntimeError("LLM 流缺少 MessageCompleted，禁止持久化不完整消息")
@@ -495,34 +517,7 @@ class Agent:
         blocks.extend(ToolUseBlock(call.call_id, call.name, call.arguments) for call in calls)
         assistant_message = AssistantMessage(tuple(blocks), completion_reason)
         run.record_tokens(input_tokens, output_tokens)
-        await self._sessions.append_message(run.session_id, assistant_message)
-        await self._emit(message_end_event(run, turn_id, assistant_message_id, assistant_message))
-
-        tool_results: list[ToolResultMessage] = []
-        if completion_reason is LlmStopReason.LENGTH:
-            await self._reject_truncated_calls(
-                run,
-                turn_id,
-                calls,
-                tool_results,
-            )
-            await self._emit(turn_end_event(run, turn_id, assistant_message, tuple(tool_results)))
-            run.fail(StopReason.MODEL_LENGTH)
-            return completion_reason
-        if completion_reason is LlmStopReason.STOP:
-            await self._emit(turn_end_event(run, turn_id, assistant_message, ()))
-            return completion_reason
-
-        await self._execute_calls(
-            run=run,
-            turn_id=turn_id,
-            calls=calls,
-            call_counts=call_counts,
-            permission_mode=permission_mode,
-            tool_results=tool_results,
-        )
-        await self._emit(turn_end_event(run, turn_id, assistant_message, tuple(tool_results)))
-        return completion_reason
+        return assistant_message, calls
 
     async def _load_context(
         self,
@@ -560,13 +555,7 @@ class Agent:
                 "模型输出达到长度上限，工具参数可能被截断，未执行该调用",
                 is_error=True,
             )
-            await self._emit(tool_execution_end_event(run, turn_id, result))
-            message = _tool_result_message(result)
-            await self._sessions.append_message(run.session_id, message)
-            tool_results.append(message)
-            message_id = f"tool-{call.call_id}"
-            await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))
-            await self._emit(message_end_event(run, turn_id, message_id, message))
+            await self._record_tool_result(run, turn_id, result, tool_results)
 
     async def _execute_calls(
         self,
@@ -634,13 +623,24 @@ class Agent:
                     await asyncio.gather(execution, return_exceptions=True)
                     raise
 
-            await self._emit(tool_execution_end_event(run, turn_id, result))
-            message = _tool_result_message(result)
-            await self._sessions.append_message(run.session_id, message)
-            tool_results.append(message)
-            message_id = f"tool-{call.call_id}"
-            await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))
-            await self._emit(message_end_event(run, turn_id, message_id, message))
+            await self._record_tool_result(run, turn_id, result, tool_results)
+
+    async def _record_tool_result(
+        self,
+        run: AgentRun,
+        turn_id: str,
+        result: ToolResult,
+        tool_results: list[ToolResultMessage],
+    ) -> None:
+        """完整保存工具结果后发送消息事件，保持恢复所需的消息链。"""
+
+        await self._emit(tool_execution_end_event(run, turn_id, result))
+        message = _tool_result_message(result)
+        await self._sessions.append_message(run.session_id, message)
+        tool_results.append(message)
+        message_id = f"tool-{result.call_id}"
+        await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))
+        await self._emit(message_end_event(run, turn_id, message_id, message))
 
 
 def _default_session_name(prompt: str) -> str:

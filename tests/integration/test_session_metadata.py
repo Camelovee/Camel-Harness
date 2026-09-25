@@ -71,6 +71,49 @@ async def test_global_session_list_can_be_filtered_by_workspace(tmp_path) -> Non
     assert tuple(item.session_id for item in filtered) == ("first-session",)
 
 
+async def test_child_sessions_record_parent_and_delete_with_parent(tmp_path) -> None:
+    root = tmp_path / "global-sessions"
+    sessions = SessionManager(JsonlSessionStorage(root))
+    await sessions.create("parent", tmp_path, "父会话")
+    await sessions.create("other", tmp_path, "其他会话")
+    child = await sessions.create(
+        "child",
+        tmp_path,
+        "子会话",
+        parent_session_id="parent",
+        parent_tool_call_id="tool-1",
+    )
+    await sessions.create("grandchild", tmp_path, "孙会话", parent_session_id="child")
+    await sessions.append_message("child", UserMessage("子任务"))
+
+    assert child.parent_session_id == "parent"
+    assert child.parent_tool_call_id == "tool-1"
+    reloaded = await sessions.get("child")
+    assert reloaded is not None
+    assert reloaded.parent_session_id == "parent"
+    assert reloaded.parent_tool_call_id == "tool-1"
+    stored = json.loads((root / "child" / "metadata.json").read_text("utf-8"))
+    assert stored["parentSessionId"] == "parent"
+    assert stored["parentToolCallId"] == "tool-1"
+    assert await sessions.deletion_order("parent") == ("grandchild", "child", "parent")
+
+    assert await sessions.delete("parent") is True
+    for session_id in ("parent", "child", "grandchild"):
+        assert await sessions.get(session_id) is None
+        assert not (root / session_id).exists()
+    assert await sessions.get("other") is not None
+
+
+async def test_child_session_requires_existing_parent_in_same_workspace(tmp_path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "global-sessions"))
+    with pytest.raises(ValueError, match="父会话不存在"):
+        await sessions.create("child", tmp_path, "子会话", parent_session_id="missing")
+
+    await sessions.create("parent", tmp_path, "父会话")
+    with pytest.raises(ValueError, match="工作目录"):
+        await sessions.create("child", tmp_path / "elsewhere", "子会话", parent_session_id="parent")
+
+
 async def test_session_directory_symlink_cannot_escape_global_root(tmp_path) -> None:
     root = tmp_path / "global-sessions"
     outside = tmp_path / "outside"

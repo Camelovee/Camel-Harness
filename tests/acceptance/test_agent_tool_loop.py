@@ -14,6 +14,7 @@ from camel_harness.agent.tools import (
     validate_tool_arguments,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
+from camel_harness.agent.tools.subagent import LocalSubagentRunner, SubagentRequest, SubagentType
 from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
@@ -178,6 +179,41 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     ]
     assert [message.call_id for message in tool_messages] == ["call-1", "call-2"]
     assert all(request.thinking for request in runtime.requests)
+
+
+async def test_local_subagent_persists_parent_link(tmp_path) -> None:
+    (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
+    llm = LlmClient(FakeLlm())
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("parent", tmp_path, "父会话")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    runner = LocalSubagentRunner(
+        llm,
+        sessions,
+        registry,
+        validate_tool_arguments,
+        PermissionService(),
+        ContextManager(CompactionEngine(llm)),
+        AgentOptions("fake-model"),
+    )
+
+    result = await runner.run(
+        SubagentRequest(
+            "读取文件",
+            SubagentType.EXPLORE,
+            tmp_path,
+            PermissionMode.DEFAULT,
+            "parent",
+            "delegate-call",
+        )
+    )
+
+    assert result.succeeded
+    metadata = await sessions.get(result.session_id)
+    assert metadata is not None
+    assert metadata.parent_session_id == "parent"
+    assert metadata.parent_tool_call_id == "delegate-call"
 
 
 async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:

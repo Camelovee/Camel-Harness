@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from camel_harness.agent.tools import (
     Tool,
     ToolCall,
@@ -41,12 +43,23 @@ async def test_builtin_tools_implement_abc_contract() -> None:
 
 
 async def test_subagent_provider_exposes_only_delegate_tool() -> None:
+    requests: list[SubagentRequest] = []
+
     async def run(request: SubagentRequest) -> SubagentResult:
+        requests.append(request)
         return SubagentResult("sub-session", request.task, True)
 
     tools = await SubagentToolProvider(run).discover()
 
     assert [tool.name for tool in tools] == ["delegate_task"]
+
+    result = await tools[0].execute(
+        ToolCall("call-1", "delegate_task", {"task": "检查代码", "agent_type": "explore"}),
+        ToolContext("parent-session", Path("/tmp")),
+    )
+    assert requests[0].parent_session_id == "parent-session"
+    assert requests[0].parent_tool_call_id == "call-1"
+    assert result.metadata["subagent_session_id"] == "sub-session"
 
 
 async def test_invalid_tool_arguments_are_normalized(tmp_path) -> None:

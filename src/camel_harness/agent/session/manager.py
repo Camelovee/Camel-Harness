@@ -48,10 +48,34 @@ class SessionManager:
         await self._repository.append_context_event(session_id, event)
         return event
 
-    async def create(self, session_id: str, workspace: Path, name: str) -> SessionMetadata:
+    async def create(
+        self,
+        session_id: str,
+        workspace: Path,
+        name: str,
+        *,
+        parent_session_id: str | None = None,
+        parent_tool_call_id: str | None = None,
+    ) -> SessionMetadata:
         """创建会话及其唯一元数据。"""
 
-        metadata = SessionMetadata.create(session_id, name, str(workspace.resolve()))
+        if parent_session_id is None and parent_tool_call_id is not None:
+            raise ValueError("没有父会话时不能关联父工具调用")
+        if parent_session_id == session_id:
+            raise ValueError("会话不能成为自己的父会话")
+        if parent_session_id is not None:
+            parent = await self._repository.get_metadata(parent_session_id)
+            if parent is None:
+                raise ValueError(f"父会话不存在：{parent_session_id}")
+            if parent.workspace != str(workspace.resolve()):
+                raise ValueError("子会话工作目录必须与父会话一致")
+        metadata = SessionMetadata.create(
+            session_id,
+            name,
+            str(workspace.resolve()),
+            parent_session_id=parent_session_id,
+            parent_tool_call_id=parent_tool_call_id,
+        )
         await self._repository.create(metadata)
         return metadata
 
@@ -97,6 +121,30 @@ class SessionManager:
         return updated
 
     async def delete(self, session_id: str) -> bool:
-        """删除会话消息和元数据。"""
+        """从后代到父会话依次删除消息和元数据。"""
 
-        return await self._repository.delete(session_id)
+        order = await self.deletion_order(session_id)
+        deleted = False
+        for current_id in order:
+            deleted = await self._repository.delete(current_id) or deleted
+        return deleted
+
+    async def deletion_order(self, session_id: str) -> tuple[str, ...]:
+        """返回目标会话及其全部后代的后序删除顺序。"""
+
+        children: dict[str, list[str]] = {}
+        for metadata in await self._repository.list_metadata():
+            if metadata.parent_session_id is not None:
+                children.setdefault(metadata.parent_session_id, []).append(metadata.session_id)
+
+        pending = [session_id]
+        visited: set[str] = set()
+        preorder: list[str] = []
+        while pending:
+            current_id = pending.pop()
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            preorder.append(current_id)
+            pending.extend(children.get(current_id, ()))
+        return tuple(reversed(preorder))

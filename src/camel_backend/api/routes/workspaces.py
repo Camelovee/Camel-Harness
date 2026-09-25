@@ -45,5 +45,7 @@ def _group_sessions(
 
     grouped: dict[str, list[SessionMetadata]] = {}
     for session in sessions:
+        if session.parent_session_id is not None:
+            continue
         grouped.setdefault(session.workspace, []).append(session)
     return tuple((workspace, tuple(items)) for workspace, items in grouped.items())

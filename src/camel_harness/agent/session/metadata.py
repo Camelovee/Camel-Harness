@@ -23,10 +23,20 @@ class SessionMetadata:
     last_message_type: str | None = None
     model_id: str | None = None
     archived: bool = False
+    parent_session_id: str | None = None
+    parent_tool_call_id: str | None = None
     schema_version: int = 1
 
     @classmethod
-    def create(cls, session_id: str, name: str, workspace: str) -> SessionMetadata:
+    def create(
+        cls,
+        session_id: str,
+        name: str,
+        workspace: str,
+        *,
+        parent_session_id: str | None = None,
+        parent_tool_call_id: str | None = None,
+    ) -> SessionMetadata:
         """创建带统一时间戳的新会话元数据。"""
 
         now = _utc_now()
@@ -36,6 +46,8 @@ class SessionMetadata:
             workspace=workspace,
             created_at=now,
             updated_at=now,
+            parent_session_id=parent_session_id,
+            parent_tool_call_id=parent_tool_call_id,
         )
 
     def update(

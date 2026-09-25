@@ -330,6 +330,8 @@ class JsonlSessionStorage:
             "lastMessageType": metadata.last_message_type,
             "modelId": metadata.model_id,
             "archived": metadata.archived,
+            "parentSessionId": metadata.parent_session_id,
+            "parentToolCallId": metadata.parent_tool_call_id,
             "version": metadata.schema_version,
         }
         with temporary.open("w", encoding="utf-8") as stream:
@@ -344,6 +346,8 @@ class JsonlSessionStorage:
             raw: dict[str, Any] = json.loads(path.read_text("utf-8"))
             last_message_type = raw.get("lastMessageType")
             model_id = raw.get("modelId")
+            parent_session_id = raw.get("parentSessionId")
+            parent_tool_call_id = raw.get("parentToolCallId")
             return SessionMetadata(
                 session_id=str(raw["id"]),
                 name=str(raw["name"]),
@@ -356,6 +360,12 @@ class JsonlSessionStorage:
                 ),
                 model_id=str(model_id) if model_id is not None else None,
                 archived=bool(raw["archived"]),
+                parent_session_id=(
+                    str(parent_session_id) if parent_session_id is not None else None
+                ),
+                parent_tool_call_id=(
+                    str(parent_tool_call_id) if parent_tool_call_id is not None else None
+                ),
                 schema_version=int(raw["version"]),
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:

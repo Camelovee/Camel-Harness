@@ -19,7 +19,7 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
     @router.get("/sessions")
     async def sessions() -> dict[str, Any]:
         result = await dependencies.require_sessions().list()
-        return {"sessions": [asdict(item) for item in result]}
+        return {"sessions": [asdict(item) for item in result if item.parent_session_id is None]}
 
     @router.post("/sessions", status_code=201)
     async def create_session(body: SessionCreateBody) -> dict[str, Any]:
@@ -55,9 +55,17 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
 
     @router.delete("/sessions/{session_id}", status_code=204)
     async def delete_session(session_id: str) -> None:
-        if not await dependencies.release_agent(session_id):
+        sessions = dependencies.require_sessions()
+        order = await sessions.deletion_order(session_id)
+        if any(
+            (agent := dependencies.find_agent(current_id)) is not None and agent.is_running
+            for current_id in order
+        ):
             raise HTTPException(status_code=409, detail="活动 Run 结束前不能删除会话")
-        deleted = await dependencies.require_sessions().delete(session_id)
+        for current_id in order:
+            if not await dependencies.release_agent(current_id):
+                raise HTTPException(status_code=409, detail="活动 Run 结束前不能删除会话")
+        deleted = await sessions.delete(session_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="会话不存在")
 

@@ -42,6 +42,8 @@ class SubagentRequest:
     agent_type: SubagentType
     workspace: Path
     permission_mode: PermissionMode
+    parent_session_id: str
+    parent_tool_call_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +94,13 @@ class LocalSubagentRunner:
             else PermissionMode.PLAN
         )
         prompt = f"你是 {request.agent_type.value} 子 Agent。只完成被委派任务并返回精炼结果。"
-        await self._sessions.ensure(session_id, request.workspace, "子 Agent")
+        await self._sessions.create(
+            session_id,
+            request.workspace,
+            "子 Agent",
+            parent_session_id=request.parent_session_id,
+            parent_tool_call_id=request.parent_tool_call_id,
+        )
         agent = Agent(
             session_id,
             request.workspace,
@@ -155,6 +163,8 @@ class DelegateTaskTool(Tool):
                 agent_type=SubagentType(str(call.arguments["agent_type"])),
                 workspace=context.workspace,
                 permission_mode=context.permission_mode,
+                parent_session_id=context.session_id,
+                parent_tool_call_id=call.call_id,
             )
         )
         return ToolResult(
