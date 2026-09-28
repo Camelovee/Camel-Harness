@@ -1,10 +1,8 @@
-from dataclasses import asdict
-from typing import Any
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from camel_harness.agent.session import SessionMetadata
 
+from ..contracts import SessionResponse, WorkspaceGroupResponse, WorkspacesResponse
 from ..dependencies import HttpDependencies
 
 
@@ -14,25 +12,22 @@ def create_workspaces_router(dependencies: HttpDependencies) -> APIRouter:
     router = APIRouter()
 
     @router.get("/workspaces")
-    async def workspaces() -> dict[str, Any]:
+    async def workspaces() -> WorkspacesResponse:
         result = _group_sessions(await dependencies.require_sessions().list())
-        return {
-            "workspaces": [
-                {
-                    "workspace": workspace,
-                    "updated_at": max(session.updated_at for session in sessions),
-                    "sessions": [asdict(session) for session in sessions],
-                }
+        return WorkspacesResponse(
+            workspaces=[
+                WorkspaceGroupResponse(
+                    workspace=workspace,
+                    updated_at=max(session.updated_at for session in sessions),
+                    sessions=[SessionResponse.from_metadata(session) for session in sessions],
+                )
                 for workspace, sessions in result
             ]
-        }
+        )
 
     @router.post("/workspaces/select")
-    async def select_workspace() -> dict[str, Any]:
-        try:
-            result = await dependencies.select_workspace()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    async def select_workspace() -> dict[str, str | None]:
+        result = await dependencies.select_workspace()
         return {"workspace": str(result) if result else None}
 
     return router

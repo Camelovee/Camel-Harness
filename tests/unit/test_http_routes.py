@@ -4,9 +4,12 @@ from typing import cast
 import pytest
 
 from camel_backend.api import HttpDependencies, create_router
+from camel_backend.orchestration import RunService, SessionService, SettingsService
+from camel_backend.web_settings import WebSettingsStore
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.session import SessionManager
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
 def test_http_router_keeps_public_endpoints_after_module_split() -> None:
@@ -40,22 +43,30 @@ def test_http_router_keeps_public_endpoints_after_module_split() -> None:
     assert str(router.url_path_for("update_model", model_id="m")) == "/api/settings/models/m"
 
 
-async def test_http_dependencies_are_published_as_one_complete_set() -> None:
+async def test_http_dependencies_are_published_as_one_complete_set(tmp_path: Path) -> None:
     """启动期依赖必须整体发布和清除，不允许路由观察到半初始化状态。"""
 
-    dependencies = HttpDependencies(Path.cwd())
+    dependencies = HttpDependencies(tmp_path)
     with pytest.raises(RuntimeError, match="尚未完成初始化"):
-        await dependencies.require_agent("session-1")
+        dependencies.require_runs()
 
-    agent = cast(Agent, object())
-    sessions = cast(SessionManager, object())
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    store = WebSettingsStore(tmp_path / "web-settings.json", AgentSettings())
 
     async def build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
-        return agent
+        return cast(Agent, object())
 
-    dependencies.bind(build_agent, sessions)
+    runs = RunService(build_agent, sessions, store)
+    dependencies.bind(
+        runs=runs,
+        sessions=sessions,
+        session_service=SessionService(sessions, runs, store),
+        settings_service=SettingsService(store, sessions, runs),
+        settings=store,
+    )
+    assert dependencies.require_runs() is runs
     assert dependencies.require_sessions() is sessions
 
     await dependencies.close()
     with pytest.raises(RuntimeError, match="尚未完成初始化"):
-        await dependencies.require_agent("session-1")
+        dependencies.require_runs()

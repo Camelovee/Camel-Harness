@@ -1,6 +1,11 @@
-from typing import Literal
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from camel_harness.agent.session import SessionMetadata
 
 
 class SessionCreateBody(BaseModel):
@@ -54,3 +59,59 @@ class ResolveApprovalBody(BaseModel):
     """浏览器提交审批决定的 HTTP 请求体。"""
 
     approved: bool
+
+
+class SessionResponse(BaseModel):
+    """浏览器可见的会话投影；字段与会话元数据一一对应，不泄露存储细节之外的信息。"""
+
+    session_id: str
+    name: str
+    workspace: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+    last_message_type: str | None = None
+    model_id: str | None = None
+    archived: bool = False
+    parent_session_id: str | None = None
+    parent_tool_call_id: str | None = None
+    schema_version: int = 1
+
+    @classmethod
+    def from_metadata(cls, metadata: SessionMetadata) -> SessionResponse:
+        return cls(**asdict(metadata))
+
+
+class SessionsResponse(BaseModel):
+    """会话列表响应。"""
+
+    sessions: list[SessionResponse]
+
+
+class SessionMessagesResponse(BaseModel):
+    """会话历史消息响应；消息体保持规范消息的 JSON 形状。"""
+
+    messages: list[dict[str, Any]]
+    session_id: str
+
+
+class WorkspaceGroupResponse(BaseModel):
+    """一个工作区及其所属会话的分组投影。"""
+
+    workspace: str
+    updated_at: str
+    sessions: list[SessionResponse]
+
+
+class WorkspacesResponse(BaseModel):
+    """按工作区分组的会话列表响应。"""
+
+    workspaces: list[WorkspaceGroupResponse]
+
+
+class SteerQueuedResponse(BaseModel):
+    """运行中输入已入队的确认响应。"""
+
+    input_id: str
+    run_id: str
+    status: str

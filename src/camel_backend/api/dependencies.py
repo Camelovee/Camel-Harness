@@ -1,135 +1,69 @@
-import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.web_settings import WebSettingsStore
-from camel_harness.agent import Agent, AgentBusyError
-from camel_harness.agent.config import AgentSettings
-from camel_harness.agent.session import SessionManager, SessionMetadata
+from camel_harness.agent.session import SessionManager
 from camel_harness.agent.tools import ApprovalCenter
 
 WorkspacePicker = Callable[[], Awaitable[Path | None]]
-AgentBuilder = Callable[[str, Path, AgentSettings], Awaitable[Agent]]
 
 
 @dataclass(slots=True)
 class HttpDependencies:
-    """保存共享依赖，并按 Session 惰性定位唯一 Agent。"""
+    """保存共享应用服务；路由只能通过它访问运行时依赖。"""
 
     workspace: Path
-    _build_agent: AgentBuilder | None = field(default=None, init=False, repr=False)
-    _agents: dict[str, Agent] = field(default_factory=dict, init=False, repr=False)
-    _agent_settings: dict[str, AgentSettings] = field(default_factory=dict, init=False, repr=False)
-    _agents_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _runs: RunService | None = field(default=None, init=False, repr=False)
     _sessions: SessionManager | None = field(default=None, init=False, repr=False)
+    _session_service: SessionService | None = field(default=None, init=False, repr=False)
+    _settings_service: SettingsService | None = field(default=None, init=False, repr=False)
+    _settings: WebSettingsStore | None = field(default=None, init=False, repr=False)
     _approvals: ApprovalCenter | None = field(default=None, init=False, repr=False)
     _select_workspace: WorkspacePicker | None = field(default=None, init=False, repr=False)
-    _settings: WebSettingsStore | None = field(default=None, init=False, repr=False)
 
     def bind(
         self,
-        build_agent: AgentBuilder,
+        *,
+        runs: RunService,
         sessions: SessionManager,
+        session_service: SessionService,
+        settings_service: SettingsService,
+        settings: WebSettingsStore,
         approvals: ApprovalCenter | None = None,
         select_workspace: WorkspacePicker | None = None,
-        settings: WebSettingsStore | None = None,
     ) -> None:
         """一次发布完整运行时依赖，避免请求观察到部分初始化状态。"""
 
-        self._build_agent = build_agent
+        self._runs = runs
         self._sessions = sessions
+        self._session_service = session_service
+        self._settings_service = settings_service
+        self._settings = settings
         self._approvals = approvals
         self._select_workspace = select_workspace
-        self._settings = settings
 
     async def close(self) -> None:
         """关闭所有按需创建的 Agent，并清除运行时依赖。"""
 
-        async with self._agents_lock:
-            agents = tuple(self._agents.values())
-            self._agents.clear()
-            self._agent_settings.clear()
-        await asyncio.gather(*(agent.close() for agent in agents))
-        self._build_agent = None
+        runs = self._runs
+        self._runs = None
         self._sessions = None
+        self._session_service = None
+        self._settings_service = None
+        self._settings = None
         self._approvals = None
         self._select_workspace = None
-        self._settings = None
+        if runs is not None:
+            await runs.close()
 
-    async def require_agent(self, session_id: str, model_id: str | None = None) -> Agent:
-        """返回绑定指定 Session 的唯一 Agent，必要时惰性创建。"""
+    def require_runs(self) -> RunService:
+        """返回 Agent 运行编排服务。"""
 
-        async with self._agents_lock:
-            return await self._require_agent_locked(session_id, model_id)
-
-    @asynccontextmanager
-    async def agent_for_run(
-        self, session_id: str, model_id: str | None = None
-    ) -> AsyncIterator[Agent]:
-        """模型切换到 Run 首事件交付前保持互斥，防止并发请求替换待启动实例。"""
-
-        async with self._agents_lock:
-            yield await self._require_agent_locked(session_id, model_id)
-
-    async def _require_agent_locked(self, session_id: str, model_id: str | None) -> Agent:
-        if self._build_agent is None:
+        if self._runs is None:
             raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
-        metadata = await self.require_sessions().get(session_id)
-        if metadata is None:
-            raise KeyError(f"会话不存在：{session_id}")
-        _, settings = await self.require_settings().resolve(model_id or metadata.model_id)
-        current = self._agents.get(session_id)
-        if current is not None and self._agent_settings[session_id] == settings:
-            return current
-        if current is not None and current.is_running:
-            raise AgentBusyError("会话已有正在运行的 Agent，结束后才能切换模型")
-        agent = await self._build_agent(session_id, Path(metadata.workspace), settings)
-        self._agents[session_id] = agent
-        self._agent_settings[session_id] = settings
-        if current is not None:
-            await current.close()
-        return agent
-
-    def find_agent(self, session_id: str) -> Agent | None:
-        """返回已经创建的 Agent，不因控制命令隐式创建实例。"""
-
-        return self._agents.get(session_id)
-
-    async def update_session(
-        self,
-        session_id: str,
-        *,
-        name: str | None = None,
-        archived: bool | None = None,
-        model_id: str | None = None,
-    ) -> SessionMetadata:
-        """与 Run 启动互斥地校验并保存会话模型选择。"""
-
-        async with self._agents_lock:
-            if model_id is not None:
-                agent = self._agents.get(session_id)
-                if agent is not None and agent.is_running:
-                    raise AgentBusyError("运行结束后才能切换会话模型")
-                await self.require_settings().resolve(model_id)
-            return await self.require_sessions().update(
-                session_id, name=name, archived=archived, model_id=model_id
-            )
-
-    async def release_agent(self, session_id: str) -> bool:
-        """移除空闲 Agent；活动 Run 存在时拒绝释放。"""
-
-        async with self._agents_lock:
-            agent = self._agents.get(session_id)
-            if agent is None:
-                return True
-            if agent.is_running:
-                return False
-            self._agents.pop(session_id)
-            self._agent_settings.pop(session_id, None)
-        await agent.close()
-        return True
+        return self._runs
 
     def require_sessions(self) -> SessionManager:
         """返回与当前 Agent 共用的会话管理器。"""
@@ -138,10 +72,19 @@ class HttpDependencies:
             raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
         return self._sessions
 
-    def approvals(self) -> ApprovalCenter | None:
-        """返回 Web 审批中心；当前入口未启用时返回空。"""
+    def require_session_service(self) -> SessionService:
+        """返回会话写用例编排服务。"""
 
-        return self._approvals
+        if self._session_service is None:
+            raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
+        return self._session_service
+
+    def require_settings_service(self) -> SettingsService:
+        """返回模型配置写用例编排服务。"""
+
+        if self._settings_service is None:
+            raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
+        return self._settings_service
 
     def require_settings(self) -> WebSettingsStore:
         """返回 Web 本机模型配置。"""
@@ -149,6 +92,11 @@ class HttpDependencies:
         if self._settings is None:
             raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
         return self._settings
+
+    def approvals(self) -> ApprovalCenter | None:
+        """返回 Web 审批中心；当前入口未启用时返回空。"""
+
+        return self._approvals
 
     async def select_workspace(self) -> Path | None:
         """调用由 Backend 注入的平台目录选择器。"""

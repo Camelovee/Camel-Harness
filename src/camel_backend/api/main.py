@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .dependencies import HttpDependencies
+from .errors import install_exception_handlers
 from .router import create_router
 
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
@@ -33,6 +34,7 @@ def create_api_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    install_exception_handlers(application)
     application.include_router(create_router(dependencies))
 
     if frontend_dist is not None and frontend_dist.is_dir():

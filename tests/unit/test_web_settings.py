@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from camel_backend.api import HttpDependencies
+from camel_backend.orchestration import RunService, SessionService
 from camel_backend.web_settings import ModelInput, WebSettingsStore
 from camel_harness.agent import Agent, AgentBusyError
 from camel_harness.agent.config import AgentSettings
@@ -92,25 +92,25 @@ async def test_session_agent_rebuilds_for_another_model_only_when_idle(tmp_path:
         agents.append(agent)
         return cast(Agent, agent)
 
-    dependencies = HttpDependencies(tmp_path)
-    dependencies.bind(build_agent, sessions, settings=store)
-    first = await dependencies.require_agent("test-session")
-    assert await dependencies.require_agent("test-session") is first
+    runs = RunService(build_agent, sessions, store)
+    first = await runs.require_agent("test-session")
+    assert await runs.require_agent("test-session") is first
 
     await store.add_model(custom_model())
     profile = (await store.snapshot())["models"][1]  # type: ignore[index]
-    second = await dependencies.require_agent("test-session", str(profile["id"]))  # type: ignore[index]
+    second = await runs.require_agent("test-session", str(profile["id"]))  # type: ignore[index]
     assert second is not first
     assert agents[0].closed
     assert built_models == ["claude-test", "gpt-test"]
 
     agents[1].is_running = True
+    session_service = SessionService(sessions, runs, store)
     with pytest.raises(AgentBusyError, match="切换模型"):
-        await dependencies.require_agent("test-session", "environment")
+        await runs.require_agent("test-session", "environment")
     with pytest.raises(AgentBusyError, match="切换会话模型"):
-        await dependencies.update_session("test-session", model_id="environment")
+        await session_service.update("test-session", model_id="environment")
     agents[1].is_running = False
-    await dependencies.close()
+    await runs.close()
 
 
 async def test_session_remembers_selected_model(tmp_path: Path) -> None:

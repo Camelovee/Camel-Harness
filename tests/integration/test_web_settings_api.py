@@ -1,10 +1,10 @@
 from pathlib import Path
-from typing import cast
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from camel_backend.api import HttpDependencies, create_router
+from camel_backend.api import HttpDependencies, create_router, install_exception_handlers
+from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.web_settings import WebSettingsStore
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
@@ -25,9 +25,21 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
     store = WebSettingsStore(tmp_path / "web-settings.json", settings)
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("session-one", tmp_path / "workspace", "测试会话")
+
+    async def build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
+        raise AssertionError("该用例不应触发 Agent 创建")
+
+    runs = RunService(build_agent, sessions, store)
     dependencies = HttpDependencies(tmp_path)
-    dependencies.bind(cast(Agent, object()), sessions, settings=store)
+    dependencies.bind(
+        runs=runs,
+        sessions=sessions,
+        session_service=SessionService(sessions, runs, store),
+        settings_service=SettingsService(store, sessions, runs),
+        settings=store,
+    )
     app = FastAPI()
+    install_exception_handlers(app)
     app.include_router(create_router(dependencies))
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -45,16 +57,12 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
         profile_id = created.json()["models"][1]["id"]
         assert created.json()["default_model_id"] == profile_id
 
-        selected = await client.patch(
-            "/api/sessions/session-one", json={"model_id": profile_id}
-        )
+        selected = await client.patch("/api/sessions/session-one", json={"model_id": profile_id})
         assert selected.status_code == 200
         assert selected.json()["model_id"] == profile_id
         assert (await sessions.get("session-one")).model_id == profile_id  # type: ignore[union-attr]
 
-        invalid = await client.patch(
-            "/api/sessions/session-one", json={"model_id": "not-found"}
-        )
+        invalid = await client.patch("/api/sessions/session-one", json={"model_id": "not-found"})
         assert invalid.status_code == 422
 
         deleted = await client.delete(f"/api/settings/models/{profile_id}")

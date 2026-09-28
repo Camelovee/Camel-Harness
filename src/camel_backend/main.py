@@ -13,6 +13,7 @@ from camel_backend.api import (
     create_api_app,
 )
 from camel_backend.approval import WebApproval
+from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.web_settings import WebSettingsStore
 from camel_backend.workspace import NativeWorkspacePicker
 from camel_harness.agent import Agent
@@ -47,8 +48,15 @@ def create_app(workspace: Path | None = None) -> FastAPI:
                 sessions=sessions,
             )
 
+        runs = RunService(create_session_agent, sessions, web_settings)
         dependencies.bind(
-            create_session_agent, sessions, approval, workspace_picker.select, web_settings
+            runs=runs,
+            sessions=sessions,
+            session_service=SessionService(sessions, runs, web_settings),
+            settings_service=SettingsService(web_settings, sessions, runs),
+            settings=web_settings,
+            approvals=approval,
+            select_workspace=workspace_picker.select,
         )
         try:
             yield
