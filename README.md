@@ -142,15 +142,12 @@ class ExampleTool(Tool):
 ## 会话格式
 
 ```text
-~/.camel/sessions/<session-id>/
-├── metadata.json
-├── messages.jsonl
-└── context.jsonl
+~/.camel/sessions/<session-id>.jsonl
 ```
 
-- `messages.jsonl`：完整 user、assistant 和 toolResult 消息；
-- `context.jsonl`：Append/Replace 上下文投影；
-- `metadata.json`：名称、工作目录、时间、消息数和归档状态。
+- 首行 `session` 保存会话 ID、工作目录及初始元数据；其后按顺序追加 `message`、`compaction` 和 `session_info`。
+- `message` 只保存完整的 user、assistant 和 toolResult；压缩不删除原始消息，模型上下文由日志重放得到。
+- 旧格式不会在运行时自动读取。
 
 ## 质量检查
 

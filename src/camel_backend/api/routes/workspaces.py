@@ -25,6 +25,12 @@ def create_workspaces_router(dependencies: HttpDependencies) -> APIRouter:
             ]
         )
 
+    @router.get("/workspaces/default")
+    async def default_workspace() -> dict[str, str]:
+        """返回新对话使用的本地默认工作目录。"""
+
+        return {"workspace": str(dependencies.workspace)}
+
     @router.post("/workspaces/select")
     async def select_workspace() -> dict[str, str | None]:
         result = await dependencies.select_workspace()

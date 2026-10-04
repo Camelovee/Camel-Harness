@@ -17,8 +17,8 @@ class SurfaceOperation(StrEnum):
 class SessionLogEvent:
     """一条追加式上下文日志事件。
 
-    APPEND 事件通过 ``message_index`` 引用 ``messages.jsonl`` 中的完整消息，
-    避免重复持久化；REPLACE 事件携带摘要并遮蔽指定事件序号区间。
+    APPEND 事件由会话日志中的完整消息派生；REPLACE 事件携带摘要，
+    并遮蔽指定事件序号区间。
     """
 
     seq: int
@@ -110,6 +110,12 @@ class SessionLog:
     @property
     def next_seq(self) -> int:
         return len(self._events)
+
+    @property
+    def events(self) -> tuple[SessionLogEvent, ...]:
+        """返回重放后的只读事件序列。"""
+
+        return tuple(self._events)
 
     def append_message(self, message_index: int, message: Message) -> SessionLogEvent:
         """向内存日志追加完整消息引用，并分配连续事件序号。"""

@@ -6,7 +6,9 @@ type Props = {
   activeWorkspace: string | null;
   activeId: string | null;
   selectingWorkspace: boolean;
+  newChatDisabled: boolean;
   onSelectWorkspace: () => void;
+  onNewChat: () => void;
   onActivateWorkspace: (workspace: Workspace) => void;
   onActivateSession: (workspace: string, sessionId: string) => void;
   onCreateSession: (workspace: string) => void;
@@ -19,7 +21,9 @@ export function WorkspaceSidebar({
   activeWorkspace,
   activeId,
   selectingWorkspace,
+  newChatDisabled,
   onSelectWorkspace,
+  onNewChat,
   onActivateWorkspace,
   onActivateSession,
   onCreateSession,
@@ -38,6 +42,9 @@ export function WorkspaceSidebar({
           </div>
         </div>
       </div>
+      <button className="new-chat" onClick={onNewChat} disabled={newChatDisabled}>
+        <span>＋</span> 新对话
+      </button>
       <button
         className="new-workspace"
         disabled={selectingWorkspace}
@@ -119,9 +126,9 @@ export function WorkspaceSidebar({
         ))}
         {!workspaces.length && (
           <div className="empty-workspaces">
-            还没有工作区
+            还没有会话
             <br />
-            <span>选择一个本地文件夹开始</span>
+            <span>输入消息将在用户主目录开始，或选择本地文件夹</span>
           </div>
         )}
       </div>

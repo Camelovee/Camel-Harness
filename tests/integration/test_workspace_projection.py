@@ -5,7 +5,8 @@ from httpx import ASGITransport, AsyncClient
 
 from camel_backend.api import HttpDependencies, install_exception_handlers
 from camel_backend.api.routes.sessions import create_sessions_router
-from camel_backend.api.routes.workspaces import _group_sessions
+from camel_backend.api.routes.workspaces import _group_sessions, create_workspaces_router
+from camel_backend.main import create_app
 from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.web_settings import WebSettingsStore
 from camel_harness.agent import Agent
@@ -92,3 +93,39 @@ async def test_workspace_selection_uses_injected_platform_function(tmp_path: Pat
     )
 
     assert await dependencies.select_workspace() == selected
+
+
+async def test_new_chat_without_workspace_uses_local_default(tmp_path: Path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    runs, store = _services(tmp_path, sessions)
+    dependencies = HttpDependencies(tmp_path)
+    dependencies.bind(
+        runs=runs,
+        sessions=sessions,
+        session_service=SessionService(sessions, runs, store),
+        settings_service=SettingsService(store, sessions, runs),
+        settings=store,
+    )
+    app = FastAPI()
+    install_exception_handlers(app)
+    app.include_router(create_workspaces_router(dependencies))
+    app.include_router(create_sessions_router(dependencies))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        default = await client.get("/workspaces/default")
+        assert default.status_code == 200
+        assert default.json()["workspace"] == str(tmp_path.resolve())
+
+        created = await client.post("/sessions", json={"name": "新对话"})
+        assert created.status_code == 201
+        assert created.json()["workspace"] == str(tmp_path.resolve())
+
+
+async def test_web_app_defaults_to_user_home() -> None:
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        default = await client.get("/api/workspaces/default")
+
+    assert default.status_code == 200
+    assert default.json()["workspace"] == str(Path.home().resolve())

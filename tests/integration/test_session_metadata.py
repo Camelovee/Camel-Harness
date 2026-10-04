@@ -16,8 +16,8 @@ async def test_session_metadata_crud_and_file_layout(tmp_path) -> None:
     assert created.name == "初始名称"
     assert created.workspace == str(tmp_path.resolve())
     assert created.created_at == created.updated_at
-    assert (root / "session-1" / "metadata.json").exists()
-    assert not (root / "session-1" / "messages.jsonl").exists()
+    assert (root / "session-1.jsonl").exists()
+    assert len((root / "session-1.jsonl").read_text("utf-8").splitlines()) == 1
 
     updated = await sessions.update("session-1", name="新名称", archived=True)
 
@@ -30,7 +30,7 @@ async def test_session_metadata_crud_and_file_layout(tmp_path) -> None:
 
     assert await sessions.delete("session-1") is True
     assert await sessions.get("session-1") is None
-    assert not (root / "session-1").exists()
+    assert not (root / "session-1.jsonl").exists()
 
 
 async def test_appending_messages_updates_metadata(tmp_path) -> None:
@@ -46,12 +46,10 @@ async def test_appending_messages_updates_metadata(tmp_path) -> None:
     assert metadata is not None
     assert metadata.message_count == 2
     assert metadata.last_message_type == "assistant"
-    session_dir = root / "session-1"
-    assert len((session_dir / "messages.jsonl").read_text("utf-8").splitlines()) == 2
-    persisted = json.loads((session_dir / "metadata.json").read_text("utf-8"))
-    assert persisted["messageCount"] == 2
-    assert persisted["id"] == "session-1"
-    assert persisted["cwd"] == str(tmp_path.resolve())
+    rows = [json.loads(line) for line in (root / "session-1.jsonl").read_text("utf-8").splitlines()]
+    assert [row["type"] for row in rows] == ["session", "message", "message"]
+    assert rows[0]["id"] == "session-1"
+    assert rows[0]["cwd"] == str(tmp_path.resolve())
 
 
 async def test_global_session_list_can_be_filtered_by_workspace(tmp_path) -> None:
@@ -92,7 +90,7 @@ async def test_child_sessions_record_parent_and_delete_with_parent(tmp_path) -> 
     assert reloaded is not None
     assert reloaded.parent_session_id == "parent"
     assert reloaded.parent_tool_call_id == "tool-1"
-    stored = json.loads((root / "child" / "metadata.json").read_text("utf-8"))
+    stored = json.loads((root / "child.jsonl").read_text("utf-8").splitlines()[0])
     assert stored["parentSessionId"] == "parent"
     assert stored["parentToolCallId"] == "tool-1"
     assert await sessions.deletion_order("parent") == ("grandchild", "child", "parent")
@@ -100,7 +98,7 @@ async def test_child_sessions_record_parent_and_delete_with_parent(tmp_path) -> 
     assert await sessions.delete("parent") is True
     for session_id in ("parent", "child", "grandchild"):
         assert await sessions.get(session_id) is None
-        assert not (root / session_id).exists()
+        assert not (root / f"{session_id}.jsonl").exists()
     assert await sessions.get("other") is not None
 
 
@@ -114,15 +112,15 @@ async def test_child_session_requires_existing_parent_in_same_workspace(tmp_path
         await sessions.create("child", tmp_path / "elsewhere", "子会话", parent_session_id="parent")
 
 
-async def test_session_directory_symlink_cannot_escape_global_root(tmp_path) -> None:
+async def test_session_file_symlink_cannot_escape_global_root(tmp_path) -> None:
     root = tmp_path / "global-sessions"
     outside = tmp_path / "outside"
     root.mkdir()
     outside.mkdir()
-    (root / "escaped").symlink_to(outside, target_is_directory=True)
+    (root / "escaped.jsonl").symlink_to(outside / "outside.jsonl")
     repository = JsonlSessionStorage(root)
 
     with pytest.raises(ValueError, match="符号链接"):
         await repository.append_message("escaped", UserMessage("越界"))
 
-    assert not (outside / "messages.jsonl").exists()
+    assert not (outside / "outside.jsonl").exists()

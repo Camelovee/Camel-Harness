@@ -5,12 +5,16 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
   return (await apiJson<{ workspaces: Workspace[] }>("/workspaces")).workspaces;
 }
 
+export async function fetchDefaultWorkspace(): Promise<string> {
+  return (await apiJson<{ workspace: string }>("/workspaces/default")).workspace;
+}
+
 export async function chooseLocalWorkspace(): Promise<string | null> {
   return (await apiJson<{ workspace: string | null }>("/workspaces/select", { method: "POST" }))
     .workspace;
 }
 
-export async function createWorkspaceSession(workspace: string): Promise<Session> {
+export async function createWorkspaceSession(workspace?: string): Promise<Session> {
   return apiJson<Session>("/sessions", {
     method: "POST",
     body: JSON.stringify({ name: "新对话", workspace }),

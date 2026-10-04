@@ -70,6 +70,8 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
 
     async def observe(event) -> None:
         events.append(event)
+        if event.type == "message_end":
+            assert event.message in await sessions.messages("session-1")
         if (
             event.type == "message_update"
             and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
@@ -99,8 +101,8 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
         "user",
         "assistant",
     ]
-    stored_lines = (root / "session-1" / "messages.jsonl").read_text("utf-8").splitlines()
-    assert len(stored_lines) == 2
+    stored_lines = (root / "session-1.jsonl").read_text("utf-8").splitlines()
+    assert len(stored_lines) == 3
     assert all("stream_event_recorded" not in line for line in stored_lines)
     metadata = await sessions.get("session-1")
     assert metadata is not None

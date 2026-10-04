@@ -5,9 +5,9 @@ import fcntl
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
+from typing import Any, TextIO
 
 from camel_harness.llm import Message
 
@@ -16,386 +16,263 @@ from .log import SessionLog, SessionLogEvent, SurfaceOperation
 from .metadata import SessionMetadata
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_VERSION = 2
 
 
 class JsonlSessionStorage:
-    """纯本地 JSONL 会话存储，每个 Session 使用独立目录。"""
+    """每个会话一份追加日志；按记录类型重建元数据、原始消息和上下文。"""
 
     def __init__(self, root: Path) -> None:
         self._root = root.expanduser().resolve()
         self._locks: dict[str, asyncio.Lock] = {}
 
+    async def create(self, metadata: SessionMetadata) -> None:
+        path = self._path(metadata.session_id)
+        async with self._lock(metadata.session_id):
+            await asyncio.to_thread(self._create_sync, path, metadata)
+
     async def append_message(self, session_id: str, message: Message) -> None:
-        path = self._message_path(session_id)
-        context_path = self._context_path(session_id)
-        metadata_path = self._metadata_path(session_id)
-        lock = self._locks.setdefault(session_id, asyncio.Lock())
-        async with lock:
+        async with self._lock(session_id):
             await asyncio.to_thread(
-                self._append_message_sync,
-                path,
-                context_path,
-                metadata_path,
-                session_id,
-                message,
+                self._append_sync,
+                self._path(session_id),
+                {"type": "message", "timestamp": _now(), "message": message_to_dict(message)},
             )
-
-    async def messages(self, session_id: str) -> tuple[Message, ...]:
-        path = self._message_path(session_id)
-        if not path.exists():
-            return ()
-        rows = await asyncio.to_thread(path.read_text, "utf-8")
-        messages: list[Message] = []
-        for line_number, line in enumerate(rows.splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                raw: dict[str, Any] = json.loads(line)
-                messages.append(message_from_dict(raw))
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(f"会话消息文件损坏：{path}:{line_number}") from exc
-        return tuple(messages)
-
-    async def context_events(self, session_id: str) -> tuple[SessionLogEvent, ...]:
-        """读取上下文日志，并补齐异常退出时尚未记录的尾部消息引用。"""
-
-        message_path = self._message_path(session_id)
-        context_path = self._context_path(session_id)
-        lock = self._locks.setdefault(session_id, asyncio.Lock())
-        async with lock:
-            return await asyncio.to_thread(self._context_events_sync, message_path, context_path)
 
     async def append_context_event(self, session_id: str, event: SessionLogEvent) -> None:
-        """把压缩摘要作为 Replace 事件追加到 context.jsonl。"""
+        if event.operation is not SurfaceOperation.REPLACE:
+            raise ValueError("会话存储只接受压缩替换事件")
+        async with self._lock(session_id):
+            await asyncio.to_thread(self._append_compaction_sync, self._path(session_id), event)
 
-        message_path = self._message_path(session_id)
-        context_path = self._context_path(session_id)
-        metadata_path = self._metadata_path(session_id)
-        lock = self._locks.setdefault(session_id, asyncio.Lock())
-        async with lock:
-            if not metadata_path.exists():
-                raise KeyError(f"会话不存在：{session_id}")
-            return await asyncio.to_thread(
-                self._append_context_event_sync,
-                message_path,
-                context_path,
-                event,
-            )
+    async def messages(self, session_id: str) -> tuple[Message, ...]:
+        rows = await self._rows(session_id)
+        return tuple(
+            message_from_dict(row["message"]) for row in rows[1:] if row["type"] == "message"
+        )
 
-    async def create(self, metadata: SessionMetadata) -> None:
-        metadata_path = self._metadata_path(metadata.session_id)
-        message_path = self._message_path(metadata.session_id)
-        context_path = self._context_path(metadata.session_id)
-        lock = self._locks.setdefault(metadata.session_id, asyncio.Lock())
-        async with lock:
-            await asyncio.to_thread(
-                self._create_metadata_sync,
-                metadata_path,
-                message_path,
-                context_path,
-                metadata,
-            )
+    async def context_events(self, session_id: str) -> tuple[SessionLogEvent, ...]:
+        return self._project_context(session_id, await self._rows(session_id))
 
     async def get_metadata(self, session_id: str) -> SessionMetadata | None:
-        path = self._metadata_path(session_id)
-        if not path.exists():
-            return None
-        return await asyncio.to_thread(self._read_metadata_sync, path)
+        rows = await self._rows(session_id)
+        return self._project_metadata(rows) if rows else None
 
     async def list_metadata(self) -> tuple[SessionMetadata, ...]:
-        return await asyncio.to_thread(self._list_metadata_sync)
+        if not self._root.exists():
+            return ()
+        paths = [
+            path
+            for path in self._root.glob("*.jsonl")
+            if _SAFE_ID.fullmatch(path.stem) and path.is_file() and not path.is_symlink()
+        ]
+        records = await asyncio.to_thread(
+            lambda: [self._project_metadata(self._read_rows_sync(path)) for path in paths]
+        )
+        return tuple(sorted(records, key=lambda item: item.updated_at, reverse=True))
 
     async def update_metadata(self, metadata: SessionMetadata) -> None:
-        path = self._metadata_path(metadata.session_id)
-        lock = self._locks.setdefault(metadata.session_id, asyncio.Lock())
-        async with lock:
-            if not path.exists():
-                raise KeyError(f"会话不存在：{metadata.session_id}")
-            await asyncio.to_thread(self._write_metadata_sync, path, metadata)
-
-    async def delete(self, session_id: str) -> bool:
-        message_path = self._message_path(session_id)
-        context_path = self._context_path(session_id)
-        metadata_path = self._metadata_path(session_id)
-        lock = self._locks.setdefault(session_id, asyncio.Lock())
-        async with lock:
-            return await asyncio.to_thread(
-                self._delete_sync, message_path, context_path, metadata_path
+        async with self._lock(metadata.session_id):
+            await asyncio.to_thread(
+                self._append_sync,
+                self._path(metadata.session_id),
+                {
+                    "type": "session_info",
+                    "timestamp": metadata.updated_at,
+                    "name": metadata.name,
+                    "cwd": metadata.workspace,
+                    "modelId": metadata.model_id,
+                    "archived": metadata.archived,
+                },
             )
 
-    def _message_path(self, session_id: str) -> Path:
-        return self._session_dir(session_id) / "messages.jsonl"
+    async def delete(self, session_id: str) -> bool:
+        async with self._lock(session_id):
+            path = self._path(session_id)
+            if not path.exists():
+                return False
+            await asyncio.to_thread(path.unlink)
+            return True
 
-    def _metadata_path(self, session_id: str) -> Path:
-        return self._session_dir(session_id) / "metadata.json"
+    async def _rows(self, session_id: str) -> list[dict[str, Any]]:
+        async with self._lock(session_id):
+            return await asyncio.to_thread(self._read_rows_sync, self._path(session_id))
 
-    def _context_path(self, session_id: str) -> Path:
-        return self._session_dir(session_id) / "context.jsonl"
+    def _lock(self, session_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(session_id, asyncio.Lock())
 
-    def _session_dir(self, session_id: str) -> Path:
+    def _path(self, session_id: str) -> Path:
         if not _SAFE_ID.fullmatch(session_id):
             raise ValueError("session_id 只能包含字母、数字、下划线和连字符")
-        path = self._root / session_id
+        path = self._root / f"{session_id}.jsonl"
         if path.is_symlink():
-            raise ValueError("会话目录不能是符号链接")
+            raise ValueError("会话文件不能是符号链接")
         return path
 
-    def _append_message_sync(
-        self,
-        path: Path,
-        context_path: Path,
-        metadata_path: Path,
-        session_id: str,
-        message: Message,
-    ) -> None:
-        if not metadata_path.exists():
-            raise KeyError(f"会话不存在：{session_id}")
+    @staticmethod
+    def _create_sync(path: Path, metadata: SessionMetadata) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                existing_messages = self._read_message_rows_sync(path)
-                events = self._context_events_sync(path, context_path, existing_messages)
-                message_index = len(existing_messages)
-                stream.write(
-                    json.dumps(message_to_dict(message), ensure_ascii=False, separators=(",", ":"))
-                    + "\n"
-                )
-                stream.flush()
-                os.fsync(stream.fileno())
-                event = SessionLog(session_id, events).append_message(message_index, message)
-                self._append_context_row_sync(
-                    context_path,
-                    {
-                        "seq": event.seq,
-                        "op": event.operation.value,
-                        "messageIndex": message_index,
-                    },
-                )
-                metadata = self._read_metadata_sync(metadata_path)
-                self._write_metadata_sync(metadata_path, metadata.record_messages(1, message.role))
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-    def _context_events_sync(
-        self,
-        message_path: Path,
-        context_path: Path,
-        messages: list[Message] | None = None,
-    ) -> tuple[SessionLogEvent, ...]:
-        raw_messages = (
-            messages if messages is not None else self._read_message_rows_sync(message_path)
-        )
-        rows = self._read_context_rows_sync(context_path)
-        referenced: set[int] = set()
-        events: list[SessionLogEvent] = []
-        for expected_seq, raw in enumerate(rows):
-            try:
-                seq = int(raw["seq"])
-                if seq != expected_seq:
-                    raise ValueError(f"上下文日志序号必须连续：期望 {expected_seq}，实际 {seq}")
-                operation = SurfaceOperation(str(raw["op"]))
-                if operation is SurfaceOperation.APPEND:
-                    message_index = int(raw["messageIndex"])
-                    if message_index != len(referenced) or not 0 <= message_index < len(
-                        raw_messages
-                    ):
-                        raise ValueError("上下文日志引用了无效或重复的消息下标")
-                    referenced.add(message_index)
-                    events.append(
-                        SessionLogEvent.append(seq, message_index, raw_messages[message_index])
-                    )
-                else:
-                    events.append(
-                        SessionLogEvent.replace(
-                            seq,
-                            int(raw["start"]),
-                            int(raw["end"]),
-                            message_from_dict(dict(raw["message"])),
-                        )
-                    )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(f"上下文日志损坏：{context_path}:{expected_seq + 1}") from exc
-
-        missing = [index for index in range(len(raw_messages)) if index not in referenced]
-        if missing:
-            # 完整消息总是先落盘；进程若在随后写 context.jsonl 前退出，可安全补齐尾部引用。
-            expected_missing = list(range(min(missing), len(raw_messages)))
-            if missing != expected_missing:
-                raise ValueError("上下文日志缺少非尾部消息引用，无法安全修复")
-            for message_index in missing:
-                event = SessionLogEvent.append(
-                    len(events), message_index, raw_messages[message_index]
-                )
-                self._append_context_row_sync(
-                    context_path,
-                    {
-                        "seq": event.seq,
-                        "op": event.operation.value,
-                        "messageIndex": message_index,
-                    },
-                )
-                events.append(event)
-        return tuple(events)
-
-    def _append_context_event_sync(
-        self,
-        message_path: Path,
-        context_path: Path,
-        event: SessionLogEvent,
-    ) -> None:
-        events = self._context_events_sync(message_path, context_path)
-        if event.operation is not SurfaceOperation.REPLACE:
-            raise ValueError("SessionStorage 只接受由 SessionLog 创建的 Replace 事件")
-        if event.seq != len(events):
-            raise ValueError("SessionLog 已被并发修改，请重新加载后再压缩")
-        assert event.replace_start is not None
-        assert event.replace_end is not None
-        self._append_context_row_sync(
-            context_path,
-            {
-                "seq": event.seq,
-                "op": event.operation.value,
-                "start": event.replace_start,
-                "end": event.replace_end,
-                "message": message_to_dict(event.message),
-            },
-        )
-
-    @staticmethod
-    def _read_message_rows_sync(path: Path) -> list[Message]:
-        if not path.exists():
-            return []
-        messages: list[Message] = []
-        for line_number, line in enumerate(path.read_text("utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                messages.append(message_from_dict(json.loads(line)))
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(f"会话消息文件损坏：{path}:{line_number}") from exc
-        return messages
-
-    @staticmethod
-    def _read_context_rows_sync(path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for line_number, line in enumerate(path.read_text("utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-                if not isinstance(value, dict):
-                    raise TypeError
-                rows.append(value)
-            except (TypeError, json.JSONDecodeError) as exc:
-                raise ValueError(f"上下文日志损坏：{path}:{line_number}") from exc
-        return rows
-
-    @staticmethod
-    def _append_context_row_sync(path: Path, row: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-    @staticmethod
-    def _create_metadata_sync(
-        metadata_path: Path,
-        message_path: Path,
-        context_path: Path,
-        metadata: SessionMetadata,
-    ) -> None:
-        if metadata_path.exists() or message_path.exists() or context_path.exists():
+        if path.exists():
             raise ValueError(f"会话已存在：{metadata.session_id}")
-        JsonlSessionStorage._write_metadata_sync(metadata_path, metadata)
-
-    @staticmethod
-    def _write_metadata_sync(path: Path, metadata: SessionMetadata) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-        payload = {
+        row = {
+            "type": "session",
+            "version": _VERSION,
             "id": metadata.session_id,
-            "name": metadata.name,
+            "timestamp": metadata.created_at,
             "cwd": metadata.workspace,
-            "startTime": metadata.created_at,
-            "updatedTime": metadata.updated_at,
-            "messageCount": metadata.message_count,
-            "lastMessageType": metadata.last_message_type,
+            "name": metadata.name,
             "modelId": metadata.model_id,
             "archived": metadata.archived,
             "parentSessionId": metadata.parent_session_id,
             "parentToolCallId": metadata.parent_tool_call_id,
-            "version": metadata.schema_version,
         }
-        with temporary.open("w", encoding="utf-8") as stream:
-            stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        temporary.replace(path)
+        with path.open("x", encoding="utf-8") as stream:
+            _write_row(stream, row)
 
     @staticmethod
-    def _read_metadata_sync(path: Path) -> SessionMetadata:
-        try:
-            raw: dict[str, Any] = json.loads(path.read_text("utf-8"))
-            last_message_type = raw.get("lastMessageType")
-            model_id = raw.get("modelId")
-            parent_session_id = raw.get("parentSessionId")
-            parent_tool_call_id = raw.get("parentToolCallId")
-            return SessionMetadata(
-                session_id=str(raw["id"]),
-                name=str(raw["name"]),
-                workspace=str(raw["cwd"]),
-                created_at=str(raw["startTime"]),
-                updated_at=str(raw["updatedTime"]),
-                message_count=int(raw["messageCount"]),
-                last_message_type=(
-                    str(last_message_type) if last_message_type is not None else None
-                ),
-                model_id=str(model_id) if model_id is not None else None,
-                archived=bool(raw["archived"]),
-                parent_session_id=(
-                    str(parent_session_id) if parent_session_id is not None else None
-                ),
-                parent_tool_call_id=(
-                    str(parent_tool_call_id) if parent_tool_call_id is not None else None
-                ),
-                schema_version=int(raw["version"]),
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(f"会话元数据文件损坏：{path}") from exc
-
-    def _list_metadata_sync(self) -> tuple[SessionMetadata, ...]:
-        if not self._root.exists():
-            return ()
-        metadata: list[SessionMetadata] = []
-        for path in self._root.iterdir():
-            if not path.is_dir() or path.is_symlink() or not _SAFE_ID.fullmatch(path.name):
-                continue
-            metadata_path = path / "metadata.json"
-            if metadata_path.exists():
-                metadata.append(self._read_metadata_sync(metadata_path))
-        return tuple(sorted(metadata, key=lambda item: item.updated_at, reverse=True))
-
-    @staticmethod
-    def _delete_sync(message_path: Path, context_path: Path, metadata_path: Path) -> bool:
-        existed = message_path.exists() or context_path.exists() or metadata_path.exists()
-        if message_path.exists():
-            message_path.unlink()
-        if context_path.exists():
-            context_path.unlink()
-        if metadata_path.exists():
-            metadata_path.unlink()
-        if existed:
+    def _append_sync(path: Path, row: dict[str, Any]) -> None:
+        if not path.exists():
+            raise KeyError(f"会话不存在：{path.stem}")
+        with path.open("rb+") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
-                message_path.parent.rmdir()
-            except OSError:
-                # 未知扩展文件属于其他能力，删除核心文件时不级联清理。
-                pass
-        return existed
+                header = json.loads(stream.readline())
+                if (
+                    not isinstance(header, dict)
+                    or header.get("type") != "session"
+                    or header.get("version") != _VERSION
+                ):
+                    raise ValueError(f"会话头格式不受支持：{path}")
+                stream.seek(0, os.SEEK_END)
+                if stream.tell() == 0:
+                    raise ValueError(f"会话日志为空：{path}")
+                stream.seek(-1, os.SEEK_END)
+                if stream.read(1) != b"\n":
+                    raise ValueError(f"会话日志尾部不完整：{path}")
+                stream.seek(0, os.SEEK_END)
+                stream.write(
+                    (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+                        "utf-8"
+                    )
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _append_compaction_sync(path: Path, event: SessionLogEvent) -> None:
+        if not path.exists():
+            raise KeyError(f"会话不存在：{path.stem}")
+        with path.open("r+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                rows = JsonlSessionStorage._read_rows_sync(path)
+                events = JsonlSessionStorage._project_context(path.stem, rows)
+                if event.seq != len(events):
+                    raise ValueError("会话上下文已被并发修改，请重新加载后再压缩")
+                assert event.replace_start is not None
+                assert event.replace_end is not None
+                SessionLog(path.stem, events).replace_context(
+                    event.replace_start, event.replace_end, event.message
+                )
+                stream.seek(0, os.SEEK_END)
+                _write_row(
+                    stream,
+                    {
+                        "type": "compaction",
+                        "timestamp": _now(),
+                        "start": event.replace_start,
+                        "end": event.replace_end,
+                        "summary": message_to_dict(event.message),
+                    },
+                )
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _read_rows_sync(path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        with path.open("r", encoding="utf-8") as stream:
+            for number, line in enumerate(stream, start=1):
+                try:
+                    row = json.loads(line)
+                    if not isinstance(row, dict):
+                        raise TypeError("记录必须是 JSON 对象")
+                    if number == 1:
+                        if row.get("type") != "session" or row.get("version") != _VERSION:
+                            raise ValueError("会话头格式不受支持")
+                        if row.get("id") != path.stem:
+                            raise ValueError("会话头 ID 与文件名不一致")
+                    elif row.get("type") not in {"message", "compaction", "session_info"}:
+                        raise ValueError("未知会话记录类型")
+                    rows.append(row)
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ValueError(f"会话日志损坏：{path}:{number}") from exc
+        if not rows:
+            raise ValueError(f"会话日志为空：{path}")
+        return rows
+
+    @staticmethod
+    def _project_context(
+        session_id: str, rows: list[dict[str, Any]]
+    ) -> tuple[SessionLogEvent, ...]:
+        log = SessionLog(session_id)
+        message_index = 0
+        for row in rows[1:]:
+            if row["type"] == "message":
+                log.append_message(message_index, message_from_dict(row["message"]))
+                message_index += 1
+            elif row["type"] == "compaction":
+                log.replace_context(
+                    int(row["start"]), int(row["end"]), message_from_dict(row["summary"])
+                )
+        return log.events
+
+    @staticmethod
+    def _project_metadata(rows: list[dict[str, Any]]) -> SessionMetadata:
+        header = rows[0]
+        name = str(header["name"])
+        workspace = str(header["cwd"])
+        model_id = header.get("modelId")
+        archived = bool(header.get("archived", False))
+        updated_at = str(header["timestamp"])
+        message_count = 0
+        last_message_type: str | None = None
+        for row in rows[1:]:
+            if row["type"] == "message":
+                message_count += 1
+                last_message_type = str(row["message"]["role"])
+                updated_at = str(row["timestamp"])
+            elif row["type"] == "session_info":
+                name = str(row["name"])
+                workspace = str(row["cwd"])
+                model_id = row.get("modelId")
+                archived = bool(row["archived"])
+                updated_at = str(row["timestamp"])
+        return SessionMetadata(
+            session_id=str(header["id"]),
+            name=name,
+            workspace=workspace,
+            created_at=str(header["timestamp"]),
+            updated_at=updated_at,
+            message_count=message_count,
+            last_message_type=last_message_type,
+            model_id=str(model_id) if model_id is not None else None,
+            archived=archived,
+            parent_session_id=header.get("parentSessionId"),
+            parent_tool_call_id=header.get("parentToolCallId"),
+            schema_version=_VERSION,
+        )
+
+
+def _write_row(stream: TextIO, row: dict[str, Any]) -> None:
+    stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()

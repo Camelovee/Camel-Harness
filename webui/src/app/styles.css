@@ -17,8 +17,12 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .brand-wordmark strong { color: #1d2937; font-size: 15px; letter-spacing: -.04em; }
 .brand-wordmark span { color: #6d7c8d; font: 600 9px/1 "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; }
 .brand-wordmark em { padding: 2px 5px; border-radius: 4px; background: #e2e9fa; color: #5670ba; font-size: 9px; font-style: normal; }
-.new-workspace { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 38px; border: 1px solid #4967d0; border-radius: 8px; background: #526ed8; color: #fff; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(82, 110, 216, .16); }
-.new-workspace:hover { background: #4662ca; }
+.new-chat { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 38px; margin-bottom: 8px; border: 1px solid #4967d0; border-radius: 8px; background: #526ed8; color: #fff; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(82, 110, 216, .16); }
+.new-chat:hover { background: #4662ca; }
+.new-chat:disabled { cursor: not-allowed; opacity: .55; }
+.new-chat span { font-size: 18px; line-height: 0; }
+.new-workspace { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 38px; border: 1px solid #d8e0ea; border-radius: 8px; background: #fff; color: #516079; font-size: 13px; font-weight: 600; }
+.new-workspace:hover { background: #e9edf5; }
 .new-workspace span { font-size: 18px; line-height: 0; }
 .workspace-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 25px; padding: 0 4px 8px; color: #7d8997; font-size: 11px; font-weight: 600; }
 .workspace-total { color: #a1acb8; font-size: 10px; }

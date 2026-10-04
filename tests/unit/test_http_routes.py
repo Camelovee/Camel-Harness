@@ -34,6 +34,7 @@ def test_http_router_keeps_public_endpoints_after_module_split() -> None:
     )
     assert str(router.url_path_for("resume_agent", session_id="s")) == "/api/sessions/s/runs/resume"
     assert str(router.url_path_for("workspaces")) == "/api/workspaces"
+    assert str(router.url_path_for("default_workspace")) == "/api/workspaces/default"
     assert str(router.url_path_for("select_workspace")) == "/api/workspaces/select"
     assert str(router.url_path_for("approvals")) == "/api/approvals"
     assert str(router.url_path_for("resolve_approval", request_id="r")) == "/api/approvals/r"

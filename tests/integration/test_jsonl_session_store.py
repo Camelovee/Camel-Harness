@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from camel_harness.agent.session import SessionManager, SessionMetadata
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.llm import (
@@ -17,9 +21,12 @@ async def test_jsonl_store_appends_and_projects_messages(tmp_path) -> None:
     await store.append_message("session-1", message)
 
     assert await store.messages("session-1") == (message,)
-    line = (tmp_path / "session-1" / "messages.jsonl").read_text("utf-8").strip()
-    assert '"role":"user"' in line
-    assert '"session_id"' not in line
+    rows = [
+        json.loads(line) for line in (tmp_path / "session-1.jsonl").read_text("utf-8").splitlines()
+    ]
+    assert [row["type"] for row in rows] == ["session", "message"]
+    assert rows[1]["message"] == {"role": "user", "content": "你好"}
+    assert "session_id" not in rows[1]["message"]
 
 
 async def test_tool_results_remain_distinct_messages(tmp_path) -> None:
@@ -78,8 +85,40 @@ async def test_context_log_restores_compacted_surface_after_restart(tmp_path) ->
         originals[6],
         originals[7],
     )
-    rows = (root / "session-1" / "context.jsonl").read_text("utf-8").splitlines()
-    assert len(rows) == 9
-    assert '"messageIndex":0' in rows[0]
-    assert '"message"' not in rows[0]
-    assert '"op":"replace"' in rows[-1]
+    rows = [json.loads(line) for line in (root / "session-1.jsonl").read_text("utf-8").splitlines()]
+    assert len(rows) == 10
+    assert [row["type"] for row in rows] == ["session", *(["message"] * 8), "compaction"]
+    assert rows[-1]["summary"]["content"].startswith("[Compacted History]")
+
+
+async def test_metadata_update_does_not_shift_compaction_coordinates(tmp_path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path))
+    await sessions.create("session-1", tmp_path, "初始名称")
+    await sessions.append_message("session-1", UserMessage("旧消息"))
+    await sessions.update("session-1", name="新名称", archived=True)
+    await sessions.append_message("session-1", UserMessage("新消息"))
+    await sessions.replace_context("session-1", 0, 0, UserMessage("摘要"))
+
+    restarted = SessionManager(JsonlSessionStorage(tmp_path))
+    assert await restarted.context_messages("session-1") == (
+        UserMessage("摘要"),
+        UserMessage("新消息"),
+    )
+    metadata = await restarted.get("session-1")
+    assert metadata is not None
+    assert metadata.name == "新名称"
+    assert metadata.archived is True
+    assert metadata.message_count == 2
+
+
+async def test_incomplete_tail_is_rejected_without_appending(tmp_path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path))
+    await sessions.create("session-1", tmp_path, "测试会话")
+    path = tmp_path / "session-1.jsonl"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write('{"type":"message"')
+    original = path.read_bytes()
+
+    with pytest.raises(ValueError, match="尾部不完整"):
+        await sessions.append_message("session-1", UserMessage("不能写入"))
+    assert path.read_bytes() == original

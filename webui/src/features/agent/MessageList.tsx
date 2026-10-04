@@ -100,14 +100,14 @@ function Welcome({
     <div className="welcome">
       <div className="welcome-icon">🐫</div>
       <div className="eyebrow">CAMEL HARNESS · PYTHON EDITION</div>
-      <h1>{activeWorkspace ? "在工作区中创建一个会话" : "从选择工作区开始"}</h1>
+      <h1>开始新对话</h1>
       <p>
         {activeWorkspace
-          ? "一个本地工作区可以承载多个独立 Agent 会话；新会话会直接使用当前目录执行。"
-          : "选择本机项目文件夹后，Agent 可以读取、修改和运行其中的代码。"}
+          ? `直接输入消息即可开始，新的会话默认在 ${activeWorkspace} 中工作。也可以从左侧选择其他本地工作区。`
+          : "直接输入消息即可开始；也可以从左侧选择本地工作区。"}
       </p>
       <button className="welcome-action" onClick={onStart}>
-        {activeWorkspace ? "创建第一个会话" : "选择本地文件夹"} <span>→</span>
+        创建空会话 <span>→</span>
       </button>
     </div>
   );

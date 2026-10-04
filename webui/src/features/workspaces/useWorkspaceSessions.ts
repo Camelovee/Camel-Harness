@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Session, Workspace } from "../../shared/model";
-import { createWorkspaceSession, chooseLocalWorkspace, fetchWorkspaces, removeSession, saveSessionModel } from "./api";
+import { createWorkspaceSession, chooseLocalWorkspace, fetchDefaultWorkspace, fetchWorkspaces, removeSession, saveSessionModel } from "./api";
 
 type Options = {
   onError: (message: string) => void;
@@ -12,6 +12,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [defaultWorkspace, setDefaultWorkspace] = useState<string | null>(null);
   const [selectingWorkspace, setSelectingWorkspace] = useState(false);
   const [switchingModel, setSwitchingModel] = useState(false);
 
@@ -28,7 +29,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
       const loaded = await fetchWorkspaces();
       const allSessions = loaded.flatMap((workspace) => workspace.sessions);
       setWorkspaces(loaded);
-      setActiveWorkspace((current) => preferredWorkspace ?? current ?? loaded[0]?.workspace ?? null);
+      setActiveWorkspace((current) => preferredWorkspace ?? current);
       setActiveId((current) => {
         if (
           preferredSessionId &&
@@ -37,7 +38,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
           return preferredSessionId;
         }
         if (current && allSessions.some((session) => session.session_id === current)) return current;
-        return allSessions[0]?.session_id ?? null;
+        return null;
       });
     },
     [],
@@ -47,12 +48,16 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     void refresh().catch((reason: unknown) =>
       onError(reason instanceof Error ? reason.message : "加载工作区失败"),
     );
+    void fetchDefaultWorkspace()
+      .then(setDefaultWorkspace)
+      .catch((reason: unknown) => onError(reason instanceof Error ? reason.message : "加载默认工作区失败"));
   }, [onError, refresh]);
 
   const createForWorkspace = useCallback(
-    async (workspace: string) => {
+    async (workspace?: string) => {
       const session = await createWorkspaceSession(workspace);
-      await refresh(workspace, session.session_id);
+      await refresh(session.workspace, session.session_id);
+      return session;
     },
     [refresh],
   );
@@ -81,19 +86,21 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   }, [createForWorkspace, onError, onStatus, selectingWorkspace, workspaces]);
 
   const createSession = useCallback(
-    async (workspace = activeWorkspace) => {
-      if (!workspace) {
-        await selectWorkspace();
-        return;
-      }
+    async (workspace = activeWorkspace ?? defaultWorkspace ?? undefined) => {
       onError("");
       try {
-        await createForWorkspace(workspace);
+        return await createForWorkspace(workspace);
       } catch (reason) {
         onError(reason instanceof Error ? reason.message : "创建会话失败");
+        return null;
       }
     },
-    [activeWorkspace, createForWorkspace, onError, selectWorkspace],
+    [activeWorkspace, createForWorkspace, defaultWorkspace, onError],
+  );
+
+  const createDefaultChatSession = useCallback(
+    () => createWorkspaceSession(),
+    [],
   );
 
   const deleteSession = useCallback(
@@ -142,6 +149,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   return {
     workspaces,
     activeWorkspace,
+    defaultWorkspace,
     activeId,
     activeSession,
     selectingWorkspace,
@@ -151,6 +159,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     refresh,
     selectWorkspace,
     createSession,
+    createDefaultChatSession,
     deleteSession,
     activateWorkspace,
     changeModel,

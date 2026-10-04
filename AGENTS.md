@@ -44,10 +44,11 @@ Backend / CLI -> Agent -> LLM
 - 中断必须向 LLM、审批和工具协程传播；不得保存未完成 assistant，已落盘但缺少结果的工具调用必须补充错误 `ToolResultMessage`，恢复时不得自动重试历史工具。
 - `Tool` ABC 及 `ToolContext`、`ToolCall`、`ToolResult` 位于 `camel_harness.agent.tools.types`；给模型使用的 `ToolDefinition` 位于 `camel_harness.llm`，只包含最终工具名、描述和输入 Schema，不感知 namespace。
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
-- 所有会话默认存储在 `~/.camel/sessions/<session-id>/`，包含 `metadata.json`、`messages.jsonl` 和 `context.jsonl`。
-- `messages.jsonl` 只保存完整规范消息；不兼容旧会话格式。
+- 所有会话默认存储在 `~/.camel/sessions/<session-id>.jsonl`；会话头、完整消息、压缩和元数据更新按类型追加到同一文件。
+- 只有完整规范消息的 `message_end` 可触发消息持久化；Provider 增量、未完成 assistant 和临时审批事件不得写入会话日志。
+- 原始消息、模型上下文和元数据由同一日志分别投影；不在运行时兼容旧格式。
 - `ContextManager` 与 `CompactionEngine` 位于 `camel_harness.agent.context`，负责动态系统上下文和历史压缩；可依赖 ProjectRules、Skills、Memory 和只读 `SessionLog`，但不得持有 `SessionManager`、执行会话 CRUD 或读写 JSONL。
-- Session 独立负责会话消息、元数据和压缩投影；Agent 是 Session 与 `ContextManager` 的唯一协调者。
+- Session 独立负责会话消息、元数据和压缩投影；Agent 通过有序事件把完整消息交给 Session，并协调其与 `ContextManager`，不处理 JSONL 格式。
 - 规范消息属于 LLM，JSONL 消息编解码属于 Session，LLM 不感知持久化格式。
 - 文件与 Shell 工具默认限制在工作区内；不得提交密钥或令牌。
 
@@ -58,3 +59,7 @@ Backend / CLI -> Agent -> LLM
 - 提交前运行 Ruff、Mypy、Pytest、Import Linter、WebUI build 和 `git diff --check`。
 - 架构变化同步更新 `docs/项目架构.md`，计划变化同步更新 `docs/路书.md`。
 - `docs/开发日志.md` 按自然日维护，同一天只有一个二级日期标题；每次开发记录主要变更和验证结果。
+
+## git提交规范
+
+- 使用中文提交描述，格式为 `<type>(<scope>): <subject>`，并按需填写正文和尾注。

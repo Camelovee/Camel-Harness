@@ -20,6 +20,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>("chat");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftModelId, setDraftModelId] = useState<string | null>(null);
   const onError = useCallback((message: string) => setError(message || null), []);
   const onStatus = useCallback((message: string) => setStatus(message), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -29,6 +30,7 @@ export default function App() {
   const agent = useAgentTurn({
     activeId: workspace.activeId,
     activeWorkspace: workspace.activeWorkspace,
+    createDefaultChatSession: workspace.createDefaultChatSession,
     refreshWorkspaces: workspace.refresh,
     onError,
     onStatus,
@@ -45,16 +47,16 @@ export default function App() {
     await workspace.deleteSession({ session_id: target.sessionId });
   }
 
-  const start = () =>
-    void (workspace.activeWorkspace
-      ? workspace.createSession()
-      : workspace.selectWorkspace());
+  const start = () => void workspace.createDefaultChatSession()
+    .then((session) => workspace.refresh(session.workspace, session.session_id))
+    .catch((reason: unknown) => onError(reason instanceof Error ? reason.message : "创建会话失败"));
 
   const models = webSettings.settings?.models ?? [];
   const selectedModel =
-    models.find((model) => model.id === workspace.activeSession?.model_id && model.configured) ??
+    models.find((model) => model.id === (workspace.activeSession?.model_id ?? draftModelId) && model.configured) ??
     models.find((model) => model.id === webSettings.settings?.default_model_id && model.configured) ??
     models.find((model) => model.configured);
+  const chatWorkspace = workspace.activeSession?.workspace ?? workspace.defaultWorkspace;
 
   return (
     <div className="app-shell">
@@ -63,13 +65,29 @@ export default function App() {
         activeWorkspace={workspace.activeWorkspace}
         activeId={workspace.activeId}
         selectingWorkspace={workspace.selectingWorkspace}
-        onSelectWorkspace={() => void workspace.selectWorkspace()}
-        onActivateWorkspace={workspace.activateWorkspace}
+        newChatDisabled={agent.running}
+        onSelectWorkspace={() => {
+          setDraftModelId(null);
+          void workspace.selectWorkspace();
+        }}
+        onNewChat={() => {
+          workspace.setActiveId(null);
+          workspace.setActiveWorkspace(null);
+          setDraftModelId(null);
+        }}
+        onActivateWorkspace={(item) => {
+          setDraftModelId(null);
+          workspace.activateWorkspace(item);
+        }}
         onActivateSession={(workspacePath, sessionId) => {
+          setDraftModelId(null);
           workspace.setActiveWorkspace(workspacePath);
           workspace.setActiveId(sessionId);
         }}
-        onCreateSession={(workspacePath) => void workspace.createSession(workspacePath)}
+        onCreateSession={(workspacePath) => {
+          setDraftModelId(null);
+          void workspace.createSession(workspacePath);
+        }}
         onDeleteSession={(sessionId, name) => setDeleteTarget({ sessionId, name })}
         onOpenSettings={() => setSettingsOpen(true)}
       />
@@ -79,13 +97,11 @@ export default function App() {
           <div className="main-header-meta">
             <div className="main-header-title">
               {workspace.activeSession?.name ??
-                (workspace.activeWorkspace
-                  ? workspaceName(workspace.activeWorkspace)
-                  : "Camel Harness")}
+                "新对话"}
             </div>
             <div className="main-header-sub">
               <span className="online-dot" />
-              {workspace.activeWorkspace ?? "请选择本地工作区"}
+              {chatWorkspace ?? "正在获取默认工作区…"}
             </div>
           </div>
           <nav className="main-header-tabs">
@@ -109,7 +125,7 @@ export default function App() {
         ) : (
           <MessageList
             activeSession={workspace.activeSession}
-            activeWorkspace={workspace.activeWorkspace}
+            activeWorkspace={chatWorkspace}
             messages={agent.messages}
             running={agent.running}
             streamAssistantId={agent.streamAssistantId}
@@ -121,15 +137,18 @@ export default function App() {
           />
         )}
         <Composer
-          active={Boolean(workspace.activeSession)}
-          activeWorkspace={workspace.activeWorkspace}
+          active={true}
+          activeWorkspace={chatWorkspace}
           running={agent.running}
           switchingModel={workspace.switchingModel}
           status={status}
           models={models}
           selectedModelId={selectedModel?.id ?? ""}
           thinking={webSettings.settings?.thinking ?? false}
-          onModelChange={(modelId) => void workspace.changeModel(modelId)}
+          onModelChange={(modelId) => {
+            if (workspace.activeSession) void workspace.changeModel(modelId);
+            else setDraftModelId(modelId);
+          }}
           onSend={agent.sendPrompt}
           canResume={agent.canResume}
           onAbort={agent.abortRun}

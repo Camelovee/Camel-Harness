@@ -4,6 +4,7 @@ from pathlib import Path
 
 from camel_harness.llm import Message
 
+from ..events import AgentEvent, MessageEndEvent
 from .jsonl import JsonlSessionStorage
 from .log import SessionLog, SessionLogEvent
 from .metadata import SessionMetadata
@@ -14,6 +15,12 @@ class SessionManager:
 
     def __init__(self, storage: JsonlSessionStorage) -> None:
         self._repository = storage
+
+    async def record_agent_event(self, event: AgentEvent) -> None:
+        """只把完整消息终态写入会话；增量和运行事件不属于持久化消息。"""
+
+        if isinstance(event, MessageEndEvent):
+            await self.append_message(event.session_id, event.message)
 
     async def append_message(self, session_id: str, message: Message) -> None:
         """追加一条完整规范消息；流式增量不得调用此方法。"""

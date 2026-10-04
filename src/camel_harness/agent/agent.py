@@ -108,6 +108,8 @@ class Agent:
         self._listeners: dict[int, AgentEventListener] = {}
         self._next_listener_id = 0
         self._closed = False
+        # 内部订阅先于 UI/SSE 订阅，保证完整消息落盘后才对外确认结束。
+        self.subscribe(sessions.record_agent_event)
 
     @property
     def session_id(self) -> str:
@@ -308,7 +310,7 @@ class Agent:
             await self._emit(agent_start_event(run))
             async with asyncio.timeout(options.max_duration_seconds):
                 for result in initial_tool_results:
-                    await self._sessions.append_message(self._session_id, result)
+                    await self._emit_complete_message(run, "resume-repair", result)
                 pending_user: UserMessage | None = None
                 context_query = _last_user_text(await self._sessions.messages(self._session_id))
                 if prompt is not None:
@@ -318,7 +320,6 @@ class Agent:
                         self._workspace,
                         _default_session_name(prompt),
                     )
-                    await self._sessions.append_message(self._session_id, pending_user)
                     context_query = prompt
                 dynamic_context = await self._context.build_system_context(
                     context_query,
@@ -342,18 +343,17 @@ class Agent:
                         continue
                     queued = await self._next_steering(control, turn_reason)
                     if queued is not None:
-                        await self._sessions.append_message(self._session_id, queued.message)
                         pending_user = queued.message
                     elif turn_reason is LlmStopReason.STOP:
                         run.complete()
             await self._emit(agent_end_event(run))
         except TimeoutError as exc:
             run.fail(StopReason.TIMEOUT)
-            await self._repair_dangling_tool_calls()
+            await self._repair_dangling_tool_calls(run)
             await self._emit(agent_end_event(run, str(exc) or "Agent 运行超时"))
         except asyncio.CancelledError:
             run.cancel()
-            await asyncio.shield(self._repair_dangling_tool_calls())
+            await asyncio.shield(self._repair_dangling_tool_calls(run))
             if control.abort_requested:
                 await self._emit(agent_end_event(run, "Agent 运行已取消"))
             else:
@@ -361,7 +361,7 @@ class Agent:
         except Exception as exc:
             if run.stop_reason is None:
                 run.fail(StopReason.PROVIDER_FAILED)
-            await self._repair_dangling_tool_calls()
+            await self._repair_dangling_tool_calls(run)
             await self._emit(agent_end_event(run, str(exc)))
         finally:
             control.done.set()
@@ -383,13 +383,20 @@ class Agent:
                 control.accepting_input = False
             return None
 
-    async def _repair_dangling_tool_calls(self) -> None:
+    async def _repair_dangling_tool_calls(self, run: AgentRun) -> None:
         """为中断时已落盘但没有结果的工具调用追加错误结果。"""
 
         messages = await self._sessions.messages(self._session_id)
         plan = analyze_resume(messages)
         for result in plan.missing_tool_results:
-            await self._sessions.append_message(self._session_id, result)
+            await self._emit_complete_message(run, "interruption-repair", result)
+
+    async def _emit_complete_message(self, run: AgentRun, turn_id: str, message: Message) -> None:
+        """恢复修复也走消息事件，避免出现绕过会话订阅者的保存路径。"""
+
+        message_id = uuid4().hex
+        await self._emit(message_start_event(run, turn_id, message_id, message.role))
+        await self._emit(message_end_event(run, turn_id, message_id, message))
 
     async def close(self) -> None:
         """幂等关闭 Agent 持有的外部连接。"""
@@ -440,7 +447,6 @@ class Agent:
             assistant_message_id,
             request,
         )
-        await self._sessions.append_message(run.session_id, assistant_message)
         await self._emit(message_end_event(run, turn_id, assistant_message_id, assistant_message))
 
         tool_results: list[ToolResultMessage] = []
@@ -636,7 +642,6 @@ class Agent:
 
         await self._emit(tool_execution_end_event(run, turn_id, result))
         message = _tool_result_message(result)
-        await self._sessions.append_message(run.session_id, message)
         tool_results.append(message)
         message_id = f"tool-{result.call_id}"
         await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))

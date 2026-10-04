@@ -71,12 +71,12 @@ export function Composer({
               void submit();
             }
           }}
-          placeholder={!active ? "先选择工作区并创建会话" : selectedModelId ? "输入消息，开始与 Agent 协作…" : "请先在设置中配置模型"}
+          placeholder={!active ? "正在准备本地工作区" : selectedModelId ? "输入消息，开始与 Agent 协作…" : "请先在设置中配置模型"}
           rows={2}
         />
         <div className="composer-toolbar">
           <span className="composer-caption">
-            {activeWorkspace ? workspaceName(activeWorkspace) : "未选择工作区"}
+            {activeWorkspace ? workspaceName(activeWorkspace) : "用户主目录"}
           </span>
           <div className="composer-right">
             <select
@@ -85,7 +85,7 @@ export function Composer({
               value={selectedModelId}
               onChange={(event) => onModelChange(event.target.value)}
               disabled={!active || running || switchingModel || !models.length}
-              title="为当前会话选择模型"
+              title="选择当前或下一次对话的模型"
             >
               {!selectedModelId && <option value="">配置模型</option>}
               {models.map((profile) => (

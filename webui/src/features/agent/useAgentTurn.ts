@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Activity, Approval, Message, PermissionMode } from "../../shared/model";
+import type { Activity, Approval, Message, PermissionMode, Session } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import {
   abortAgentRun,
@@ -16,6 +16,7 @@ import { projectAgentEvent } from "./streamProjection";
 type Options = {
   activeId: string | null;
   activeWorkspace: string | null;
+  createDefaultChatSession: () => Promise<Session>;
   refreshWorkspaces: (
     preferredWorkspace?: string | null,
     preferredSessionId?: string | null,
@@ -25,7 +26,7 @@ type Options = {
 };
 
 export function useAgentTurn(options: Options) {
-  const { activeId, activeWorkspace, refreshWorkspaces, onError, onStatus } = options;
+  const { activeId, activeWorkspace, createDefaultChatSession, refreshWorkspaces, onError, onStatus } = options;
   const [messages, setMessages] = useState<Message[]>([]);
   const [running, setRunning] = useState(false);
   const [streamAssistantId, setStreamAssistantId] = useState<string | null>(null);
@@ -34,8 +35,15 @@ export function useAgentTurn(options: Options) {
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const lastSequence = useRef(0);
   const streamAssistantIdRef = useRef<string | null>(null);
+  const runSessionId = useRef<string | null>(null);
+  const pendingInitialSessionId = useRef<string | null>(null);
+  const starting = useRef(false);
 
   useEffect(() => {
+    if (activeId && activeId === pendingInitialSessionId.current) {
+      pendingInitialSessionId.current = null;
+      return;
+    }
     let current = true;
     setMessages([]);
     streamAssistantIdRef.current = null;
@@ -95,11 +103,13 @@ export function useAgentTurn(options: Options) {
   const sendPrompt = useCallback(
     async (prompt: string, permissionMode: PermissionMode, thinking: boolean, modelId: string) => {
       const value = prompt.trim();
-      if (!value || !activeId || !modelId) return false;
+      if (!value || !modelId || starting.current) return false;
       onError("");
-      if (running) {
+      if (running || runSessionId.current) {
+        const sessionId = runSessionId.current ?? activeId;
+        if (!sessionId) return false;
         try {
-          await steerAgentRun(activeId, value);
+          await steerAgentRun(sessionId, value);
           onStatus("运行中输入已排队…");
           return true;
         } catch (reason) {
@@ -107,6 +117,7 @@ export function useAgentTurn(options: Options) {
           return false;
         }
       }
+      starting.current = true;
       setRunning(true);
       onStatus("正在连接 Agent…");
       setActivities([]);
@@ -116,9 +127,22 @@ export function useAgentTurn(options: Options) {
       const assistantIds = new Map<string, string>();
       const toolIds = new Map<string, string>();
       try {
-        await streamAgentRun(activeId, { prompt: value, permissionMode, thinking, modelId }, (event) =>
+        let sessionId = activeId;
+        let workspacePath = activeWorkspace;
+        if (!sessionId) {
+          const created = await createDefaultChatSession();
+          sessionId = created.session_id;
+          workspacePath = created.workspace;
+          pendingInitialSessionId.current = sessionId;
+          runSessionId.current = sessionId;
+          await refreshWorkspaces(workspacePath, sessionId);
+        } else {
+          runSessionId.current = sessionId;
+        }
+        starting.current = false;
+        await streamAgentRun(sessionId, { prompt: value, permissionMode, thinking, modelId }, (event) =>
           projectAgentEvent(event, assistantIds, toolIds, {
-            activeId,
+            activeId: sessionId,
             lastSequence,
             streamAssistantId: streamAssistantIdRef,
             setMessages,
@@ -129,24 +153,27 @@ export function useAgentTurn(options: Options) {
             onStatus,
           }),
         );
-        setMessages(await fetchConversation(activeId));
-        await refreshWorkspaces(activeWorkspace, activeId);
+        setMessages(await fetchConversation(sessionId));
+        await refreshWorkspaces(workspacePath, sessionId);
         return true;
       } catch (reason) {
         onError(errorText(reason, "发送失败"));
         onStatus("连接失败");
         return false;
       } finally {
+        starting.current = false;
+        runSessionId.current = null;
         setRunning(false);
       }
     },
-    [activeId, activeWorkspace, onError, onStatus, refreshWorkspaces, running],
+    [activeId, activeWorkspace, createDefaultChatSession, onError, onStatus, refreshWorkspaces, running],
   );
 
   const abortRun = useCallback(async () => {
-    if (!activeId || !running) return;
+    const sessionId = runSessionId.current ?? activeId;
+    if (!sessionId || !running) return;
     try {
-      await abortAgentRun(activeId);
+      await abortAgentRun(sessionId);
       onStatus("正在停止 Agent…");
     } catch (reason) {
       onError(errorText(reason, "停止 Agent 失败"));

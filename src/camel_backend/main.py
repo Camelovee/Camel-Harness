@@ -24,7 +24,7 @@ from camel_harness.agent.runtime import build_agent, build_session_manager
 def create_app(workspace: Path | None = None) -> FastAPI:
     """创建 Web 应用；Agent 依赖在 lifespan 内启动和关闭。"""
 
-    resolved_workspace = (workspace or Path.cwd()).resolve()
+    resolved_workspace = (workspace or Path.home()).resolve()
     dependencies = HttpDependencies(resolved_workspace)
 
     @asynccontextmanager
@@ -73,7 +73,7 @@ app = create_app()
 def main() -> None:
     """启动本地 FastAPI Web Server。"""
 
-    typer.echo(f"Camel Harness Web｜workspace={Path.cwd().resolve()}")
+    typer.echo(f"Camel Harness Web｜workspace={Path.home().resolve()}")
     uvicorn.run(
         "camel_backend.main:app",
         host="127.0.0.1",
