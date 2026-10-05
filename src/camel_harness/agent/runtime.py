@@ -27,6 +27,7 @@ from .tools import (
 from .tools.builtin import BuiltinToolProvider
 from .tools.file_result_storage import FileToolResultStorage
 from .tools.mcp import McpManager
+from .tools.skill_loader import SkillToolProvider
 from .tools.subagent import LocalSubagentRunner, SubagentToolProvider
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ async def build_agent(
 
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
+    await registry.register_provider(SkillToolProvider(skills))
     mcp = McpManager(workspace, workspace / settings.mcp_config)
     await mcp.start()
     await registry.register_provider(mcp)

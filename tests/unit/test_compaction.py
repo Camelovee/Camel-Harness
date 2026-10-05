@@ -13,7 +13,6 @@ from camel_harness.agent.resources import (
     MemoryStore,
     ProjectRules,
     Skills,
-    SkillSource,
 )
 from camel_harness.agent.session import SessionLog, SessionLogEvent
 from camel_harness.llm import (
@@ -165,9 +164,14 @@ async def test_context_manager_loads_workspace_rules(tmp_path) -> None:
     assert "只修改工作区内文件" in result
 
 
-async def test_context_manager_injects_resources_without_management_tools(tmp_path) -> None:
+async def test_context_manager_lists_skills_without_loading_instructions(tmp_path) -> None:
     skills = Skills(tmp_path, user_root=tmp_path / "user-skills")
-    await skills.save("python-style", "Python style", "使用类型注解", SkillSource.WORKSPACE)
+    skill_dir = tmp_path / ".camel" / "skills" / "python-style"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: python-style\ndescription: Python style\n---\n使用类型注解\n",
+        encoding="utf-8",
+    )
     memories = MemoryStore(tmp_path)
     await memories.save(MemoryEntry("architecture", "architecture decision", "保持线性会话"))
     context = ContextManager(
@@ -178,7 +182,9 @@ async def test_context_manager_injects_resources_without_management_tools(tmp_pa
 
     result = await context.build_system_context("review architecture decision", tmp_path)
 
-    assert "使用类型注解" in result
+    assert "python-style" in result
+    assert "Python style" in result
+    assert "使用类型注解" not in result
     assert "保持线性会话" in result
-    assert "skill_load" not in result
+    assert "load_skill" in result
     assert "memory_load" not in result

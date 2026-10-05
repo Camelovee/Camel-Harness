@@ -57,7 +57,7 @@ class SubagentResult:
 
 SubagentRunner = Callable[[SubagentRequest], Awaitable[SubagentResult]]
 
-_READ_ONLY_TOOLS = frozenset({"read_file"})
+_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill"})
 _GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
 
 

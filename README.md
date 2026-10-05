@@ -39,8 +39,8 @@ src/
 - 事件 `sequence` 在整个 Run 内单调递增，可用于 SSE 排序和去重；
 - 流正常结束后批量追加完整 assistant 消息，不保存 chunk；
 - `Tool` ABC 直接字段式定义，支持显式注册和 MCP；
-- 默认提供 read/write/edit/shell 四个核心工具与 `delegate_task`；子 Agent 使用隔离会话和白名单工具集，不能递归委派；
-- Skill 和 Memory 由 `ContextManager` 检索后注入系统上下文；
+- 默认提供 read/write/edit/shell 四个核心工具、只读 `load_skill` 和 `delegate_task`；子 Agent 使用隔离会话和白名单工具集，不能递归委派；
+- Skill 按名称与描述发现，正文和支持文件通过 `load_skill` 分层按需读取；Memory 由 `ContextManager` 检索后注入系统上下文；
 - Plan、Accept Edits、Default 和 YOLO 权限模式；
 - 浏览器异步审批与 CLI 审批；
 - `~/.camel/sessions/<session-id>.jsonl` 单文件会话恢复；
@@ -50,6 +50,18 @@ src/
 - WebUI 提供运行中追加、停止与继续，CLI 提供运行中输入、`/cancel` 和 `/resume`；
 - SSE 仅在 Backend 传输层使用 `yield`，断开连接时显式中止对应 Run；
 - FastAPI + React WebUI 与 Typer CLI。
+
+## Skill 渐进式加载
+
+内置 `explore-codebase`、`debug-issue`、`review-change` 和 `verify-change` 四个常用 Skill。也可将 `SKILL.md` 放在工作区 `.camel/skills/<name>/` 或用户目录 `~/.camel/skills/<name>/`；同名时优先级为工作区 > 用户 > 内置。发现阶段只读取 frontmatter 的名称与描述；相关任务出现时，Agent 可调用只读 `load_skill(name)` 获取正文。正文引用的相对文件不会预先加载，需要时再调用 `load_skill(name, path)`，路径被限制在对应 Skill 目录内。
+
+```text
+.camel/skills/review/
+├── SKILL.md
+└── references/checklist.md
+```
+
+Skill 文件由用户直接维护；Harness 不自动评估、改写或回滚 Skill。
 
 ## 安装
 

@@ -45,6 +45,7 @@ Backend / CLI -> Agent -> LLM
 - 中断必须向 LLM、审批和工具协程传播；不得保存未完成 assistant，已落盘但缺少结果的工具调用必须补充错误 `ToolResultMessage`，恢复时不得自动重试历史工具。
 - `Tool` ABC 及 `ToolContext`、`ToolCall`、`ToolResult` 位于 `camel_harness.agent.tools.types`；给模型使用的 `ToolDefinition` 位于 `camel_harness.llm`，只包含最终工具名、描述和输入 Schema，不感知 namespace。
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
+- Skill 只保留发现和三层按需加载：系统上下文只列名称与描述，`load_skill` 读取正文或支持文件；不提供 Skill 写入、演化、回滚和评估链路。
 - 所有会话默认存储在 `~/.camel/sessions/<session-id>.jsonl`；会话头、完整消息、压缩和元数据更新按类型追加到同一文件。
 - 只有完整规范消息的 `message_end` 可触发消息持久化；Provider 增量、未完成 assistant 和临时审批事件不得写入会话日志。
 - 原始消息、模型上下文和元数据由同一日志分别投影；不在运行时兼容旧格式。

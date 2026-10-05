@@ -38,11 +38,15 @@ class ContextManager:
         if rules:
             sections.append(f"# 项目规则\n{rules[: self._max_rules_chars]}")
         if skills:
-            content = "\n\n".join(
-                f"## {item.name} ({item.source.value})\n{item.description}\n\n{item.instructions}"
-                for item in skills
+            manifest = "\n".join(
+                f"- {item.name} ({item.source.value}): {item.description}" for item in skills
             )
-            sections.append(f"# Skills\n{content}")
+            sections.append(
+                "# 可用 Skills\n"
+                "以下仅为名称和描述。任务相关时先调用 load_skill 读取完整说明；"
+                "说明引用的支持文件再按需用 load_skill 的 path 参数读取。\n"
+                f"{manifest}"
+            )
         if memories:
             manifest = "\n".join(f"- {item.name}: {item.description}" for item in memories)
             sections.append(f"# 长期 Memory 索引\n{manifest}")
