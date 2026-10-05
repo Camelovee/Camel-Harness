@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class SkillSource(StrEnum):
-    """同名 Skill 按内置、用户、工作区的顺序覆盖。"""
+    """Skill 来源按内置、项目、用户的优先级排列。"""
 
     BUILTIN = "builtin"
+    PROJECT = "project"
     USER = "user"
-    WORKSPACE = "workspace"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +35,7 @@ class Skills:
 
     def __init__(self, workspace: Path, user_root: Path | None = None) -> None:
         self._builtin_root = Path(__file__).parent / "builtin_skills"
-        self._workspace_root = workspace / ".camel" / "skills"
+        self._project_root = workspace / ".camel" / "skills"
         self._user_root = user_root or Path.home() / ".camel" / "skills"
 
     async def discover(self) -> tuple[SkillDefinition, ...]:
@@ -57,8 +57,8 @@ class Skills:
         found: dict[str, SkillDefinition] = {}
         for root, source in (
             (self._builtin_root, SkillSource.BUILTIN),
+            (self._project_root, SkillSource.PROJECT),
             (self._user_root, SkillSource.USER),
-            (self._workspace_root, SkillSource.WORKSPACE),
         ):
             if not root.is_dir():
                 continue
@@ -75,7 +75,9 @@ class Skills:
                 name = metadata.get("name", path.parent.name)
                 if not _SAFE_NAME.fullmatch(name):
                     continue
-                found[name] = SkillDefinition(name, metadata.get("description", ""), source, path)
+                found.setdefault(
+                    name, SkillDefinition(name, metadata.get("description", ""), source, path)
+                )
         return tuple(found.values())
 
     def _resolve(self, name: str) -> SkillDefinition:

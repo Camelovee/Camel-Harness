@@ -183,6 +183,7 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
     result = await context.build_system_context("review architecture decision", tmp_path)
 
     assert "python-style" in result
+    assert "python-style (project)" in result
     assert "Python style" in result
     assert "使用类型注解" not in result
     assert "保持线性会话" in result

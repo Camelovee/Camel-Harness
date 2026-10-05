@@ -53,7 +53,7 @@ src/
 
 ## Skill 渐进式加载
 
-内置 `explore-codebase`、`debug-issue`、`review-change` 和 `verify-change` 四个常用 Skill。也可将 `SKILL.md` 放在工作区 `.camel/skills/<name>/` 或用户目录 `~/.camel/skills/<name>/`；同名时优先级为工作区 > 用户 > 内置。发现阶段只读取 frontmatter 的名称与描述；相关任务出现时，Agent 可调用只读 `load_skill(name)` 获取正文。正文引用的相对文件不会预先加载，需要时再调用 `load_skill(name, path)`，路径被限制在对应 Skill 目录内。
+内置 `explore-codebase`、`debug-issue`、`review-change` 和 `verify-change` 四个常用 Skill。项目级 Skill 放在当前工作区 `.camel/skills/<name>/SKILL.md`，用户级 Skill 放在 `~/.camel/skills/<name>/SKILL.md`；同名时优先级为内置 > 项目级 > 用户级。发现阶段只读取 frontmatter 的名称与描述；相关任务出现时，Agent 可调用只读 `load_skill(name)` 获取正文。正文引用的相对文件不会预先加载，需要时再调用 `load_skill(name, path)`，路径被限制在对应 Skill 目录内。
 
 ```text
 .camel/skills/review/
@@ -61,7 +61,7 @@ src/
 └── references/checklist.md
 ```
 
-Skill 文件由用户直接维护；Harness 不自动评估、改写或回滚 Skill。
+项目级和用户级 Skill 文件由用户直接维护；Harness 不自动评估、改写或回滚 Skill。
 
 ## 安装
 
