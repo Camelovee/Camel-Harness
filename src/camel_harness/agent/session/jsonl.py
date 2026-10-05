@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import json
+import logging
 import os
 import re
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -17,6 +19,7 @@ from .metadata import SessionMetadata
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _VERSION = 2
+logger = logging.getLogger(__name__)
 
 
 class JsonlSessionStorage:
@@ -55,8 +58,8 @@ class JsonlSessionStorage:
         return self._project_context(session_id, await self._rows(session_id))
 
     async def get_metadata(self, session_id: str) -> SessionMetadata | None:
-        rows = await self._rows(session_id)
-        return self._project_metadata(rows) if rows else None
+        async with self._lock(session_id):
+            return await asyncio.to_thread(self._read_metadata_sync, self._path(session_id))
 
     async def list_metadata(self) -> tuple[SessionMetadata, ...]:
         if not self._root.exists():
@@ -66,24 +69,26 @@ class JsonlSessionStorage:
             for path in self._root.glob("*.jsonl")
             if _SAFE_ID.fullmatch(path.stem) and path.is_file() and not path.is_symlink()
         ]
-        records = await asyncio.to_thread(
-            lambda: [self._project_metadata(self._read_rows_sync(path)) for path in paths]
-        )
+        records = await asyncio.to_thread(self._list_metadata_sync, paths)
         return tuple(sorted(records, key=lambda item: item.updated_at, reverse=True))
 
-    async def update_metadata(self, metadata: SessionMetadata) -> None:
-        async with self._lock(metadata.session_id):
-            await asyncio.to_thread(
-                self._append_sync,
-                self._path(metadata.session_id),
-                {
-                    "type": "session_info",
-                    "timestamp": metadata.updated_at,
-                    "name": metadata.name,
-                    "cwd": metadata.workspace,
-                    "modelId": metadata.model_id,
-                    "archived": metadata.archived,
-                },
+    async def update_metadata(
+        self,
+        session_id: str,
+        *,
+        name: str | None = None,
+        workspace: str | None = None,
+        archived: bool | None = None,
+        model_id: str | None = None,
+    ) -> SessionMetadata:
+        async with self._lock(session_id):
+            return await asyncio.to_thread(
+                self._update_metadata_sync,
+                self._path(session_id),
+                name=name,
+                workspace=workspace,
+                archived=archived,
+                model_id=model_id,
             )
 
     async def delete(self, session_id: str) -> bool:
@@ -111,7 +116,7 @@ class JsonlSessionStorage:
 
     @staticmethod
     def _create_sync(path: Path, metadata: SessionMetadata) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         if path.exists():
             raise ValueError(f"会话已存在：{metadata.session_id}")
         row = {
@@ -126,7 +131,8 @@ class JsonlSessionStorage:
             "parentSessionId": metadata.parent_session_id,
             "parentToolCallId": metadata.parent_tool_call_id,
         }
-        with path.open("x", encoding="utf-8") as stream:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             _write_row(stream, row)
 
     @staticmethod
@@ -167,7 +173,8 @@ class JsonlSessionStorage:
         with path.open("r+", encoding="utf-8") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
-                rows = JsonlSessionStorage._read_rows_sync(path)
+                stream.seek(0)
+                rows = list(JsonlSessionStorage._iter_rows(stream, path))
                 events = JsonlSessionStorage._project_context(path.stem, rows)
                 if event.seq != len(events):
                     raise ValueError("会话上下文已被并发修改，请重新加载后再压缩")
@@ -191,29 +198,104 @@ class JsonlSessionStorage:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
+    def _update_metadata_sync(
+        path: Path,
+        *,
+        name: str | None,
+        workspace: str | None,
+        archived: bool | None,
+        model_id: str | None,
+    ) -> SessionMetadata:
+        if not path.exists():
+            raise KeyError(f"会话不存在：{path.stem}")
+        with path.open("r+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                current = JsonlSessionStorage._project_metadata(
+                    JsonlSessionStorage._iter_rows(stream, path)
+                )
+                updated = current.update(
+                    name=name, workspace=workspace, archived=archived, model_id=model_id
+                )
+                stream.seek(0, os.SEEK_END)
+                _write_row(
+                    stream,
+                    {
+                        "type": "session_info",
+                        "timestamp": updated.updated_at,
+                        "name": updated.name,
+                        "cwd": updated.workspace,
+                        "modelId": updated.model_id,
+                        "archived": updated.archived,
+                    },
+                )
+                return updated
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
     def _read_rows_sync(path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
-        rows: list[dict[str, Any]] = []
         with path.open("r", encoding="utf-8") as stream:
-            for number, line in enumerate(stream, start=1):
-                try:
-                    row = json.loads(line)
-                    if not isinstance(row, dict):
-                        raise TypeError("记录必须是 JSON 对象")
-                    if number == 1:
-                        if row.get("type") != "session" or row.get("version") != _VERSION:
-                            raise ValueError("会话头格式不受支持")
-                        if row.get("id") != path.stem:
-                            raise ValueError("会话头 ID 与文件名不一致")
-                    elif row.get("type") not in {"message", "compaction", "session_info"}:
-                        raise ValueError("未知会话记录类型")
-                    rows.append(row)
-                except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                    raise ValueError(f"会话日志损坏：{path}:{number}") from exc
-        if not rows:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            try:
+                return list(JsonlSessionStorage._iter_rows(stream, path))
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _read_metadata_sync(path: Path) -> SessionMetadata | None:
+        if not path.exists():
+            return None
+        with path.open("r", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            try:
+                return JsonlSessionStorage._project_metadata(
+                    JsonlSessionStorage._iter_rows(stream, path)
+                )
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _list_metadata_sync(paths: list[Path]) -> list[SessionMetadata]:
+        """坏会话不应阻断其他会话的列表读取。"""
+
+        records: list[SessionMetadata] = []
+        for path in paths:
+            try:
+                metadata = JsonlSessionStorage._read_metadata_sync(path)
+                if metadata is not None:
+                    records.append(metadata)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                logger.warning("跳过无法读取的会话日志 %s：%s", path, exc)
+        return records
+
+    @staticmethod
+    def _iter_rows(stream: TextIO, path: Path) -> Iterator[dict[str, Any]]:
+        """逐行校验日志，供完整重放和常量内存元数据投影复用。"""
+
+        found = False
+        for number, line in enumerate(stream, start=1):
+            try:
+                if not line.endswith("\n"):
+                    raise ValueError("会话日志尾部不完整")
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise TypeError("记录必须是 JSON 对象")
+                if number == 1:
+                    if row.get("type") != "session" or row.get("version") != _VERSION:
+                        raise ValueError("会话头格式不受支持")
+                    if row.get("id") != path.stem:
+                        raise ValueError("会话头 ID 与文件名不一致")
+                elif row.get("type") not in {"message", "compaction", "session_info"}:
+                    raise ValueError("未知会话记录类型")
+                found = True
+                yield row
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f"会话日志损坏：{path}:{number}：{exc}") from exc
+        if not found:
             raise ValueError(f"会话日志为空：{path}")
-        return rows
 
     @staticmethod
     def _project_context(
@@ -232,8 +314,9 @@ class JsonlSessionStorage:
         return log.events
 
     @staticmethod
-    def _project_metadata(rows: list[dict[str, Any]]) -> SessionMetadata:
-        header = rows[0]
+    def _project_metadata(rows: Iterable[dict[str, Any]]) -> SessionMetadata:
+        iterator = iter(rows)
+        header = next(iterator)
         name = str(header["name"])
         workspace = str(header["cwd"])
         model_id = header.get("modelId")
@@ -241,7 +324,7 @@ class JsonlSessionStorage:
         updated_at = str(header["timestamp"])
         message_count = 0
         last_message_type: str | None = None
-        for row in rows[1:]:
+        for row in iterator:
             if row["type"] == "message":
                 message_count += 1
                 last_message_type = str(row["message"]["role"])

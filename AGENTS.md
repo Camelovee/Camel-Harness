@@ -28,6 +28,7 @@ Backend / CLI -> Agent -> LLM
 - Agent 必须持有当前 Run 的执行任务；WebUI、CLI 和子 Agent 通过 `subscribe()` 观察事件，不得通过消费 Agent async generator 驱动运行。
 - 运行中输入只使用一条内存 steering FIFO，并在完整 Turn 后消费；不得提前加入 Follow-up 队列、持久化 Inbox、全局调度器或可脱离 Agent 生命周期的后台 Run 系统。
 - `AgentEvent` 必须是 Agent/Turn/Message/Tool/Approval 生命周期的判别联合，不得恢复通用 `type + data` 容器；Provider 增量只能出现在 `message_update.assistant_event`。
+- 事件可用内部基类共享运行坐标，但公开 `AgentEvent` 仍须保持具体事件的判别联合。
 - 公开事件使用 `session_id + run_id + turn_id`运行坐标，`sequence` 必须在整个 Run 内单调递增。
 - `agent_end` 是正常、失败和取消 Run 的唯一终态事件；可恢复运行错误通过该事件传递，不在其后再抛出破坏 SSE。
 - `camel_harness.agent.runtime` 是唯一完整组合模块；Agent 不得依赖 Backend 或 CLI。
@@ -47,6 +48,7 @@ Backend / CLI -> Agent -> LLM
 - 所有会话默认存储在 `~/.camel/sessions/<session-id>.jsonl`；会话头、完整消息、压缩和元数据更新按类型追加到同一文件。
 - 只有完整规范消息的 `message_end` 可触发消息持久化；Provider 增量、未完成 assistant 和临时审批事件不得写入会话日志。
 - 原始消息、模型上下文和元数据由同一日志分别投影；不在运行时兼容旧格式。
+- 新建会话目录和日志使用私有权限；损坏的单份日志不得阻断其他会话的列表读取。
 - `ContextManager` 与 `CompactionEngine` 位于 `camel_harness.agent.context`，负责动态系统上下文和历史压缩；可依赖 ProjectRules、Skills、Memory 和只读 `SessionLog`，但不得持有 `SessionManager`、执行会话 CRUD 或读写 JSONL。
 - Session 独立负责会话消息、元数据和压缩投影；Agent 通过有序事件把完整消息交给 Session，并协调其与 `ContextManager`，不处理 JSONL 格式。
 - 规范消息属于 LLM，JSONL 消息编解码属于 Session，LLM 不感知持久化格式。

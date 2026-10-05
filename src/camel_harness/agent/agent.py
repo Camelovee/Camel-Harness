@@ -541,8 +541,13 @@ class Agent:
                 compacted.end_seq,
                 compacted.summary_message,
             )
+            log.replace_context(
+                compacted.start_seq,
+                compacted.end_seq,
+                compacted.summary_message,
+            )
             run.record_tokens(compacted.input_tokens, compacted.output_tokens)
-        return await self._sessions.context_messages(run.session_id)
+        return log.derive_messages()
 
     async def _reject_truncated_calls(
         self,

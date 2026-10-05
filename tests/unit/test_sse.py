@@ -1,11 +1,12 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import fields
 from typing import cast
 
 from camel_backend.api.sse import encode_sse, open_agent_sse, stream_sse
 from camel_harness import Agent, AgentEvent
-from camel_harness.agent.events import MessageUpdateEvent
+from camel_harness.agent.events import AgentEventBase, MessageUpdateEvent
 from camel_harness.llm import LlmStreamEvent, LlmStreamEventType
 
 
@@ -31,6 +32,21 @@ def test_encode_sse_preserves_event_identity_and_payload() -> None:
     assert payload["run_id"] == "run-1"
     assert payload["assistant_event"] == {"type": "text_delta", "data": {"text": "你好"}}
     assert frame.endswith("\n\n")
+
+
+def test_agent_event_inherits_common_coordinates_without_changing_payload() -> None:
+    event = _event(3, "你好")
+
+    assert isinstance(event, AgentEventBase)
+    assert [item.name for item in fields(event)] == [
+        "session_id",
+        "run_id",
+        "sequence",
+        "turn_id",
+        "message_id",
+        "assistant_event",
+        "type",
+    ]
 
 
 async def test_stream_sse_does_not_buffer_events() -> None:

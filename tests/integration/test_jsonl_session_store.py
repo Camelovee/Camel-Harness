@@ -1,4 +1,6 @@
+import asyncio
 import json
+import stat
 
 import pytest
 
@@ -122,3 +124,40 @@ async def test_incomplete_tail_is_rejected_without_appending(tmp_path) -> None:
     with pytest.raises(ValueError, match="尾部不完整"):
         await sessions.append_message("session-1", UserMessage("不能写入"))
     assert path.read_bytes() == original
+
+
+async def test_session_file_and_directory_are_private(tmp_path) -> None:
+    root = tmp_path / "sessions"
+    sessions = SessionManager(JsonlSessionStorage(root))
+    await sessions.create("session-1", tmp_path, "私有会话")
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE((root / "session-1.jsonl").stat().st_mode) == 0o600
+
+
+async def test_corrupt_session_does_not_hide_healthy_sessions(tmp_path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path))
+    await sessions.create("healthy", tmp_path, "正常会话")
+    await sessions.create("damaged", tmp_path, "损坏会话")
+    with (tmp_path / "damaged.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write('{"type":"message"')
+
+    assert [item.session_id for item in await sessions.list()] == ["healthy"]
+    with pytest.raises(ValueError, match="尾部不完整"):
+        await sessions.get("damaged")
+
+
+async def test_concurrent_metadata_updates_preserve_independent_fields(tmp_path) -> None:
+    first = SessionManager(JsonlSessionStorage(tmp_path))
+    second = SessionManager(JsonlSessionStorage(tmp_path))
+    await first.create("session-1", tmp_path, "初始名称")
+
+    await asyncio.gather(
+        first.update("session-1", name="新名称"),
+        second.update("session-1", archived=True),
+    )
+
+    metadata = await first.get("session-1")
+    assert metadata is not None
+    assert metadata.name == "新名称"
+    assert metadata.archived is True

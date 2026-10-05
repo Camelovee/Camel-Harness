@@ -71,15 +71,3 @@ class SessionMetadata:
             model_id=self.model_id if model_id is None else model_id,
             updated_at=_utc_now(),
         )
-
-    def record_messages(self, count: int, last_message_type: str) -> SessionMetadata:
-        """在批量追加完整消息后更新活动时间和消息统计。"""
-
-        if count < 0:
-            raise ValueError("事件增量不能为负数")
-        return replace(
-            self,
-            updated_at=_utc_now(),
-            message_count=self.message_count + count,
-            last_message_type=last_message_type,
-        )

@@ -43,7 +43,7 @@ src/
 - Skill 和 Memory 由 `ContextManager` 检索后注入系统上下文；
 - Plan、Accept Edits、Default 和 YOLO 权限模式；
 - 浏览器异步审批与 CLI 审批；
-- `~/.camel/sessions/<session-id>/` 下的 JSONL 会话恢复；
+- `~/.camel/sessions/<session-id>.jsonl` 单文件会话恢复；
 - 追加式上下文投影和历史压缩；
 - Session 独立管理会话；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
 - 一个 Agent 只绑定一个 Session 和 Workspace，运行期间支持 steering、主动停止和基于完整 JSONL 消息的恢复；

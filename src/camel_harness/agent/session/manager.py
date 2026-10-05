@@ -115,17 +115,13 @@ class SessionManager:
     ) -> SessionMetadata:
         """更新会话名称、工作目录或归档状态。"""
 
-        current = await self._repository.get_metadata(session_id)
-        if current is None:
-            raise KeyError(f"会话不存在：{session_id}")
-        updated = current.update(
+        return await self._repository.update_metadata(
+            session_id,
             name=name,
             workspace=str(workspace.resolve()) if workspace is not None else None,
             archived=archived,
             model_id=model_id,
         )
-        await self._repository.update_metadata(updated)
-        return updated
 
     async def delete(self, session_id: str) -> bool:
         """从后代到父会话依次删除消息和元数据。"""
