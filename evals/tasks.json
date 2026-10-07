@@ -1,0 +1,91 @@
+[
+  {
+    "id": "read-config",
+    "prompt": "读取 config.txt，回答其中的 port 数值。不要修改文件。",
+    "files": {"config.txt": "port=8123\n"},
+    "calls": [{"name": "read_file", "arguments": {"path": "config.txt"}}],
+    "answer": "8123",
+    "checks": [{"kind": "answer_contains", "value": "8123"}]
+  },
+  {
+    "id": "read-constant",
+    "prompt": "阅读 app.py，回答 DEFAULT_LIMIT 的值。",
+    "files": {"app.py": "DEFAULT_LIMIT = 17\n"},
+    "calls": [{"name": "read_file", "arguments": {"path": "app.py"}}],
+    "answer": "17",
+    "checks": [{"kind": "answer_contains", "value": "17"}]
+  },
+  {
+    "id": "write-config",
+    "prompt": "新建 settings.ini，内容必须恰好为 enabled=true 和结尾换行。",
+    "files": {},
+    "calls": [{"name": "write_file", "arguments": {"path": "settings.ini", "content": "enabled=true\n"}}],
+    "answer": "已写入 settings.ini",
+    "checks": [{"kind": "file_equals", "path": "settings.ini", "value": "enabled=true\n"}]
+  },
+  {
+    "id": "write-test",
+    "prompt": "新建 tests/test_math.py，加入测试 assert 2 + 2 == 4。",
+    "files": {},
+    "calls": [{"name": "write_file", "arguments": {"path": "tests/test_math.py", "content": "def test_add():\n    assert 2 + 2 == 4\n"}}],
+    "answer": "测试已创建",
+    "checks": [{"kind": "file_equals", "path": "tests/test_math.py", "value": "def test_add():\n    assert 2 + 2 == 4\n"}]
+  },
+  {
+    "id": "edit-timeout",
+    "prompt": "将 config.py 中 TIMEOUT = 5 改成 TIMEOUT = 10，只改这一处。",
+    "files": {"config.py": "TIMEOUT = 5\nRETRIES = 2\n"},
+    "calls": [{"name": "edit_file", "arguments": {"path": "config.py", "old_text": "TIMEOUT = 5", "new_text": "TIMEOUT = 10"}}],
+    "answer": "已更新超时",
+    "checks": [{"kind": "file_equals", "path": "config.py", "value": "TIMEOUT = 10\nRETRIES = 2\n"}]
+  },
+  {
+    "id": "fix-return",
+    "prompt": "修复 math_ops.py 中 double 的返回值，让 double(3) == 6。",
+    "files": {"math_ops.py": "def double(value):\n    return value + 2\n"},
+    "calls": [{"name": "edit_file", "arguments": {"path": "math_ops.py", "old_text": "return value + 2", "new_text": "return value * 2"}}],
+    "answer": "已修复 double",
+    "checks": [{"kind": "file_equals", "path": "math_ops.py", "value": "def double(value):\n    return value * 2\n"}]
+  },
+  {
+    "id": "run-test",
+    "prompt": "运行项目现有测试，并回答是否通过。",
+    "files": {"tests/test_basic.py": "def test_basic():\n    assert 3 * 3 == 9\n"},
+    "calls": [{"name": "run_shell", "arguments": {"command": "python -m pytest -q"}}],
+    "answer": "测试通过",
+    "checks": [{"kind": "answer_contains", "value": "通过"}, {"kind": "tool_success"}]
+  },
+  {
+    "id": "repair-and-test",
+    "prompt": "修复 calc.py 的 add，让 add(2, 3) == 5，然后运行测试。",
+    "files": {"calc.py": "def add(a, b):\n    return a - b\n", "tests/test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n"},
+    "calls": [{"name": "edit_file", "arguments": {"path": "calc.py", "old_text": "return a - b", "new_text": "return a + b"}}, {"name": "run_shell", "arguments": {"command": "python -m pytest -q"}}],
+    "answer": "修复并测试通过",
+    "checks": [{"kind": "file_equals", "path": "calc.py", "value": "def add(a, b):\n    return a + b\n"}, {"kind": "tool_success"}]
+  },
+  {
+    "id": "missing-file",
+    "prompt": "尝试读取不存在的 missing.txt；若失败，说明文件不存在，不要创建。",
+    "files": {},
+    "calls": [{"name": "read_file", "arguments": {"path": "missing.txt"}}],
+    "answer": "missing.txt 不存在",
+    "checks": [{"kind": "answer_contains", "value": "不存在"}, {"kind": "tool_error"}, {"kind": "file_absent", "path": "missing.txt"}]
+  },
+  {
+    "id": "resume-after-failure",
+    "prompt": "回答 marker.txt 的内容；如果模型流中断，从完整消息边界恢复。",
+    "files": {"marker.txt": "RESUMED-OK\n"},
+    "mode": "resume",
+    "calls": [],
+    "answer": "RESUMED-OK",
+    "checks": [{"kind": "answer_contains", "value": "RESUMED-OK"}, {"kind": "resumed"}]
+  },
+  {
+    "id": "text-only",
+    "prompt": "不用工具，只回答固定字符串 READY-42。",
+    "files": {},
+    "calls": [],
+    "answer": "READY-42",
+    "checks": [{"kind": "answer_contains", "value": "READY-42"}]
+  }
+]

@@ -115,13 +115,13 @@ def _build_llm_adapter(settings: AgentSettings) -> LlmAdapter:
 
     if settings.provider == "anthropic":
         if not settings.anthropic_api_key:
-            raise ValueError("默认 Anthropic Provider 需要设置 ANTHROPIC_API_KEY")
+            raise ValueError("请在 ~/.camel/config.yaml 中配置 anthropic_api_key")
         return create_anthropic_adapter(
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
         )
     if not settings.openai_api_key:
-        raise ValueError("OpenAI Provider 需要设置 OPENAI_API_KEY")
+        raise ValueError("请在 ~/.camel/config.yaml 中配置 openai_api_key")
     return create_openai_adapter(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,

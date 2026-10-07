@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { ModelInput, ModelProfile, WebSettings } from "../../shared/model";
+import { DefaultModelEditor } from "./DefaultModelEditor";
 
 type Draft = ModelInput & { id: string | null };
 
@@ -93,6 +94,7 @@ export function SettingsDialog({
           <p className="settings-empty">正在加载设置…</p>
         ) : (
           <div className="settings-content">
+            <DefaultModelEditor />
             <div className="settings-section-heading">
               <h3>对话偏好</h3>
               <p>作用于新会话；已有会话可在输入框中单独选模型。</p>
@@ -173,7 +175,7 @@ export function SettingsDialog({
                   <label className="settings-field"><span>Provider</span><select value={draft.provider} onChange={(event) => setDraft({ ...draft, provider: event.target.value as ModelInput["provider"] })}><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
                   <label className="settings-field"><span>模型 ID</span><input required maxLength={160} value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型提供商的准确 ID" /></label>
                 </div>
-                <label className="settings-field"><span>API Key</span><input type="password" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value, clear_api_key: false })} placeholder={draft.id ? "留空保留现有密钥或使用环境变量" : "留空则使用对应 Provider 的环境变量"} /></label>
+                <label className="settings-field"><span>API Key</span><input type="password" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value, clear_api_key: false })} placeholder={draft.id ? "留空保留现有密钥或使用配置文件" : "留空则使用配置文件中对应 Provider 的密钥"} /></label>
                 {draft.id && settings.models.find((profile) => profile.id === draft.id)?.has_api_key && (
                   <label className="settings-clear-key"><input type="checkbox" checked={draft.clear_api_key} onChange={(event) => setDraft({ ...draft, clear_api_key: event.target.checked, api_key: "" })} />清除已保存的 API Key</label>
                 )}

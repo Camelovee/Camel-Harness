@@ -37,6 +37,9 @@ Backend / CLI -> Agent -> LLM
 ## LLM、工具与会话
 
 - 默认 Provider 为 Anthropic，同时支持 OpenAI；两者必须使用官方 Python SDK。
+- CLI、Backend 与真实评测统一通过 `AgentSettings.load()` 读取 `~/.camel/config.yaml`；不读取环境变量或项目 `.env`，配置错误不得回显密钥。
+- 配置缺失时自动创建默认 YAML，新建目录和文件分别使用 `0700`、`0600` 权限；并发启动不得覆盖已有配置或读取未完成的文件。
+- WebUI 全局配置编辑由 Backend 校验并以 `0600` 权限原子保存；已存密钥不得回传，省略密钥字段须保留旧值，配置文件修改在重启后生效。
 - 厂商对象只能存在于 `camel_harness.llm`，对外统一为 `LlmStreamEvent`。
 - 规范消息必须使用 `Message = UserMessage | AssistantMessage | ToolResultMessage`；系统提示通过 `LlmRequest.system_prompt` 单独传递，不得恢复通用 `role/content` 消息容器。
 - `AssistantMessage.stop_reason` 必须使用厂商无关的 `LlmStopReason`；它与 Agent Run 级 `StopReason` 是两个独立概念。
@@ -47,7 +50,7 @@ Backend / CLI -> Agent -> LLM
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
 - Skill 只保留发现和三层按需加载：系统上下文只列名称与描述，`load_skill` 读取正文或支持文件；不提供 Skill 写入、演化、回滚和评估链路。
 - Skill 来源为内置、项目级（工作区 `.camel/skills`）和用户级（`~/.camel/skills`），同名优先级依次递减。
-- 所有会话默认存储在 `~/.camel/sessions/<session-id>.jsonl`；会话头、完整消息、压缩和元数据更新按类型追加到同一文件。
+- 顶层会话默认存储在 `~/.camel/sessions/<session-id>/session.jsonl`，子会话递归存储在父会话目录的 `subagents/<session-id>/session.jsonl`；每份日志按类型追加会话头、完整消息、压缩和元数据更新。
 - 只有完整规范消息的 `message_end` 可触发消息持久化；Provider 增量、未完成 assistant 和临时审批事件不得写入会话日志。
 - 原始消息、模型上下文和元数据由同一日志分别投影；不在运行时兼容旧格式。
 - 新建会话目录和日志使用私有权限；损坏的单份日志不得阻断其他会话的列表读取。

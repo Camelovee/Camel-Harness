@@ -138,10 +138,14 @@ class AnthropicLlmAdapter(LlmAdapter):
         event_type = getattr(event, "type", "")
         if event_type == "message_start":
             usage = getattr(getattr(event, "message", None), "usage", None)
-            data: dict[str, Any] = {}
+            result: list[tuple[LlmStreamEventType, dict[str, Any]]] = [
+                (LlmStreamEventType.STREAM_STARTED, {})
+            ]
             if usage is not None:
-                data["input_tokens"] = getattr(usage, "input_tokens", 0)
-            return [(LlmStreamEventType.STREAM_STARTED, data)]
+                result.append(
+                    (LlmStreamEventType.USAGE_UPDATED, {"input_tokens": usage.input_tokens})
+                )
+            return result
         if event_type == "content_block_start":
             block = event.content_block
             if getattr(block, "type", "") == "tool_use":

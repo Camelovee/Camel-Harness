@@ -1,3 +1,46 @@
+import { useState } from "react";
+
+export function RenameSessionDialog({
+  name,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  onCancel: () => void;
+  onConfirm: (name: string) => Promise<boolean>;
+}) {
+  const [value, setValue] = useState(name);
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    const next = value.trim();
+    if (!next || saving) return;
+    setSaving(true);
+    try {
+      if (await onConfirm(next)) onCancel();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal-card" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+        <div className="modal-header">
+          <div><span className="eyebrow">RENAME SESSION</span><h2>重命名会话</h2></div>
+          <button type="button" className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+        </div>
+        <label htmlFor="session-name">会话名称</label>
+        <input id="session-name" autoFocus maxLength={120} value={value} onChange={(event) => setValue(event.target.value)} />
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onCancel}>取消</button>
+          <button type="submit" className="primary-button" disabled={!value.trim() || saving}>保存</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function ErrorToast({
   message,
   onClose,

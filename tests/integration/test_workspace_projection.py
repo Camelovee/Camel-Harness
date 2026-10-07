@@ -69,6 +69,10 @@ async def test_session_api_hides_children_and_deletes_them_with_parent(tmp_path:
         assert listed.status_code == 200
         assert [item["session_id"] for item in listed.json()["sessions"]] == ["parent"]
 
+        missing = await client.get("/sessions/unknown/messages")
+        assert missing.status_code == 404
+        assert missing.json()["detail"] == "会话不存在"
+
         deleted = await client.delete("/sessions/parent")
         assert deleted.status_code == 204
         assert await sessions.get("child") is None

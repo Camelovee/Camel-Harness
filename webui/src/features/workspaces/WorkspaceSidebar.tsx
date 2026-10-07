@@ -13,6 +13,7 @@ type Props = {
   onActivateSession: (workspace: string, sessionId: string) => void;
   onCreateSession: (workspace: string) => void;
   onDeleteSession: (sessionId: string, name: string) => void;
+  onRenameSession: (sessionId: string, name: string) => void;
   onOpenSettings: () => void;
 };
 
@@ -28,6 +29,7 @@ export function WorkspaceSidebar({
   onActivateSession,
   onCreateSession,
   onDeleteSession,
+  onRenameSession,
   onOpenSettings,
 }: Props) {
   return (
@@ -108,6 +110,17 @@ export function WorkspaceSidebar({
                       <strong>{session.name}</strong>
                       <small>{session.message_count} 条消息</small>
                     </span>
+                    <button
+                      className="session-rename"
+                      aria-label={`重命名${session.name}`}
+                      title="重命名会话"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRenameSession(session.session_id, session.name);
+                      }}
+                    >
+                      ✎
+                    </button>
                     <button
                       className="session-delete"
                       aria-label={`删除${session.name}`}

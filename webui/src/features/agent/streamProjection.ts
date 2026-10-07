@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 
-import type { Activity, AgentEvent, Approval, Message } from "../../shared/model";
+import type { AgentEvent, Approval, Message, TokenUsage } from "../../shared/model";
 import { appendBlockText } from "../../shared/presentation";
 
 type MutableValue<T> = { current: T };
@@ -11,7 +11,7 @@ type ProjectionContext = {
   streamAssistantId: MutableValue<string | null>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setStreamAssistantId: Dispatch<SetStateAction<string | null>>;
-  setActivities: Dispatch<SetStateAction<Activity[]>>;
+  setUsage: Dispatch<SetStateAction<TokenUsage>>;
   setApprovals: Dispatch<SetStateAction<Approval[]>>;
   onError: (message: string) => void;
   onStatus: (message: string) => void;
@@ -20,7 +20,6 @@ type ProjectionContext = {
 export function projectAgentEvent(
   event: AgentEvent,
   assistantIds: Map<string, string>,
-  toolIds: Map<string, string>,
   context: ProjectionContext,
 ): void {
   if (event.sequence <= context.lastSequence.current) return;
@@ -53,16 +52,19 @@ export function projectAgentEvent(
     return;
   }
   if (event.type === "message_update") {
+    if (event.assistant_event.type === "usage_updated") {
+      const data = event.assistant_event.data;
+      context.setUsage((current) => ({
+        ...current,
+        input: typeof data.input_tokens === "number" ? data.input_tokens : current.input,
+        output: typeof data.output_tokens === "number" ? data.output_tokens : current.output,
+      }));
+      return;
+    }
     projectMessageUpdate(event, ensureAssistant, context);
     return;
   }
   if (event.type === "tool_execution_start") {
-    const activityId = `${event.call_id}-${Date.now()}`;
-    toolIds.set(event.call_id, activityId);
-    context.setActivities((current) => [
-      ...current,
-      { id: activityId, name: event.name, status: "running" },
-    ]);
     context.onStatus(`正在调用 ${event.name}…`);
     return;
   }
@@ -71,7 +73,7 @@ export function projectAgentEvent(
     return;
   }
   if (event.type === "tool_execution_end") {
-    projectToolExecutionEnd(event, toolIds, context);
+    projectToolExecutionEnd(event, context);
     return;
   }
   if (event.type === "message_end") {
@@ -92,6 +94,7 @@ export function projectAgentEvent(
     return;
   }
   if (event.type === "agent_end") {
+    context.setUsage((current) => ({ ...current, runTotal: event.total_tokens }));
     const incompleteId = context.streamAssistantId.current;
     if (incompleteId) {
       context.setMessages((current) => current.filter((message) => message.id !== incompleteId));
@@ -180,24 +183,9 @@ function projectApproval(
 
 function projectToolExecutionEnd(
   event: Extract<AgentEvent, { type: "tool_execution_end" }>,
-  toolIds: Map<string, string>,
   context: ProjectionContext,
 ): void {
   const result = event.result;
-  const activityId = toolIds.get(result.call_id);
-  if (activityId) {
-    context.setActivities((current) =>
-      current.map((activity) =>
-        activity.id === activityId
-          ? {
-              ...activity,
-              status: result.is_error ? "error" : "success",
-              result: result.content,
-            }
-          : activity,
-      ),
-    );
-  }
   context.setApprovals((current) =>
     current.filter((approval) => approval.call_id !== result.call_id),
   );

@@ -74,6 +74,20 @@ def test_anthropic_maps_text_and_tool_call() -> None:
     assert completed[1]["arguments"] == {"path": "README.md"}
 
 
+def test_anthropic_exposes_input_tokens_as_usage_event() -> None:
+    start = SimpleNamespace(
+        type="message_start",
+        message=SimpleNamespace(usage=SimpleNamespace(input_tokens=42)),
+    )
+
+    events = AnthropicLlmAdapter._map_event(start, {}, {})
+
+    assert events == [
+        (LlmStreamEventType.STREAM_STARTED, {}),
+        (LlmStreamEventType.USAGE_UPDATED, {"input_tokens": 42}),
+    ]
+
+
 def test_openai_maps_text_and_tool_call() -> None:
     calls: dict[str, dict[str, str]] = {}
     text = SimpleNamespace(type="response.output_text.delta", delta="你好")

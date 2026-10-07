@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field, field_validator
 from camel_harness.agent.config import AgentSettings
 
 Provider = Literal["anthropic", "openai"]
-ENVIRONMENT_MODEL_ID = "environment"
+# 默认模型的持久化 ID 保持稳定，配置来源由 YAML 加载器决定。
+DEFAULT_MODEL_ID = "environment"
 
 
 class ModelInput(BaseModel):
@@ -60,16 +61,16 @@ class StoredWebSettings(BaseModel):
     """本地 Web 偏好与自定义模型列表。"""
 
     models: list[ModelProfile] = Field(default_factory=list)
-    default_model_id: str = ENVIRONMENT_MODEL_ID
+    default_model_id: str = DEFAULT_MODEL_ID
     thinking: bool = False
 
 
 class WebSettingsStore:
     """管理本机 Web 配置，并以原子替换和 0600 权限保存密钥。"""
 
-    def __init__(self, path: Path, environment: AgentSettings) -> None:
+    def __init__(self, path: Path, defaults: AgentSettings) -> None:
         self._path = path.expanduser()
-        self._environment = environment
+        self._defaults = defaults
         self._lock = asyncio.Lock()
         self._state = (
             StoredWebSettings.model_validate_json(self._path.read_text("utf-8"))
@@ -83,14 +84,14 @@ class WebSettingsStore:
         async with self._lock:
             models = [
                 {
-                    "id": ENVIRONMENT_MODEL_ID,
-                    "name": "环境变量默认模型",
-                    "provider": self._environment.provider,
-                    "model": self._environment.model,
-                    "base_url": self._environment.anthropic_base_url
-                    if self._environment.provider == "anthropic"
-                    else self._environment.openai_base_url,
-                    "configured": bool(self._environment_key(self._environment.provider)),
+                    "id": DEFAULT_MODEL_ID,
+                    "name": "配置文件默认模型",
+                    "provider": self._defaults.provider,
+                    "model": self._defaults.model,
+                    "base_url": self._defaults.anthropic_base_url
+                    if self._defaults.provider == "anthropic"
+                    else self._defaults.openai_base_url,
+                    "configured": bool(self._defaults_key(self._defaults.provider)),
                     "has_api_key": False,
                     "read_only": True,
                 }
@@ -103,9 +104,7 @@ class WebSettingsStore:
                         "provider": profile.provider,
                         "model": profile.model,
                         "base_url": profile.base_url,
-                        "configured": bool(
-                            profile.api_key or self._environment_key(profile.provider)
-                        ),
+                        "configured": bool(profile.api_key or self._defaults_key(profile.provider)),
                         "has_api_key": bool(profile.api_key),
                         "read_only": False,
                     }
@@ -121,14 +120,14 @@ class WebSettingsStore:
 
         async with self._lock:
             selected = model_id or self._state.default_model_id
-            if selected == ENVIRONMENT_MODEL_ID:
-                if not self._environment_key(self._environment.provider):
+            if selected == DEFAULT_MODEL_ID:
+                if not self._defaults_key(self._defaults.provider):
                     raise ValueError("默认模型缺少 API Key，请在设置中配置模型")
-                return selected, self._environment.model_copy(deep=True)
+                return selected, self._defaults.model_copy(deep=True)
             profile = next((item for item in self._state.models if item.id == selected), None)
             if profile is None:
                 raise ValueError("所选模型配置不存在，请重新选择")
-            key = profile.api_key or self._environment_key(profile.provider)
+            key = profile.api_key or self._defaults_key(profile.provider)
             if not key:
                 raise ValueError("所选模型缺少 API Key，请在设置中填写")
             updates: dict[str, object] = {
@@ -138,12 +137,12 @@ class WebSettingsStore:
             if profile.provider == "anthropic":
                 updates["anthropic_api_key"] = key
                 updates["anthropic_base_url"] = (
-                    profile.base_url or self._environment.anthropic_base_url
+                    profile.base_url or self._defaults.anthropic_base_url
                 )
             else:
                 updates["openai_api_key"] = key
-                updates["openai_base_url"] = profile.base_url or self._environment.openai_base_url
-            return selected, self._environment.model_copy(update=updates)
+                updates["openai_base_url"] = profile.base_url or self._defaults.openai_base_url
+            return selected, self._defaults.model_copy(update=updates)
 
     async def add_model(self, body: ModelInput) -> None:
         async with self._lock:
@@ -158,9 +157,9 @@ class WebSettingsStore:
             )
             state.models.append(profile)
             if (
-                state.default_model_id == ENVIRONMENT_MODEL_ID
-                and not self._environment_key(self._environment.provider)
-                and (profile.api_key or self._environment_key(profile.provider))
+                state.default_model_id == DEFAULT_MODEL_ID
+                and not self._defaults_key(self._defaults.provider)
+                and (profile.api_key or self._defaults_key(profile.provider))
             ):
                 state.default_model_id = profile.id
             self._save(state)
@@ -193,35 +192,35 @@ class WebSettingsStore:
                     (
                         item.id
                         for item in state.models
-                        if item.api_key or self._environment_key(item.provider)
+                        if item.api_key or self._defaults_key(item.provider)
                     ),
-                    ENVIRONMENT_MODEL_ID,
+                    DEFAULT_MODEL_ID,
                 )
             self._save(state)
 
     async def update_preferences(self, default_model_id: str, thinking: bool) -> None:
         async with self._lock:
             state = self._state.model_copy(deep=True)
-            if default_model_id != ENVIRONMENT_MODEL_ID and not any(
+            if default_model_id != DEFAULT_MODEL_ID and not any(
                 item.id == default_model_id for item in state.models
             ):
                 raise ValueError("默认模型配置不存在")
-            if default_model_id == ENVIRONMENT_MODEL_ID:
-                configured = bool(self._environment_key(self._environment.provider))
+            if default_model_id == DEFAULT_MODEL_ID:
+                configured = bool(self._defaults_key(self._defaults.provider))
             else:
                 profile = next(item for item in state.models if item.id == default_model_id)
-                configured = bool(profile.api_key or self._environment_key(profile.provider))
+                configured = bool(profile.api_key or self._defaults_key(profile.provider))
             if not configured and default_model_id != state.default_model_id:
                 raise ValueError("默认模型缺少 API Key")
             state.default_model_id = default_model_id
             state.thinking = thinking
             self._save(state)
 
-    def _environment_key(self, provider: Provider) -> str | None:
+    def _defaults_key(self, provider: Provider) -> str | None:
         return (
-            self._environment.anthropic_api_key
+            self._defaults.anthropic_api_key
             if provider == "anthropic"
-            else self._environment.openai_api_key
+            else self._defaults.openai_api_key
         )
 
     def _save(self, state: StoredWebSettings) -> None:

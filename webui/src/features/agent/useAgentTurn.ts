@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Activity, Approval, Message, PermissionMode, Session } from "../../shared/model";
+import type { Approval, Message, PermissionMode, Session, TokenUsage } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import {
   abortAgentRun,
@@ -16,7 +16,7 @@ import { projectAgentEvent } from "./streamProjection";
 type Options = {
   activeId: string | null;
   activeWorkspace: string | null;
-  createDefaultChatSession: () => Promise<Session>;
+  createDefaultChatSession: (workspace?: string) => Promise<Session>;
   refreshWorkspaces: (
     preferredWorkspace?: string | null,
     preferredSessionId?: string | null,
@@ -30,7 +30,7 @@ export function useAgentTurn(options: Options) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [running, setRunning] = useState(false);
   const [streamAssistantId, setStreamAssistantId] = useState<string | null>(null);
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const [usage, setUsage] = useState<TokenUsage>({ input: null, output: null, runTotal: null });
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const lastSequence = useRef(0);
@@ -46,6 +46,7 @@ export function useAgentTurn(options: Options) {
     }
     let current = true;
     setMessages([]);
+    setUsage({ input: null, output: null, runTotal: null });
     streamAssistantIdRef.current = null;
     setStreamAssistantId(null);
     if (activeId) {
@@ -120,17 +121,16 @@ export function useAgentTurn(options: Options) {
       starting.current = true;
       setRunning(true);
       onStatus("正在连接 Agent…");
-      setActivities([]);
+      setUsage({ input: null, output: null, runTotal: null });
       lastSequence.current = 0;
       streamAssistantIdRef.current = null;
       setStreamAssistantId(null);
       const assistantIds = new Map<string, string>();
-      const toolIds = new Map<string, string>();
       try {
         let sessionId = activeId;
         let workspacePath = activeWorkspace;
         if (!sessionId) {
-          const created = await createDefaultChatSession();
+          const created = await createDefaultChatSession(activeWorkspace ?? undefined);
           sessionId = created.session_id;
           workspacePath = created.workspace;
           pendingInitialSessionId.current = sessionId;
@@ -141,13 +141,13 @@ export function useAgentTurn(options: Options) {
         }
         starting.current = false;
         await streamAgentRun(sessionId, { prompt: value, permissionMode, thinking, modelId }, (event) =>
-          projectAgentEvent(event, assistantIds, toolIds, {
+          projectAgentEvent(event, assistantIds, {
             activeId: sessionId,
             lastSequence,
             streamAssistantId: streamAssistantIdRef,
             setMessages,
             setStreamAssistantId,
-            setActivities,
+            setUsage,
             setApprovals,
             onError,
             onStatus,
@@ -186,21 +186,20 @@ export function useAgentTurn(options: Options) {
       onError("");
       setRunning(true);
       onStatus("正在恢复 Agent…");
-      setActivities([]);
+      setUsage({ input: null, output: null, runTotal: null });
       lastSequence.current = 0;
       streamAssistantIdRef.current = null;
       setStreamAssistantId(null);
       const assistantIds = new Map<string, string>();
-      const toolIds = new Map<string, string>();
       try {
         await streamAgentResume(activeId, { permissionMode, thinking, modelId }, (event) =>
-          projectAgentEvent(event, assistantIds, toolIds, {
+          projectAgentEvent(event, assistantIds, {
             activeId,
             lastSequence,
             streamAssistantId: streamAssistantIdRef,
             setMessages,
             setStreamAssistantId,
-            setActivities,
+            setUsage,
             setApprovals,
             onError,
             onStatus,
@@ -252,7 +251,7 @@ export function useAgentTurn(options: Options) {
     messages,
     running,
     streamAssistantId,
-    activities,
+    usage,
     resolvingApprovalId,
     sendPrompt,
     abortRun,

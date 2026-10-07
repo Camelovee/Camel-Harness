@@ -63,7 +63,10 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
 
     @router.get("/sessions/{session_id}/messages")
     async def session_messages(session_id: str) -> SessionMessagesResponse:
-        messages = await dependencies.require_sessions().messages(session_id)
+        manager = dependencies.require_sessions()
+        if await manager.get(session_id) is None:
+            raise KeyError("会话不存在")
+        messages = await manager.messages(session_id)
         return SessionMessagesResponse(
             messages=[message_to_dict(message) for message in messages],
             session_id=session_id,

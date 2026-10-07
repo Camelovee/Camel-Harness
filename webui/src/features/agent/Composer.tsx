@@ -13,6 +13,8 @@ type Props = {
   selectedModelId: string;
   thinking: boolean;
   onModelChange: (modelId: string) => void;
+  choosingWorkspace: boolean;
+  onChooseWorkspace: () => void;
   onSend: (
     prompt: string,
     permissionMode: PermissionMode,
@@ -34,6 +36,8 @@ export function Composer({
   selectedModelId,
   thinking,
   onModelChange,
+  choosingWorkspace,
+  onChooseWorkspace,
   onSend,
   canResume,
   onAbort,
@@ -42,6 +46,8 @@ export function Composer({
   const [prompt, setPrompt] = useState("");
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
+  const ignoreEnterRef = useRef(false);
 
   useEffect(() => {
     const element = inputRef.current;
@@ -65,8 +71,17 @@ export function Composer({
           disabled={!active || !selectedModelId}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+            ignoreEnterRef.current = true;
+            window.setTimeout(() => { ignoreEnterRef.current = false; }, 0);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
+              if (event.nativeEvent.isComposing || composingRef.current || ignoreEnterRef.current || event.keyCode === 229) return;
               event.preventDefault();
               void submit();
             }
@@ -75,9 +90,11 @@ export function Composer({
           rows={2}
         />
         <div className="composer-toolbar">
-          <span className="composer-caption">
-            {activeWorkspace ? workspaceName(activeWorkspace) : "用户主目录"}
-          </span>
+          <button type="button" className="composer-directory" onClick={onChooseWorkspace} disabled={choosingWorkspace || running} title={`选择新会话的工作目录；当前：${activeWorkspace ?? "用户主目录"}`} aria-label="选择新会话工作目录">
+            <span aria-hidden="true">▱</span>
+            <span>{choosingWorkspace ? "正在选择…" : activeWorkspace ? workspaceName(activeWorkspace) : "用户主目录"}</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
           <div className="composer-right">
             <select
               className="model-select"

@@ -33,6 +33,24 @@ def custom_model(api_key: str | None = "custom-openai-key") -> ModelInput:
     )
 
 
+async def test_web_models_use_yaml_credentials_when_key_is_empty(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "provider: openai\nmodel: yaml-model\nopenai_api_key: yaml-secret\n"
+        "openai_base_url: https://example.test/v1\n",
+        encoding="utf-8",
+    )
+    store = WebSettingsStore(tmp_path / "web-settings.json", AgentSettings.load(config))
+    snapshot = await store.snapshot()
+    assert snapshot["models"][0]["name"] == "配置文件默认模型"  # type: ignore[index]
+    assert "yaml-secret" not in json.dumps(snapshot)
+    assert (await store.resolve(None))[1].openai_api_key == "yaml-secret"
+    await store.add_model(custom_model(api_key=None))
+    profile = (await store.snapshot())["models"][1]  # type: ignore[index]
+    resolved = (await store.resolve(profile["id"]))[1]  # type: ignore[index]
+    assert resolved.openai_api_key == "yaml-secret"
+
+
 async def test_web_settings_persist_models_without_exposing_keys(tmp_path: Path) -> None:
     path = tmp_path / "web-settings.json"
     store = WebSettingsStore(path, environment(tmp_path))

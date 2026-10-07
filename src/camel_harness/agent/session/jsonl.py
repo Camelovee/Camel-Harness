@@ -23,16 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 class JsonlSessionStorage:
-    """每个会话一份追加日志；按记录类型重建元数据、原始消息和上下文。"""
+    """每个会话目录一份追加日志；子会话位于父目录的 subagents 下。"""
 
     def __init__(self, root: Path) -> None:
         self._root = root.expanduser().resolve()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._locations: dict[str, Path] = {}
 
     async def create(self, metadata: SessionMetadata) -> None:
-        path = self._path(metadata.session_id)
         async with self._lock(metadata.session_id):
+            path = self._new_path(metadata)
             await asyncio.to_thread(self._create_sync, path, metadata)
+            self._locations[metadata.session_id] = path
 
     async def append_message(self, session_id: str, message: Message) -> None:
         async with self._lock(session_id):
@@ -64,11 +66,7 @@ class JsonlSessionStorage:
     async def list_metadata(self) -> tuple[SessionMetadata, ...]:
         if not self._root.exists():
             return ()
-        paths = [
-            path
-            for path in self._root.glob("*.jsonl")
-            if _SAFE_ID.fullmatch(path.stem) and path.is_file() and not path.is_symlink()
-        ]
+        paths = list(self._session_paths())
         records = await asyncio.to_thread(self._list_metadata_sync, paths)
         return tuple(sorted(records, key=lambda item: item.updated_at, reverse=True))
 
@@ -96,7 +94,8 @@ class JsonlSessionStorage:
             path = self._path(session_id)
             if not path.exists():
                 return False
-            await asyncio.to_thread(path.unlink)
+            await asyncio.to_thread(self._delete_sync, path)
+            self._locations.pop(session_id, None)
             return True
 
     async def _rows(self, session_id: str) -> list[dict[str, Any]]:
@@ -109,14 +108,66 @@ class JsonlSessionStorage:
     def _path(self, session_id: str) -> Path:
         if not _SAFE_ID.fullmatch(session_id):
             raise ValueError("session_id 只能包含字母、数字、下划线和连字符")
-        path = self._root / f"{session_id}.jsonl"
-        if path.is_symlink():
-            raise ValueError("会话文件不能是符号链接")
+        cached = self._locations.get(session_id)
+        if cached is not None:
+            self._assert_no_symlink(cached)
+            if cached.exists():
+                return cached
+            self._locations.pop(session_id, None)
+        direct = self._root / session_id / "session.jsonl"
+        self._assert_no_symlink(direct)
+        if direct.exists():
+            self._locations[session_id] = direct
+            return direct
+        for path in self._session_paths():
+            if path.parent.name == session_id:
+                self._locations[session_id] = path
+                return path
+        return direct
+
+    def _new_path(self, metadata: SessionMetadata) -> Path:
+        existing = self._path(metadata.session_id)
+        if existing.exists():
+            raise ValueError(f"会话已存在：{metadata.session_id}")
+        if metadata.parent_session_id is None:
+            return existing
+        parent = self._path(metadata.parent_session_id)
+        if not parent.exists():
+            raise ValueError(f"父会话不存在：{metadata.parent_session_id}")
+        path = parent.parent / "subagents" / metadata.session_id / "session.jsonl"
+        self._assert_no_symlink(path)
         return path
+
+    def _session_paths(self) -> Iterator[Path]:
+        if not self._root.is_dir():
+            return
+        for path in self._root.rglob("session.jsonl"):
+            parts = path.relative_to(self._root).parts
+            if len(parts) < 2 or len(parts) % 2 or parts[-1] != "session.jsonl":
+                continue
+            if any(parts[index] != "subagents" for index in range(1, len(parts) - 1, 2)):
+                continue
+            if any(not _SAFE_ID.fullmatch(parts[index]) for index in range(0, len(parts) - 1, 2)):
+                continue
+            if path.is_file() and not self._has_symlink(path):
+                yield path
+
+    def _has_symlink(self, path: Path) -> bool:
+        current = path
+        while current != self._root:
+            if current.is_symlink():
+                return True
+            current = current.parent
+        return False
+
+    def _assert_no_symlink(self, path: Path) -> None:
+        if self._has_symlink(path):
+            raise ValueError("会话目录或文件不能是符号链接")
 
     @staticmethod
     def _create_sync(path: Path, metadata: SessionMetadata) -> None:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.parent.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.parent.mkdir(mode=0o700)
         if path.exists():
             raise ValueError(f"会话已存在：{metadata.session_id}")
         row = {
@@ -136,9 +187,20 @@ class JsonlSessionStorage:
             _write_row(stream, row)
 
     @staticmethod
+    def _delete_sync(path: Path) -> None:
+        path.unlink()
+        try:
+            path.parent.rmdir()
+            if path.parent.parent.name == "subagents":
+                path.parent.parent.rmdir()
+        except OSError:
+            # 只删除会话自身的日志和空目录，保留未知文件与仍在使用的子目录。
+            pass
+
+    @staticmethod
     def _append_sync(path: Path, row: dict[str, Any]) -> None:
         if not path.exists():
-            raise KeyError(f"会话不存在：{path.stem}")
+            raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("rb+") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
@@ -169,18 +231,18 @@ class JsonlSessionStorage:
     @staticmethod
     def _append_compaction_sync(path: Path, event: SessionLogEvent) -> None:
         if not path.exists():
-            raise KeyError(f"会话不存在：{path.stem}")
+            raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
                 stream.seek(0)
                 rows = list(JsonlSessionStorage._iter_rows(stream, path))
-                events = JsonlSessionStorage._project_context(path.stem, rows)
+                events = JsonlSessionStorage._project_context(path.parent.name, rows)
                 if event.seq != len(events):
                     raise ValueError("会话上下文已被并发修改，请重新加载后再压缩")
                 assert event.replace_start is not None
                 assert event.replace_end is not None
-                SessionLog(path.stem, events).replace_context(
+                SessionLog(path.parent.name, events).replace_context(
                     event.replace_start, event.replace_end, event.message
                 )
                 stream.seek(0, os.SEEK_END)
@@ -207,7 +269,7 @@ class JsonlSessionStorage:
         model_id: str | None,
     ) -> SessionMetadata:
         if not path.exists():
-            raise KeyError(f"会话不存在：{path.stem}")
+            raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             try:
@@ -286,8 +348,15 @@ class JsonlSessionStorage:
                 if number == 1:
                     if row.get("type") != "session" or row.get("version") != _VERSION:
                         raise ValueError("会话头格式不受支持")
-                    if row.get("id") != path.stem:
-                        raise ValueError("会话头 ID 与文件名不一致")
+                    if row.get("id") != path.parent.name:
+                        raise ValueError("会话头 ID 与目录名不一致")
+                    parent_id = (
+                        path.parent.parent.parent.name
+                        if path.parent.parent.name == "subagents"
+                        else None
+                    )
+                    if row.get("parentSessionId") != parent_id:
+                        raise ValueError("会话头父 ID 与目录层级不一致")
                 elif row.get("type") not in {"message", "compaction", "session_info"}:
                     raise ValueError("未知会话记录类型")
                 found = True

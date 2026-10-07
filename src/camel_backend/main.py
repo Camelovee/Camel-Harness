@@ -29,7 +29,7 @@ def create_app(workspace: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        settings = AgentSettings()
+        settings = AgentSettings.load()
         approval = WebApproval()
         sessions = build_session_manager(settings)
         web_settings = WebSettingsStore(

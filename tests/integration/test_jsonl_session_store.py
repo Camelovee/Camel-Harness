@@ -24,7 +24,8 @@ async def test_jsonl_store_appends_and_projects_messages(tmp_path) -> None:
 
     assert await store.messages("session-1") == (message,)
     rows = [
-        json.loads(line) for line in (tmp_path / "session-1.jsonl").read_text("utf-8").splitlines()
+        json.loads(line)
+        for line in (tmp_path / "session-1" / "session.jsonl").read_text("utf-8").splitlines()
     ]
     assert [row["type"] for row in rows] == ["session", "message"]
     assert rows[1]["message"] == {"role": "user", "content": "你好"}
@@ -87,7 +88,10 @@ async def test_context_log_restores_compacted_surface_after_restart(tmp_path) ->
         originals[6],
         originals[7],
     )
-    rows = [json.loads(line) for line in (root / "session-1.jsonl").read_text("utf-8").splitlines()]
+    rows = [
+        json.loads(line)
+        for line in (root / "session-1" / "session.jsonl").read_text("utf-8").splitlines()
+    ]
     assert len(rows) == 10
     assert [row["type"] for row in rows] == ["session", *(["message"] * 8), "compaction"]
     assert rows[-1]["summary"]["content"].startswith("[Compacted History]")
@@ -116,7 +120,7 @@ async def test_metadata_update_does_not_shift_compaction_coordinates(tmp_path) -
 async def test_incomplete_tail_is_rejected_without_appending(tmp_path) -> None:
     sessions = SessionManager(JsonlSessionStorage(tmp_path))
     await sessions.create("session-1", tmp_path, "测试会话")
-    path = tmp_path / "session-1.jsonl"
+    path = tmp_path / "session-1" / "session.jsonl"
     with path.open("a", encoding="utf-8") as stream:
         stream.write('{"type":"message"')
     original = path.read_bytes()
@@ -132,14 +136,15 @@ async def test_session_file_and_directory_are_private(tmp_path) -> None:
     await sessions.create("session-1", tmp_path, "私有会话")
 
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    assert stat.S_IMODE((root / "session-1.jsonl").stat().st_mode) == 0o600
+    assert stat.S_IMODE((root / "session-1").stat().st_mode) == 0o700
+    assert stat.S_IMODE((root / "session-1" / "session.jsonl").stat().st_mode) == 0o600
 
 
 async def test_corrupt_session_does_not_hide_healthy_sessions(tmp_path) -> None:
     sessions = SessionManager(JsonlSessionStorage(tmp_path))
     await sessions.create("healthy", tmp_path, "正常会话")
     await sessions.create("damaged", tmp_path, "损坏会话")
-    with (tmp_path / "damaged.jsonl").open("a", encoding="utf-8") as stream:
+    with (tmp_path / "damaged" / "session.jsonl").open("a", encoding="utf-8") as stream:
         stream.write('{"type":"message"')
 
     assert [item.session_id for item in await sessions.list()] == ["healthy"]

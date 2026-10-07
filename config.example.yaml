@@ -1,0 +1,15 @@
+# 复制到 ~/.camel/config.yaml，CLI、后端与真实评测共用此配置。
+provider: anthropic
+model: claude-sonnet-4-6
+anthropic_api_key: null
+anthropic_base_url: null
+openai_api_key: null
+openai_base_url: null
+max_output_tokens: 4096
+max_context_chars: 120000
+compaction_min_messages: 8
+max_compaction_tokens: 2048
+max_total_tokens: 200000
+max_duration_seconds: 900
+session_dir: ~/.camel/sessions
+mcp_config: .mcp.json

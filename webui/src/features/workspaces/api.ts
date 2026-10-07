@@ -31,3 +31,10 @@ export async function saveSessionModel(sessionId: string, modelId: string): Prom
     body: JSON.stringify({ model_id: modelId }),
   });
 }
+
+export async function renameWorkspaceSession(sessionId: string, name: string): Promise<Session> {
+  return apiJson<Session>(`/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}

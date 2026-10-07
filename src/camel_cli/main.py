@@ -29,11 +29,16 @@ def main(
             help="权限模式：default、accept_edits、plan 或 yolo",
         ),
     ] = "default",
-    resume: Annotated[bool, typer.Option("--resume", help="恢复当前工作区最近会话")] = False,
+    latest_session: Annotated[
+        bool,
+        typer.Option(
+            "--latest-session", help="选择当前工作区最近的会话；续跑请在 REPL 中使用 /resume"
+        ),
+    ] = False,
 ) -> None:
     """运行一次流式 Harness Agent。"""
 
-    settings = AgentSettings()
+    settings = AgentSettings.load()
     overrides: dict[str, str] = {}
     if provider:
         overrides["provider"] = provider
@@ -46,13 +51,18 @@ def main(
     async def execute() -> None:
         sessions = build_session_manager(settings)
         resolved_session_id = session_id
-        if resolved_session_id is None and resume:
+        if resolved_session_id is not None and latest_session:
+            raise typer.BadParameter("--session 与 --latest-session 不能同时使用")
+        if latest_session:
             workspace_sessions = tuple(
                 session
                 for session in await sessions.list()
                 if session.workspace == str(resolved_workspace)
+                and session.parent_session_id is None
             )
-            resolved_session_id = workspace_sessions[0].session_id if workspace_sessions else None
+            if not workspace_sessions:
+                raise typer.BadParameter("当前工作区没有可选择的历史会话")
+            resolved_session_id = workspace_sessions[0].session_id
         resolved_session_id = resolved_session_id or SessionId.new().value
         metadata = await sessions.get(resolved_session_id)
         agent_workspace = Path(metadata.workspace) if metadata is not None else resolved_workspace

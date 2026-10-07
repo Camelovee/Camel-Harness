@@ -70,11 +70,10 @@ export type Message = {
   approval?: Approval;
 };
 
-export type Activity = {
-  id: string;
-  name: string;
-  status: "running" | "success" | "error";
-  result?: string;
+export type TokenUsage = {
+  input: number | null;
+  output: number | null;
+  runTotal: number | null;
 };
 
 export type WireMessage =
@@ -158,4 +157,3 @@ export type AgentEvent =
     });
 
 export type PermissionMode = "default" | "accept_edits" | "plan" | "yolo";
-export type WorkbenchTab = "chat" | "trajectory";
