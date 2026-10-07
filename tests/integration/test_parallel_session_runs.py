@@ -1,0 +1,102 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest
+
+from camel_backend.api.sse import open_agent_sse
+from camel_backend.orchestration import RunService
+from camel_backend.web_settings import WebSettingsStore
+from camel_harness import Agent, AgentBusyError, AgentOptions
+from camel_harness.agent.config import AgentSettings
+from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.session import SessionManager
+from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.agent.tools import ToolExecutor, ToolRegistry, validate_tool_arguments
+from camel_harness.llm import (
+    LlmAdapter,
+    LlmClient,
+    LlmRequest,
+    LlmStopReason,
+    LlmStreamEvent,
+    LlmStreamEventType,
+)
+
+
+class GatedLlm(LlmAdapter):
+    """两个会话必须同时到达模型阶段，取消其中一个不释放另一个。"""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    @property
+    def provider_id(self) -> str:
+        return "test"
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.started.set()
+        await self.finish.wait()
+        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "独立完成"})
+        yield LlmStreamEvent(
+            LlmStreamEventType.MESSAGE_COMPLETED, {"stop_reason": LlmStopReason.STOP.value}
+        )
+
+
+async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Path) -> None:
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    settings = AgentSettings(model="fake", anthropic_api_key="test-only-key")
+    store = WebSettingsStore(tmp_path / "web-settings.json", settings)
+    adapters: dict[str, GatedLlm] = {}
+
+    async def build(session_id: str, workspace: Path, _: AgentSettings) -> Agent:
+        adapter = GatedLlm()
+        adapters[session_id] = adapter
+        llm = LlmClient(adapter)
+        registry = ToolRegistry()
+        return Agent(
+            session_id,
+            workspace,
+            AgentOptions("fake"),
+            llm,
+            registry,
+            ToolExecutor(registry, validate_tool_arguments),
+            sessions,
+            ContextManager(CompactionEngine(llm)),
+        )
+
+    runs = RunService(build, sessions, store)
+    for session_id in ("a", "b"):
+        await sessions.create(session_id, tmp_path, session_id)
+    tasks: list[asyncio.Task[list[dict]]] = []
+
+    async def consume(stream: AsyncIterator[str]) -> list[dict]:
+        return [json.loads(frame.split("data: ", 1)[1]) async for frame in stream]
+
+    try:
+        for session_id in ("a", "b"):
+            async with runs.acquire(session_id) as agent:
+                stream = await open_agent_sse(agent, lambda agent=agent: agent.run("独立任务"))
+            tasks.append(asyncio.create_task(consume(stream)))
+        await asyncio.wait_for(
+            asyncio.gather(*(adapter.started.wait() for adapter in adapters.values())), 2
+        )
+        assert runs.is_running("a") and runs.is_running("b")
+        with pytest.raises(AgentBusyError):
+            async with runs.acquire("a"):
+                pytest.fail("同一会话不能启动第二个 Run")
+        await runs.abort("a")
+        first = await asyncio.wait_for(tasks[0], 2)
+        assert first[-1]["status"] == "cancelled"
+        assert runs.is_running("b")
+        adapters["b"].finish.set()
+        second = await asyncio.wait_for(tasks[1], 2)
+        assert second[-1]["status"] == "completed"
+        assert {event["session_id"] for event in first} == {"a"}
+        assert {event["session_id"] for event in second} == {"b"}
+        assert len(await sessions.messages("a")) == 1
+        assert len(await sessions.messages("b")) == 2
+    finally:
+        await runs.close()
+        await asyncio.gather(*tasks, return_exceptions=True)

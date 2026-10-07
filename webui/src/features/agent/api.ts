@@ -66,10 +66,16 @@ type RunRequest = {
   modelId: string;
 };
 
+type StreamOptions = {
+  signal?: AbortSignal;
+  onConnected?: () => void;
+};
+
 export async function streamAgentRun(
   sessionId: string,
   request: RunRequest,
   onEvent: (event: AgentEvent) => void,
+  options: StreamOptions = {},
 ): Promise<void> {
   await streamAgentResponse(`/sessions/${sessionId}/runs`, {
     method: "POST",
@@ -80,13 +86,15 @@ export async function streamAgentRun(
       thinking: request.thinking,
       model_id: request.modelId,
     }),
-  }, onEvent);
+    signal: options.signal,
+  }, onEvent, options.onConnected);
 }
 
 export async function streamAgentResume(
   sessionId: string,
   request: Omit<RunRequest, "prompt">,
   onEvent: (event: AgentEvent) => void,
+  options: StreamOptions = {},
 ): Promise<void> {
   await streamAgentResponse(`/sessions/${sessionId}/runs/resume`, {
     method: "POST",
@@ -96,7 +104,8 @@ export async function streamAgentResume(
       thinking: request.thinking,
       model_id: request.modelId,
     }),
-  }, onEvent);
+    signal: options.signal,
+  }, onEvent, options.onConnected);
 }
 
 export async function steerAgentRun(sessionId: string, content: string): Promise<void> {
@@ -114,25 +123,38 @@ async function streamAgentResponse(
   path: string,
   init: RequestInit,
   onEvent: (event: AgentEvent) => void,
+  onConnected?: () => void,
 ): Promise<void> {
   const response = await fetch(apiPath(path), init);
   if (!response.ok || !response.body) {
     throw new Error((await response.text()) || "Agent 流连接失败");
   }
+  onConnected?.();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) emitFrame(frame, onEvent);
+  let terminal = false;
+  const receive = (event: AgentEvent) => {
+    terminal ||= event.type === "agent_end";
+    onEvent(event);
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) emitFrame(frame, receive);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) emitFrame(buffer, receive);
+    if (!terminal) throw new Error("运行连接提前结束，请检查会话后继续");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) emitFrame(buffer, onEvent);
 }
 
 function emitFrame(frame: string, onEvent: (event: AgentEvent) => void): void {

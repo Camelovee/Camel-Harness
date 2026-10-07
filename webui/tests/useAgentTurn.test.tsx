@@ -1,0 +1,252 @@
+// @vitest-environment jsdom
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+
+import type { AgentEvent, Message, Session } from "../src/shared/model";
+import * as api from "../src/features/agent/api";
+import { useAgentTurn } from "../src/features/agent/useAgentTurn";
+
+vi.mock("../src/features/agent/api", () => ({
+  abortAgentRun: vi.fn(), fetchConversation: vi.fn(), fetchPendingApprovals: vi.fn(),
+  steerAgentRun: vi.fn(), streamAgentRun: vi.fn(), streamAgentResume: vi.fn(), submitApproval: vi.fn(),
+}));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+type Stream = {
+  emit: (event: AgentEvent) => void;
+  finish: () => void;
+  fail: (error: Error) => void;
+  signal: AbortSignal;
+};
+let streams: Map<string, Stream>;
+let histories: Map<string, Message[]>;
+const refresh = vi.fn<() => Promise<void>>();
+const activate = vi.fn();
+const create = vi.fn<() => Promise<Session>>();
+
+function harness(id: string | null = "a") {
+  return renderHook(({ id }: { id: string | null }) => useAgentTurn({
+    activeId: id, activeWorkspace: "/workspace", createDefaultChatSession: create,
+    activateSession: activate, refreshWorkspaces: refresh,
+  }), { initialProps: { id } });
+}
+
+function event(id: string, sequence: number, body: object): AgentEvent {
+  return { session_id: id, run_id: `run-${id}`, turn_id: "turn-1", sequence, ...body } as AgentEvent;
+}
+
+function output(id: string, sequence: number, text: string) {
+  streams.get(id)!.emit(event(id, sequence, {
+    type: "message_update", message_id: "assistant",
+    assistant_event: { type: "text_delta", data: { text } },
+  }));
+}
+
+function complete(id: string, tokens: number) {
+  streams.get(id)!.emit(event(id, 100, {
+    type: "agent_end", status: "completed", stop_reason: "completed", total_tokens: tokens, error: null,
+  }));
+  streams.get(id)!.finish();
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  streams = new Map();
+  histories = new Map();
+  refresh.mockResolvedValue();
+  vi.mocked(api.fetchConversation).mockImplementation(async (id) => histories.get(id) ?? []);
+  vi.mocked(api.fetchPendingApprovals).mockResolvedValue([]);
+  const open: typeof api.streamAgentRun = (id, _request, emit, options = {}) => {
+    const done = deferred<void>();
+    const signal = options.signal!;
+    signal.addEventListener("abort", () => done.reject(new DOMException("取消连接", "AbortError")), { once: true });
+    streams.set(id, { emit, signal, finish: () => done.resolve(), fail: done.reject });
+    emit(event(id, 1, { type: "agent_start" }));
+    options.onConnected?.();
+    return done.promise;
+  };
+  vi.mocked(api.streamAgentRun).mockImplementation(open);
+  vi.mocked(api.streamAgentResume).mockImplementation((id, request, emit, options) =>
+    open(id, { ...request, prompt: "" }, emit, options));
+});
+
+afterEach(cleanup);
+
+describe("按会话隔离并行运行", () => {
+  it("StrictMode 下只初始化一次审批查询，焦点、可见性、会话切换和运行不触发重查", async () => {
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useAgentTurn({
+      activeId: id, activeWorkspace: "/workspace", createDefaultChatSession: create,
+      activateSession: activate, refreshWorkspaces: refresh,
+    }), {
+      initialProps: { id: "a" },
+      wrapper: ({ children }) => <StrictMode>{children}</StrictMode>,
+    });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(api.fetchPendingApprovals).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    rerender({ id: "b" });
+    await act(async () => { await result.current.sendPrompt("B", "default", false, "model"); });
+    act(() => streams.get("b")!.emit(event("b", 2, {
+      type: "approval_requested", request_id: "approval-b", call_id: "call-b", name: "run_shell",
+      capabilities: [], risk: "high", arguments: {}, reason: "确认执行",
+    })));
+    expect(result.current.approvals[0].request_id).toBe("approval-b");
+    await act(async () => { await result.current.resolveApproval("approval-b", true); });
+    expect(result.current.approvals).toEqual([]);
+    await act(async () => { complete("b", 0); });
+    expect(api.fetchPendingApprovals).toHaveBeenCalledTimes(1);
+  });
+
+  it("切换后保持两条流，交错文本与 Token 不串会话，后台完成不抢回选择", async () => {
+    const { result, rerender } = harness();
+    await act(async () => { expect(await result.current.sendPrompt("任务 A", "default", false, "model-a")).toBe(true); });
+    rerender({ id: "b" });
+    await act(async () => { expect(await result.current.sendPrompt("任务 B", "plan", true, "model-b")).toBe(true); });
+    act(() => {
+      output("a", 2, "A 的回答");
+      output("b", 2, "B 的回答");
+      streams.get("a")!.emit(event("a", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", data: { input_tokens: 11 } } }));
+      streams.get("b")!.emit(event("b", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", data: { input_tokens: 22 } } }));
+    });
+    expect(result.current.messages[0].content[0].text).toBe("B 的回答");
+    expect(result.current.usage.input).toBe(22);
+    expect(streams.get("a")!.signal.aborted).toBe(false);
+    histories.set("a", [{ id: "stored-a", role: "assistant", content: [{ type: "text", text: "A 完成" }] }]);
+    await act(async () => { complete("a", 31); });
+    expect(result.current.running).toBe(true);
+    expect(result.current.messages[0].content[0].text).toBe("B 的回答");
+    expect(result.current.indicators.a).toMatchObject({ running: false, unread: true });
+    expect(refresh).toHaveBeenCalledWith();
+    expect(activate).not.toHaveBeenCalled();
+    rerender({ id: "a" });
+    expect(result.current.messages[0].content[0].text).toBe("A 完成");
+    expect(result.current.usage).toMatchObject({ input: 11, runTotal: 31 });
+    expect(result.current.indicators.a.unread).toBe(false);
+  });
+
+  it("追加输入和暂停只针对选中会话，同会话不会重复启动", async () => {
+    const { result, rerender } = harness();
+    await act(async () => { await result.current.sendPrompt("A", "default", false, "model"); });
+    rerender({ id: "b" });
+    await act(async () => { await result.current.sendPrompt("B", "default", false, "model"); });
+    await act(async () => { await result.current.sendPrompt("追加 B", "default", false, "model"); await result.current.abortRun(); });
+    expect(api.steerAgentRun).toHaveBeenCalledExactlyOnceWith("b", "追加 B");
+    expect(api.abortAgentRun).toHaveBeenCalledExactlyOnceWith("b");
+    expect(api.streamAgentRun).toHaveBeenCalledTimes(2);
+    expect(result.current.indicators.a.running).toBe(true);
+    expect(streams.get("a")!.signal.aborted).toBe(false);
+  });
+
+  it("暂停响应晚于终态时保留取消状态，重复旧事件不能覆盖终态", async () => {
+    const stopped = deferred<void>();
+    vi.mocked(api.abortAgentRun).mockReturnValueOnce(stopped.promise);
+    const { result } = harness();
+    await act(async () => { await result.current.sendPrompt("A", "default", false, "model"); });
+    let abort!: Promise<void>;
+    act(() => { abort = result.current.abortRun(); });
+    await act(async () => {
+      streams.get("a")!.emit(event("a", 100, { type: "agent_end", status: "cancelled", total_tokens: 0, error: null }));
+      streams.get("a")!.finish();
+    });
+    await act(async () => { stopped.resolve(); await abort; });
+    expect(result.current.status).toBe("运行已取消");
+    act(() => streams.get("a")!.emit(event("a", 99, { type: "agent_end", status: "failed", total_tokens: 1, error: "迟到事件" })));
+    expect(result.current.endStatus).toBe("cancelled");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("后台审批有侧栏标识，仅所属会话可以处理，迟到查询不会恢复已处理卡片", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof api.fetchPendingApprovals>>>();
+    vi.mocked(api.fetchPendingApprovals).mockReturnValueOnce(pending.promise);
+    const { result, rerender } = harness();
+    await act(async () => { await result.current.sendPrompt("A", "default", false, "model"); });
+    rerender({ id: "b" });
+    act(() => streams.get("a")!.emit(event("a", 2, {
+      type: "approval_requested", request_id: "approval-a", call_id: "call-a", name: "run_shell",
+      capabilities: [], risk: "high", arguments: {}, reason: "确认执行",
+    })));
+    expect(result.current.indicators.a.approvalCount).toBe(1);
+    expect(result.current.messages).toEqual([]);
+    await act(async () => { await result.current.resolveApproval("approval-a", true); });
+    expect(api.submitApproval).not.toHaveBeenCalled();
+    rerender({ id: "a" });
+    await act(async () => { await result.current.resolveApproval("approval-a", true); });
+    await act(async () => { pending.resolve([{ request_id: "approval-a", session_id: "a", tool_name: "run_shell", status: "pending" }]); });
+    expect(api.submitApproval).toHaveBeenCalledExactlyOnceWith("approval-a", true);
+    expect(result.current.messages.filter((message) => message.role === "approval")).toEqual([]);
+    expect(result.current.indicators.a.approvalCount).toBe(0);
+  });
+
+  it("草稿与权限随会话保存，迟到历史只更新原会话", async () => {
+    const delayed = deferred<Message[]>();
+    vi.mocked(api.fetchConversation).mockReturnValueOnce(delayed.promise);
+    const { result, rerender } = harness();
+    act(() => { result.current.setPrompt("A 草稿"); result.current.setPermissionMode("plan"); });
+    const clearA = result.current.setPrompt;
+    rerender({ id: "b" });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    act(() => result.current.setPrompt("B 草稿"));
+    await act(async () => { delayed.resolve([{ id: "history-a", role: "user", content: [{ type: "text", text: "A 历史" }] }]); });
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.prompt).toBe("B 草稿");
+    act(() => clearA(""));
+    expect(result.current.prompt).toBe("B 草稿");
+    rerender({ id: "a" });
+    expect(result.current.permissionMode).toBe("plan");
+    expect(result.current.messages[0].content[0].text).toBe("A 历史");
+  });
+
+  it("创建新会话期间切走仍能运行新会话，完成创建不会跳走", async () => {
+    const deferredSession = deferred<Session>();
+    create.mockReturnValue(deferredSession.promise);
+    const { result, rerender } = harness(null);
+    let accepted!: Promise<boolean>;
+    act(() => { accepted = result.current.sendPrompt("新任务", "default", false, "model"); });
+    rerender({ id: "b" });
+    await act(async () => { await result.current.sendPrompt("B", "default", false, "model"); });
+    await act(async () => {
+      deferredSession.resolve({ session_id: "new", name: "新会话", workspace: "/workspace", updated_at: "", message_count: 0, archived: false, model_id: null });
+      expect(await accepted).toBe(true);
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(result.current.indicators.new.running).toBe(true);
+    expect(result.current.indicators.b.running).toBe(true);
+  });
+
+  it("一个流失败不改变另一会话状态，离开页面关闭全部连接", async () => {
+    const { result, rerender, unmount } = harness();
+    await act(async () => { await result.current.sendPrompt("A", "default", false, "model"); });
+    rerender({ id: "b" });
+    await act(async () => { await result.current.sendPrompt("B", "default", false, "model"); });
+    await act(async () => { streams.get("a")!.fail(new Error("A 网络失败")); });
+    expect(result.current.error).toBeNull();
+    expect(result.current.running).toBe(true);
+    expect(result.current.indicators.a.failed).toBe(true);
+    unmount();
+    expect(streams.get("b")!.signal.aborted).toBe(true);
+  });
+
+  it("恢复会话使用自己的流，HTTP 拒绝启动时保留失败状态", async () => {
+    histories.set("a", [{ id: "pending", role: "user", content: [{ type: "text", text: "待恢复" }] }]);
+    const { result, rerender } = harness();
+    await waitFor(() => expect(result.current.canResume).toBe(true));
+    await act(async () => { await result.current.resumeRun("default", false, "model"); });
+    expect(api.streamAgentResume).toHaveBeenCalledOnce();
+    rerender({ id: "b" });
+    vi.mocked(api.streamAgentRun).mockRejectedValueOnce(new Error("模型未配置"));
+    await act(async () => { expect(await result.current.sendPrompt("B", "default", false, "model")).toBe(false); });
+    expect(result.current.error).toBe("模型未配置");
+    expect(result.current.indicators.a.running).toBe(true);
+  });
+});

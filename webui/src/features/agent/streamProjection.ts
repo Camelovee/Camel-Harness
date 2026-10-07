@@ -81,6 +81,11 @@ export function projectAgentEvent(
       appendUserMessage(event.message_id, event.message.content, context);
     }
     if (event.message.role === "assistant") {
+      const assistantId = ensureAssistant(event.message_id);
+      const content = event.message.content;
+      context.setMessages((current) => current.map((message) =>
+        message.id === assistantId ? { ...message, content } : message,
+      ));
       context.streamAssistantId.current = null;
       context.setStreamAssistantId(null);
     }

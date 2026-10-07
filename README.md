@@ -170,6 +170,7 @@ uv run ruff check src tests evals scripts
 uv run mypy src
 uv run pytest -q
 uv run lint-imports
+npm test --prefix webui
 npm run build --prefix webui
 uv run python -m evals.run
 uv build
@@ -203,4 +204,4 @@ uv run python scripts/migrate_flat_sessions.py --apply
 2. 发送“新建 demo.txt”，在默认权限下观察审批并批准；再次发送长任务，点击停止，再在界面选择继续。
 3. 发送“委派 explore 子 Agent 只读检查工作区”，检查 `~/.camel/sessions/<父会话>/subagents/<子会话>/session.jsonl`。
 
-本地 WebUI 已做浏览器画面核对；截图产物尚未纳入仓库。当前只支持单机、单 Agent 单活动 Run；SSE 不回放、没有进程级沙箱和副作用工具 exactly-once 保证，也不承诺多用户或后台任务接管。OpenAI 真实烟测入口已实现，但当前基线环境没有 OpenAI 凭据，尚无真实验证结果。更多边界见[项目架构](docs/项目架构.md)。
+本地 WebUI 已做浏览器画面核对；截图产物尚未纳入仓库。支持单机、同页多个会话并行，切换会话保留原会话执行；每个 Agent 仍只有一个活动 Run。刷新或关闭页面会取消连接对应的 Run，SSE 不回放；同工作区并行会话共享文件，没有自动隔离。没有进程级沙箱和副作用工具 exactly-once 保证，也不承诺多用户或后台任务接管。OpenAI 真实烟测入口已实现，但当前基线环境没有 OpenAI 凭据，尚无真实验证结果。更多边界见[项目架构](docs/项目架构.md)。

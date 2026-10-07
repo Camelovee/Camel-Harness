@@ -7,7 +7,6 @@ import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { useWebSettings } from "../features/settings/useWebSettings";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
 import { useWorkspaceSessions } from "../features/workspaces/useWorkspaceSessions";
-import { workspaceName } from "../shared/presentation";
 import { DeleteSessionDialog, ErrorToast, RenameSessionDialog } from "../shared/Feedback";
 
 type DeleteTarget = { sessionId: string; name: string } | null;
@@ -32,9 +31,11 @@ export default function App() {
     activeId: workspace.activeId,
     activeWorkspace: chatWorkspace,
     createDefaultChatSession: workspace.createDefaultChatSession,
+    activateSession: (session) => {
+      workspace.setActiveWorkspace(session.workspace);
+      workspace.setActiveId(session.session_id);
+    },
     refreshWorkspaces: workspace.refresh,
-    onError,
-    onStatus,
   });
 
   async function confirmDeleteSession() {
@@ -60,7 +61,8 @@ export default function App() {
         activeWorkspace={workspace.activeWorkspace}
         activeId={workspace.activeId}
         selectingWorkspace={workspace.selectingWorkspace}
-        newChatDisabled={agent.running}
+        newChatDisabled={agent.creatingSession}
+        indicators={agent.indicators}
         onSelectWorkspace={() => {
           void workspace.selectWorkspace().then((selected) => {
             if (selected) {
@@ -118,6 +120,7 @@ export default function App() {
         </header>
 
         <MessageList
+            key={`messages-${workspace.activeId ?? "new-chat"}`}
             activeSession={workspace.activeSession}
             activeWorkspace={chatWorkspace}
             messages={agent.messages}
@@ -130,11 +133,17 @@ export default function App() {
             onStart={start}
         />
         <Composer
+          key={`composer-${workspace.activeId ?? "new-chat"}`}
           active={true}
           activeWorkspace={chatWorkspace}
           running={agent.running}
           switchingModel={workspace.switchingModel}
-          status={status}
+          status={workspace.selectingWorkspace ? status : agent.status}
+          prompt={agent.prompt}
+          onPromptChange={agent.setPrompt}
+          permissionMode={agent.permissionMode}
+          onPermissionModeChange={agent.setPermissionMode}
+          starting={agent.starting || (workspace.activeId === null && agent.creatingSession)}
           models={models}
           selectedModelId={selectedModel?.id ?? ""}
           thinking={webSettings.settings?.thinking ?? false}
@@ -160,7 +169,7 @@ export default function App() {
         />
       </main>
 
-      {error && <ErrorToast message={error} onClose={() => setError(null)} />}
+      {(error || agent.error) && <ErrorToast message={error || agent.error!} onClose={() => { setError(null); agent.clearError(); }} />}
       {settingsOpen && (
         <SettingsDialog
           settings={webSettings.settings}

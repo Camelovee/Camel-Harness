@@ -8,6 +8,14 @@ export type Session = {
   model_id: string | null;
 };
 
+export type SessionIndicator = {
+  running: boolean;
+  approvalCount: number;
+  unread: boolean;
+  failed: boolean;
+  cancelled: boolean;
+};
+
 export type ModelProfile = {
   id: string;
   name: string;

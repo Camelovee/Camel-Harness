@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 import type { ModelProfile, PermissionMode } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
@@ -9,6 +10,11 @@ type Props = {
   running: boolean;
   switchingModel: boolean;
   status: string;
+  prompt: string;
+  onPromptChange: Dispatch<SetStateAction<string>>;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (value: PermissionMode) => void;
+  starting: boolean;
   models: ModelProfile[];
   selectedModelId: string;
   thinking: boolean;
@@ -32,6 +38,11 @@ export function Composer({
   running,
   switchingModel,
   status,
+  prompt,
+  onPromptChange,
+  permissionMode,
+  onPermissionModeChange,
+  starting,
   models,
   selectedModelId,
   thinking,
@@ -43,8 +54,6 @@ export function Composer({
   onAbort,
   onResume,
 }: Props) {
-  const [prompt, setPrompt] = useState("");
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const ignoreEnterRef = useRef(false);
@@ -58,9 +67,11 @@ export function Composer({
 
   async function submit() {
     const value = prompt.trim();
-    if (!value || !active || !selectedModelId || switchingModel) return;
-    if (await onSend(value, permissionMode, thinking, selectedModelId)) setPrompt("");
-    inputRef.current?.focus();
+    if (!value || !active || !selectedModelId || switchingModel || starting) return;
+    const submittedPrompt = prompt;
+    if (await onSend(value, permissionMode, thinking, selectedModelId)) {
+      onPromptChange((current) => current === submittedPrompt ? "" : current);
+    }
   }
 
   return (
@@ -70,7 +81,7 @@ export function Composer({
           ref={inputRef}
           disabled={!active || !selectedModelId}
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => onPromptChange(event.target.value)}
           onCompositionStart={() => {
             composingRef.current = true;
           }}
@@ -113,8 +124,8 @@ export function Composer({
             </select>
             <select
               value={permissionMode}
-              onChange={(event) => setPermissionMode(event.target.value as PermissionMode)}
-              disabled={!active}
+              onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
+              disabled={!active || running}
             >
               <option value="default">默认权限</option>
               <option value="plan">Plan Mode</option>
@@ -124,7 +135,7 @@ export function Composer({
             <button
               type="button"
               className="send-button"
-              disabled={!prompt.trim() || !active || !selectedModelId || switchingModel}
+              disabled={!prompt.trim() || !active || !selectedModelId || switchingModel || starting}
               onClick={() => void submit()}
               title={running ? "追加运行中输入" : "发送消息"}
             >
@@ -134,6 +145,7 @@ export function Composer({
               <button
                 type="button"
                 className="stop-button"
+                disabled={starting}
                 onClick={() => void onAbort()}
                 title="暂停当前 Run"
                 aria-label="暂停当前 Run"

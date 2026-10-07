@@ -31,8 +31,10 @@ jobs:
           uv run --no-sync pytest -q
           uv run --no-sync lint-imports
           uv run --no-sync python -m evals.run
-      - name: WebUI 构建
-        run: npm run build --prefix webui
+      - name: WebUI 测试与构建
+        run: |
+          npm test --prefix webui
+          npm run build --prefix webui
       - name: Python 发布包
         run: uv build
       - name: Diff 格式

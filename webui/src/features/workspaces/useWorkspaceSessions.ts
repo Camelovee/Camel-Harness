@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Session, Workspace } from "../../shared/model";
 import { createWorkspaceSession, chooseLocalWorkspace, fetchDefaultWorkspace, fetchWorkspaces, removeSession, renameWorkspaceSession, saveSessionModel } from "./api";
@@ -14,7 +14,9 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [defaultWorkspace, setDefaultWorkspace] = useState<string | null>(null);
   const [selectingWorkspace, setSelectingWorkspace] = useState(false);
-  const [switchingModel, setSwitchingModel] = useState(false);
+  const [switchingModels, setSwitchingModels] = useState(new Set<string>());
+  const switchingModel = activeId !== null && switchingModels.has(activeId);
+  const refreshVersion = useRef(0);
 
   const activeSession = useMemo(
     () =>
@@ -26,7 +28,9 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
 
   const refresh = useCallback(
     async (preferredWorkspace?: string | null, preferredSessionId?: string | null) => {
+      const version = ++refreshVersion.current;
       const loaded = await fetchWorkspaces();
+      if (version !== refreshVersion.current) return;
       const allSessions = loaded.flatMap((workspace) => workspace.sessions);
       setWorkspaces(loaded);
       setActiveWorkspace((current) => preferredWorkspace ?? current);
@@ -150,7 +154,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     if (!activeId) return;
     const sessionId = activeId;
     const previousModelId = activeSession?.model_id ?? null;
-    setSwitchingModel(true);
+    setSwitchingModels((current) => new Set(current).add(sessionId));
     setWorkspaces((current) => current.map((item) => ({
       ...item,
       sessions: item.sessions.map((session) => session.session_id === sessionId
@@ -168,7 +172,11 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
           : session),
       })));
     } finally {
-      setSwitchingModel(false);
+      setSwitchingModels((current) => {
+        const next = new Set(current);
+        next.delete(sessionId);
+        return next;
+      });
     }
   }, [activeId, activeSession?.model_id, onError]);
 

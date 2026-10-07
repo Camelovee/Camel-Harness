@@ -1,4 +1,4 @@
-import type { Workspace } from "../../shared/model";
+import type { SessionIndicator, Workspace } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
 
 type Props = {
@@ -7,6 +7,7 @@ type Props = {
   activeId: string | null;
   selectingWorkspace: boolean;
   newChatDisabled: boolean;
+  indicators: Record<string, SessionIndicator>;
   onSelectWorkspace: () => void;
   onNewChat: () => void;
   onActivateWorkspace: (workspace: Workspace) => void;
@@ -23,6 +24,7 @@ export function WorkspaceSidebar({
   activeId,
   selectingWorkspace,
   newChatDisabled,
+  indicators,
   onSelectWorkspace,
   onNewChat,
   onActivateWorkspace,
@@ -69,6 +71,7 @@ export function WorkspaceSidebar({
               className="workspace-row"
               onClick={() => onActivateWorkspace(workspace)}
               role="button"
+              aria-label={`打开工作区 ${workspaceName(workspace.workspace)}`}
               tabIndex={0}
               onKeyDown={(event) => {
                 if (event.key === "Enter") onActivateWorkspace(workspace);
@@ -77,7 +80,7 @@ export function WorkspaceSidebar({
               <span className="folder-icon">▱</span>
               <span className="workspace-copy">
                 <strong>{workspaceName(workspace.workspace)}</strong>
-                <small>{workspace.sessions.length} 个会话</small>
+                <small>{workspace.sessions.length} 个会话{workspace.sessions.some((session) => indicators[session.session_id]?.running) && " · 运行中"}</small>
               </span>
               <button
                 className="workspace-action"
@@ -98,6 +101,7 @@ export function WorkspaceSidebar({
                     key={session.session_id}
                     onClick={() => onActivateSession(workspace.workspace, session.session_id)}
                     role="button"
+                    aria-label={`打开会话 ${session.name}`}
                     tabIndex={0}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -105,10 +109,22 @@ export function WorkspaceSidebar({
                       }
                     }}
                   >
-                    <span className="session-dot" />
+                    <span className={`session-dot ${indicators[session.session_id]?.approvalCount ? "waiting" : indicators[session.session_id]?.running ? "running" : indicators[session.session_id]?.unread ? "unread" : ""}`} />
                     <span className="session-copy">
                       <strong>{session.name}</strong>
-                      <small>{session.message_count} 条消息</small>
+                      <small className="session-status">
+                        {indicators[session.session_id]?.approvalCount
+                          ? "等待审批"
+                          : indicators[session.session_id]?.running
+                            ? "运行中"
+                            : indicators[session.session_id]?.failed
+                              ? "运行失败"
+                              : indicators[session.session_id]?.cancelled
+                                ? "已暂停"
+                                : indicators[session.session_id]?.unread
+                                  ? "已完成 · 未读"
+                                  : `${session.message_count} 条消息`}
+                      </small>
                     </span>
                     <button
                       className="session-rename"
@@ -123,6 +139,8 @@ export function WorkspaceSidebar({
                     </button>
                     <button
                       className="session-delete"
+                      disabled={indicators[session.session_id]?.running}
+                      title={indicators[session.session_id]?.running ? "运行结束后可删除" : "删除会话"}
                       aria-label={`删除${session.name}`}
                       onClick={(event) => {
                         event.stopPropagation();
