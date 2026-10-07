@@ -159,6 +159,7 @@ class ExampleTool(Tool):
 - 首行 `session` 保存会话 ID、工作目录及初始元数据；其后按顺序追加 `message`、`compaction` 和 `session_info`。
 - `message` 只保存完整的 user、assistant 和 toolResult；压缩不删除原始消息，模型上下文由日志重放得到。
 - 孙会话继续放在其父会话目录的 `subagents/` 下；删除父会话时级联删除后代会话日志。
+- 超大工具结果存放在对应会话目录的 `tool-results/` 下，消息保留预览和完整文件的绝对路径；删除会话时一并清理结果文件。工作区文件工具不因这些引用而获得目录外的访问权限。
 - 旧的平铺 JSONL 不会在运行时自动读取；迁移时应保留原文件作备份。
 
 ## 质量检查

@@ -16,6 +16,10 @@ class SessionManager:
     def __init__(self, storage: JsonlSessionStorage) -> None:
         self._repository = storage
 
+    def directory(self, session_id: str) -> Path:
+        """返回关联文件所属的会话目录，包含子会话的真实位置。"""
+        return self._repository.directory(session_id)
+
     async def record_agent_event(self, event: AgentEvent) -> None:
         """只把完整消息终态写入会话；增量和运行事件不属于持久化消息。"""
 

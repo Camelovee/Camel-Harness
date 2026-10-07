@@ -13,6 +13,7 @@ from ..events import AgentEvent
 from ..session import SessionManager
 from ..state import AgentOptions, SessionId
 from .executor import ToolExecutor
+from .file_result_storage import FileToolResultStorage
 from .permissions import PermissionService
 from .registry import ToolProvider, ToolRegistry
 from .types import (
@@ -85,7 +86,12 @@ class LocalSubagentRunner:
     async def run(self, request: SubagentRequest) -> SubagentResult:
         allowed = _GENERAL_TOOLS if request.agent_type is SubagentType.GENERAL else _READ_ONLY_TOOLS
         registry = self._registry.subset(allowed)
-        executor = ToolExecutor(registry, self._validate_arguments, self._permission)
+        executor = ToolExecutor(
+            registry,
+            self._validate_arguments,
+            self._permission,
+            FileToolResultStorage(self._sessions.directory).normalize,
+        )
         options = replace(self._options, max_turns=8)
         session_id = f"sub-{SessionId.new().value}"
         mode = (

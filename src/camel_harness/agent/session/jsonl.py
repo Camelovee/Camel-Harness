@@ -30,6 +30,13 @@ class JsonlSessionStorage:
         self._locks: dict[str, asyncio.Lock] = {}
         self._locations: dict[str, Path] = {}
 
+    def directory(self, session_id: str) -> Path:
+        """定位已存在会话，关联文件复用日志的真实目录。"""
+        path = self._path(session_id)
+        if not path.is_file():
+            raise KeyError(f"会话不存在：{session_id}")
+        return path.parent
+
     async def create(self, metadata: SessionMetadata) -> None:
         async with self._lock(metadata.session_id):
             path = self._new_path(metadata)
@@ -188,6 +195,16 @@ class JsonlSessionStorage:
 
     @staticmethod
     def _delete_sync(path: Path) -> None:
+        results = path.parent / "tool-results"
+        if results.is_dir() and not results.is_symlink():
+            for result in results.glob("*.txt"):
+                if result.is_file() or result.is_symlink():
+                    result.unlink()
+            try:
+                results.rmdir()
+            except OSError:
+                # 不删除未知文件或目录。
+                pass
         path.unlink()
         try:
             path.parent.rmdir()

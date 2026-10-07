@@ -67,7 +67,7 @@ async def build_agent(
         registry,
         validate_tool_arguments,
         permission,
-        FileToolResultStorage().normalize,
+        FileToolResultStorage(sessions.directory).normalize,
     )
     options = AgentOptions(
         model=settings.model,

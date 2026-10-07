@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+import pytest
+
 from camel_backend.approval import WebApproval
 from camel_harness import Agent, AgentOptions, StopReason
 from camel_harness.agent.context import CompactionEngine, ContextManager
@@ -181,8 +183,9 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     assert all(request.thinking for request in runtime.requests)
 
 
-async def test_local_subagent_persists_parent_link(tmp_path) -> None:
-    (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
+@pytest.mark.parametrize("content", ["内容", "内容" * 15_000], ids=["small", "large"])
+async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
+    (tmp_path / "sample.txt").write_text(content, encoding="utf-8")
     llm = LlmClient(FakeLlm())
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("parent", tmp_path, "父会话")
@@ -214,6 +217,13 @@ async def test_local_subagent_persists_parent_link(tmp_path) -> None:
     assert metadata is not None
     assert metadata.parent_session_id == "parent"
     assert metadata.parent_tool_call_id == "delegate-call"
+    results = list((sessions.directory(result.session_id) / "tool-results").glob("*.txt"))
+    if len(content) > 20_000:
+        assert len(results) == 2
+        assert all(path.read_text("utf-8") == f"1: {content}" for path in results)
+        assert all(path.parent.parent.parent.name == "subagents" for path in results)
+    else:
+        assert not results
 
 
 async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
