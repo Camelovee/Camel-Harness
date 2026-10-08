@@ -78,9 +78,9 @@ it("实际工作台可在 A 运行时启动 B，切回查看实时输出，暂�
   fireEvent.click(screen.getByRole("button", { name: "打开会话 会话 B" }));
   await send("任务 B");
   await act(async () => {
-    channels.get("a")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "text_delta", data: { text: "A 实时内容" } } });
-    channels.get("b")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "text_delta", data: { text: "B 实时内容" } } });
-    channels.get("a")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", data: { input_tokens: 100 } } });
+    channels.get("a")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "text_delta", text: "A 实时内容" } });
+    channels.get("b")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "text_delta", text: "B 实时内容" } });
+    channels.get("a")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", usage: { input_tokens: 100, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null, reasoning_tokens: null } } });
   });
   expect(screen.getByText("B 实时内容")).toBeTruthy();
   expect(screen.queryByText("A 实时内容")).toBeNull();

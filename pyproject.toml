@@ -77,6 +77,12 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Session 不得感知 Agent 运行事件或执行对象"
+type = "forbidden"
+source_modules = ["camel_harness.agent.session"]
+forbidden_modules = ["camel_harness.agent.events", "camel_harness.agent.agent"]
+
+[[tool.importlinter.contracts]]
 name = "入口之间不得互相依赖"
 type = "independence"
 modules = [

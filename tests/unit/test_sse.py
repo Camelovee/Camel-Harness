@@ -7,7 +7,7 @@ from typing import cast
 from camel_backend.api.sse import encode_sse, open_agent_sse, stream_sse
 from camel_harness import Agent, AgentEvent
 from camel_harness.agent.events import AgentEventBase, MessageUpdateEvent
-from camel_harness.llm import LlmStreamEvent, LlmStreamEventType
+from camel_harness.llm import TextDelta
 
 
 def _event(sequence: int, text: str) -> MessageUpdateEvent:
@@ -17,7 +17,7 @@ def _event(sequence: int, text: str) -> MessageUpdateEvent:
         sequence=sequence,
         turn_id="turn-1",
         message_id="message-1",
-        assistant_event=LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": text}),
+        assistant_event=TextDelta(text=text),
     )
 
 
@@ -30,7 +30,7 @@ def test_encode_sse_preserves_event_identity_and_payload() -> None:
     assert payload["session_id"] == "session-1"
     assert payload["sequence"] == 3
     assert payload["run_id"] == "run-1"
-    assert payload["assistant_event"] == {"type": "text_delta", "data": {"text": "你好"}}
+    assert payload["assistant_event"] == {"type": "text_delta", "text": "你好"}
     assert frame.endswith("\n\n")
 
 

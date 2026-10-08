@@ -28,9 +28,9 @@ async def _cancel_stream(provider: str, model: str) -> bool:
             max_output_tokens=1024,
         )
         async for event in client.stream(request):
-            if event.type is LlmStreamEventType.TEXT_DELTA:
+            if event.type == LlmStreamEventType.TEXT_DELTA:
                 first_delta.set()
-            if event.type is LlmStreamEventType.MESSAGE_COMPLETED:
+            if event.type == LlmStreamEventType.MESSAGE_COMPLETED:
                 completed = True
 
     task = asyncio.create_task(consume())

@@ -4,16 +4,20 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
-from camel_harness.agent.session import SessionLog, message_to_dict
+from camel_harness.agent.session import ContextSnapshot, message_to_dict
 from camel_harness.agent.state import AgentOptions
 from camel_harness.llm import (
     AssistantMessage,
     LlmClient,
     LlmRequest,
     LlmStopReason,
-    LlmStreamEventType,
+    LlmUsage,
     Message,
+    MessageCompleted,
+    StreamFailed,
+    TextDelta,
     ToolResultMessage,
+    UsageUpdated,
     UserMessage,
 )
 
@@ -27,13 +31,14 @@ class CompactionTrigger(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CompactionResult:
-    """一次 SessionLog 上下文替换的不可变结果。"""
+    """一次 ContextSnapshot 上下文替换的不可变结果。"""
 
-    start_seq: int
-    end_seq: int
+    first_kept_entry_id: str
+    tokens_before: int
     input_tokens: int
     output_tokens: int
-    summary_message: Message
+    summary: str
+    usage: LlmUsage | None = None
 
 
 _SUMMARY_SYSTEM_PROMPT = """你负责压缩 Agent 的历史上下文。
@@ -69,14 +74,14 @@ class CompactionEngine:
 
     async def compact_if_needed(
         self,
-        session: SessionLog,
+        snapshot: ContextSnapshot,
         options: AgentOptions,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> CompactionResult | None:
-        """达到压力后总结较早消息，并返回追加式 Replace 操作。"""
+        """达到压力后总结较早消息，并返回压缩计划。"""
 
-        surface = session.surface()
+        surface = snapshot.nodes
         if len(surface) < self._min_messages_to_compact:
             return None
         messages = tuple(node.message for node in surface)
@@ -86,16 +91,16 @@ class CompactionEngine:
             and estimated_chars < self._pressure_threshold_chars
         ):
             return None
-        return await self._compact(session, options)
+        return await self._compact(snapshot, options)
 
     async def _compact(
         self,
-        session: SessionLog,
+        snapshot: ContextSnapshot,
         options: AgentOptions,
     ) -> CompactionResult | None:
         """保留最近约四分之一，并把更早的安全区间总结为一条消息。"""
 
-        surface = session.surface()
+        surface = snapshot.nodes
         if len(surface) < 2:
             return None
 
@@ -111,23 +116,23 @@ class CompactionEngine:
 
         selected = surface[:compact_end]
         replaced = tuple(node.message for node in selected)
-        summary, input_tokens, output_tokens = await self._summarize(options, replaced)
+        summary, usage = await self._summarize(options, replaced)
         if not summary.strip():
             return None
-        summary_message = UserMessage(f"[Compacted History]\n\n{summary.strip()}")
         return CompactionResult(
-            start_seq=min(node.seq for node in selected),
-            end_seq=max(node.seq for node in selected),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            summary_message=summary_message,
+            first_kept_entry_id=surface[compact_end].entry_id,
+            tokens_before=(sum(_message_chars(node.message) for node in surface) + 3) // 4,
+            input_tokens=usage.input_tokens or 0 if usage else 0,
+            output_tokens=usage.output_tokens or 0 if usage else 0,
+            summary=summary.strip(),
+            usage=usage,
         )
 
     async def _summarize(
         self,
         options: AgentOptions,
         messages: tuple[Message, ...],
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, LlmUsage | None]:
         """通过统一 LLM Client 生成摘要，不把厂商协议泄漏到 Agent。"""
 
         transcript = "\n".join(
@@ -143,28 +148,22 @@ class CompactionEngine:
         parts: list[str] = []
         completed = False
         completion_reason: LlmStopReason | None = None
-        input_tokens = 0
-        output_tokens = 0
+        usage: LlmUsage | None = None
         async for event in self._llm.stream(request):
-            if event.type is LlmStreamEventType.TEXT_DELTA:
-                parts.append(str(event.data.get("text", "")))
-            elif event.type is LlmStreamEventType.MESSAGE_COMPLETED:
+            if isinstance(event, TextDelta):
+                parts.append(event.text)
+            elif isinstance(event, MessageCompleted):
                 completed = True
-                try:
-                    completion_reason = LlmStopReason(str(event.data["stop_reason"]))
-                except (KeyError, ValueError) as exc:
-                    raise RuntimeError("压缩流缺少有效 stop_reason") from exc
-            elif event.type is LlmStreamEventType.USAGE_UPDATED:
-                input_tokens = max(input_tokens, int(event.data.get("input_tokens", 0)))
-                output_tokens = max(output_tokens, int(event.data.get("output_tokens", 0)))
-            elif event.type is LlmStreamEventType.STREAM_FAILED:
-                detail = event.data.get("error", event.data.get("message", "上下文压缩请求失败"))
-                raise RuntimeError(str(detail))
+                completion_reason = event.stop_reason
+            elif isinstance(event, UsageUpdated):
+                usage = (usage or LlmUsage()).merge(event.usage)
+            elif isinstance(event, StreamFailed):
+                raise RuntimeError(event.error)
         if not completed:
             raise RuntimeError("上下文压缩流缺少 MessageCompleted")
         if completion_reason is not LlmStopReason.STOP:
             raise RuntimeError(f"上下文压缩未正常完成：{completion_reason}")
-        return "".join(parts), input_tokens, output_tokens
+        return "".join(parts), usage
 
 
 def _message_chars(message: Message) -> int:
@@ -177,6 +176,9 @@ def _model_message_dict(message: Message) -> dict[str, object]:
     """投影用于摘要模型的消息，过滤只供 UI 回放的 reasoning 块。"""
 
     payload = message_to_dict(message)
+    # 模型摘要只看到对话内容，不把审计统计与文件元数据计入上下文预算。
+    for key in ("provider", "model", "response_model", "usage", "details"):
+        payload.pop(key, None)
     if isinstance(message, AssistantMessage):
         content = payload.get("content", [])
         assert isinstance(content, list)

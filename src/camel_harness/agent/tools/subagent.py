@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from camel_harness.llm import LlmClient, LlmStreamEventType
+from camel_harness.llm import LlmClient, TextDelta
 
 from ..agent import Agent
 from ..context import ContextManager
@@ -108,24 +108,20 @@ class LocalSubagentRunner:
             parent_tool_call_id=request.parent_tool_call_id,
         )
         agent = Agent(
-            session_id,
+            self._sessions.bind(session_id),
             request.workspace,
             options,
             self._llm,
             registry,
             executor,
-            self._sessions,
             self._context,
         )
 
         parts: list[str] = []
 
         def collect_text(event: AgentEvent) -> None:
-            if (
-                event.type == "message_update"
-                and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
-            ):
-                parts.append(str(event.assistant_event.data.get("text", "")))
+            if event.type == "message_update" and isinstance(event.assistant_event, TextDelta):
+                parts.append(event.assistant_event.text)
 
         unsubscribe = agent.subscribe(collect_text)
         try:

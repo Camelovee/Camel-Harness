@@ -9,13 +9,27 @@ from openai import AsyncOpenAI
 from .message import (
     AssistantMessage,
     LlmStopReason,
+    LlmUsage,
     Message,
     TextBlock,
     ToolResultMessage,
     ToolUseBlock,
     UserMessage,
 )
-from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent, LlmStreamEventType
+from .protocol import (
+    LlmAdapter,
+    LlmRequest,
+    LlmStreamEvent,
+    MessageCompleted,
+    ReasoningDelta,
+    StreamFailed,
+    StreamStarted,
+    TextDelta,
+    ToolCallArgumentsDelta,
+    ToolCallCompleted,
+    ToolCallStarted,
+    UsageUpdated,
+)
 
 
 def create_openai_adapter(api_key: str, base_url: str | None = None) -> OpenAiLlmAdapter:
@@ -67,10 +81,10 @@ class OpenAiLlmAdapter(LlmAdapter):
         try:
             sdk_stream = await self._client.responses.create(**kwargs)
             async for event in sdk_stream:
-                for event_type, data in self._map_event(event, calls, completion_state):
-                    yield LlmStreamEvent(event_type, data)
+                for mapped_event in self._map_event(event, calls, completion_state):
+                    yield mapped_event
         except Exception as exc:
-            yield LlmStreamEvent(LlmStreamEventType.STREAM_FAILED, {"error": str(exc)})
+            yield StreamFailed(error=str(exc))
             raise
 
     @staticmethod
@@ -113,58 +127,62 @@ class OpenAiLlmAdapter(LlmAdapter):
         event: Any,
         calls: dict[str, dict[str, str]],
         completion_state: dict[str, bool],
-    ) -> list[tuple[LlmStreamEventType, dict[str, Any]]]:
+    ) -> list[LlmStreamEvent]:
         event_type = getattr(event, "type", "")
         if event_type == "response.created":
-            return [(LlmStreamEventType.STREAM_STARTED, {})]
+            model = getattr(getattr(event, "response", None), "model", None)
+            return [StreamStarted(model=model)]
         if event_type == "response.output_text.delta":
-            return [(LlmStreamEventType.TEXT_DELTA, {"text": event.delta})]
+            return [TextDelta(text=event.delta)]
         if event_type in {"response.reasoning_text.delta", "response.reasoning_summary_text.delta"}:
-            return [(LlmStreamEventType.REASONING_DELTA, {"text": event.delta})]
+            return [ReasoningDelta(text=event.delta)]
         if event_type == "response.output_item.added":
             item = event.item
             if getattr(item, "type", "") == "function_call":
                 completion_state["has_tool_call"] = True
                 calls[item.id] = {"call_id": item.call_id, "name": item.name}
-                return [
-                    (
-                        LlmStreamEventType.TOOL_CALL_STARTED,
-                        {"call_id": item.call_id, "name": item.name, "item_id": item.id},
-                    )
-                ]
+                return [ToolCallStarted(call_id=item.call_id, name=item.name)]
         if event_type == "response.function_call_arguments.delta":
             call = calls.get(event.item_id, {"call_id": event.item_id})
-            return [
-                (
-                    LlmStreamEventType.TOOL_CALL_ARGUMENTS_DELTA,
-                    {"call_id": call["call_id"], "delta": event.delta},
-                )
-            ]
+            return [ToolCallArgumentsDelta(call_id=call["call_id"], delta=event.delta)]
         if event_type == "response.function_call_arguments.done":
             call = calls.pop(event.item_id, {"call_id": event.item_id, "name": event.name})
             try:
                 arguments = json.loads(event.arguments or "{}")
             except json.JSONDecodeError:
                 arguments = {"_invalid_json": event.arguments}
-            return [
-                (
-                    LlmStreamEventType.TOOL_CALL_COMPLETED,
-                    {"call_id": call["call_id"], "name": call["name"], "arguments": arguments},
-                )
-            ]
+            return [ToolCallCompleted(ToolUseBlock(call["call_id"], call["name"], arguments))]
         if event_type in {"response.completed", "response.incomplete"}:
             usage = getattr(event.response, "usage", None)
-            result: list[tuple[LlmStreamEventType, dict[str, Any]]] = []
+            result: list[LlmStreamEvent] = []
             if usage is not None:
-                result.append(
+                data = {
+                    key: value
+                    for key in ("input_tokens", "output_tokens")
+                    if (value := getattr(usage, key, None)) is not None
+                }
+                # 缓存与推理是总输入/输出的子集，仅记录明细，禁止重复累计。
+                for details, field, key in (
                     (
-                        LlmStreamEventType.USAGE_UPDATED,
-                        {
-                            "input_tokens": getattr(usage, "input_tokens", 0),
-                            "output_tokens": getattr(usage, "output_tokens", 0),
-                        },
-                    )
-                )
+                        getattr(usage, "input_tokens_details", None),
+                        "cached_tokens",
+                        "cache_read_tokens",
+                    ),
+                    (
+                        getattr(usage, "input_tokens_details", None),
+                        "cache_write_tokens",
+                        "cache_write_tokens",
+                    ),
+                    (
+                        getattr(usage, "output_tokens_details", None),
+                        "reasoning_tokens",
+                        "reasoning_tokens",
+                    ),
+                ):
+                    value = getattr(details, field, None)
+                    if value is not None:
+                        data[key] = value
+                result.append(UsageUpdated(LlmUsage(**data)))
             if event_type == "response.incomplete":
                 details = getattr(event.response, "incomplete_details", None)
                 detail_reason = getattr(details, "reason", None)
@@ -175,8 +193,7 @@ class OpenAiLlmAdapter(LlmAdapter):
                 stop_reason = LlmStopReason.TOOL_USE
             else:
                 stop_reason = LlmStopReason.STOP
-            result.append(
-                (LlmStreamEventType.MESSAGE_COMPLETED, {"stop_reason": stop_reason.value})
-            )
+            model = getattr(event.response, "model", None)
+            result.append(MessageCompleted(stop_reason, model=model))
             return result
         return []

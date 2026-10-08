@@ -50,6 +50,8 @@ async def build_agent(
 
     llm = LlmClient(_build_llm_adapter(settings))
     sessions = sessions or build_session_manager(settings)
+    await sessions.ensure(session_id, workspace, "新会话")
+    session = sessions.bind(session_id)
     skills = Skills(workspace)
     memories = MemoryStore(workspace)
 
@@ -98,13 +100,12 @@ async def build_agent(
     await registry.register_provider(SubagentToolProvider(subagent.run))
 
     return Agent(
-        session_id,
+        session,
         workspace,
         options,
         llm,
         registry,
         executor,
-        sessions,
         context,
         on_close=mcp.close,
     )

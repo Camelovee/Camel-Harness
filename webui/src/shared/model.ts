@@ -48,6 +48,33 @@ export type Workspace = {
   sessions: Session[];
 };
 
+export type ToolResultDetails = {
+  content_ref?: {
+    path: string;
+    mime_type: string;
+    size_bytes: number;
+    original_chars: number;
+    preview_chars: number;
+  };
+  [key: string]: unknown;
+};
+
+export type LlmUsage = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  reasoning_tokens: number | null;
+  total_tokens: number | null;
+};
+
+export type AssistantAudit = {
+  provider?: string;
+  model?: string;
+  response_model?: string;
+  usage?: LlmUsage;
+};
+
 export type ContentBlock = {
   type: string;
   text?: string;
@@ -55,6 +82,7 @@ export type ContentBlock = {
   name?: string;
   content?: string;
   is_error?: boolean;
+  details?: ToolResultDetails;
 };
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "completed" | "failed";
@@ -71,7 +99,7 @@ export type Approval = {
   status: ApprovalStatus;
 };
 
-export type Message = {
+export type Message = AssistantAudit & {
   id: string;
   role: "user" | "assistant" | "toolResult" | "approval";
   content: ContentBlock[];
@@ -86,19 +114,25 @@ export type TokenUsage = {
 
 export type WireMessage =
   | { role: "user"; content: string }
-  | { role: "assistant"; content: ContentBlock[]; stop_reason: string }
+  | (AssistantAudit & { role: "assistant"; content: ContentBlock[]; stop_reason: string })
   | {
       role: "toolResult";
       tool_call_id: string;
       tool_name: string;
       content: string;
       is_error: boolean;
+      details?: ToolResultDetails;
     };
 
-export type AssistantStreamEvent = {
-  type: string;
-  data: Record<string, unknown>;
-};
+export type AssistantStreamEvent =
+  | { type: "stream_started"; model: string | null }
+  | { type: "text_delta" | "reasoning_delta"; text: string }
+  | { type: "tool_call_started"; call_id: string; name: string }
+  | { type: "tool_call_arguments_delta"; call_id: string; delta: string }
+  | { type: "tool_call_completed"; tool_call: { call_id: string; name: string; arguments: Record<string, unknown> } }
+  | { type: "usage_updated"; usage: Omit<LlmUsage, "total_tokens"> }
+  | { type: "message_completed"; stop_reason: "stop" | "length" | "tool_use"; model: string | null }
+  | { type: "stream_failed"; error: string };
 
 type AgentEventBase = {
   session_id: string;

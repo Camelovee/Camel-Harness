@@ -37,9 +37,9 @@ async def test_appending_messages_updates_metadata(tmp_path) -> None:
     root = tmp_path / "global-sessions"
     sessions = SessionManager(JsonlSessionStorage(root))
     await sessions.create("session-1", tmp_path, "批量写入")
-    await sessions.append_message("session-1", UserMessage("问题"))
-    await sessions.append_message(
-        "session-1", AssistantMessage((TextBlock("回答"),), LlmStopReason.STOP)
+    await sessions.bind("session-1").append_message(UserMessage("问题"))
+    await sessions.bind("session-1").append_message(
+        AssistantMessage((TextBlock("回答"),), LlmStopReason.STOP)
     )
 
     metadata = await sessions.get("session-1")
@@ -85,7 +85,7 @@ async def test_child_sessions_record_parent_and_delete_with_parent(tmp_path) -> 
         parent_tool_call_id="tool-1",
     )
     await sessions.create("grandchild", tmp_path, "孙会话", parent_session_id="child")
-    await sessions.append_message("child", UserMessage("子任务"))
+    await sessions.bind("child").append_message(UserMessage("子任务"))
 
     assert child.parent_session_id == "parent"
     assert child.parent_tool_call_id == "tool-1"

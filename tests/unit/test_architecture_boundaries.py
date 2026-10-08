@@ -107,6 +107,50 @@ def test_tool_contract_lives_in_agent_tools() -> None:
     assert "ToolDefinition" in protocol_names
 
 
+def test_agent_depends_on_bound_session_not_session_manager() -> None:
+    """Agent 只拿单个会话的能力，Session 保存接口不反向感知 AgentEvent。"""
+    tree = ast.parse((PACKAGE_ROOT / "agent/agent.py").read_text("utf-8"))
+    identifiers = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert "Session" in identifiers
+    assert "SessionManager" not in identifiers
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert "_session" in attributes
+    assert "_sessions" not in attributes
+    session_tree = ast.parse((PACKAGE_ROOT / "agent/session/manager.py").read_text("utf-8"))
+    classes = {node.name: node for node in session_tree.body if isinstance(node, ast.ClassDef)}
+    methods = {
+        node.name
+        for node in classes["Session"].body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert not {"create", "ensure", "delete", "list", "update", "record_agent_event"} & methods
+    session_identifiers = {node.id for node in ast.walk(session_tree) if isinstance(node, ast.Name)}
+    assert not {"AgentEvent", "MessageEndEvent", "Agent"} & session_identifiers
+
+
+def test_session_exposes_snapshot_not_mutable_log() -> None:
+    """上下文消费方只读快照，重放和持久化收敛到 Session 包。"""
+    assert not (PACKAGE_ROOT / "agent/session/log.py").exists()
+    events_tree = ast.parse((PACKAGE_ROOT / "agent/session/events.py").read_text("utf-8"))
+    classes = {node.name: node for node in events_tree.body if isinstance(node, ast.ClassDef)}
+    assert "SessionLog" not in classes
+    assert "SessionLogEvent" not in classes
+    assert {
+        "ContextSnapshot",
+        "SessionHeaderEvent",
+        "SessionMessageEvent",
+        "SessionCompactionEvent",
+        "SessionInfoEvent",
+    } <= classes.keys()
+    for path in (PACKAGE_ROOT / "agent/context").glob("*.py"):
+        tree = ast.parse(path.read_text("utf-8"))
+        identifiers = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        assert not {"SessionLog", "SessionLogEvent", "SessionEvent"} & identifiers
+    agent_tree = ast.parse((PACKAGE_ROOT / "agent/agent.py").read_text("utf-8"))
+    names = {node.id for node in ast.walk(agent_tree) if isinstance(node, ast.Name)}
+    assert not {"SessionEvent", "SessionCompactionEvent", "SessionLog"} & names
+
+
 def test_default_toolset_stays_small() -> None:
     """默认工具只保留 pi-agent 式的核心文件与 Shell 能力。"""
 
@@ -150,7 +194,20 @@ def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
         "temperature",
         "thinking",
     }
-    assert fields("LlmStreamEvent") == {"type", "data"}
+    expected_events = {
+        "StreamStarted": {"type", "model"},
+        "TextDelta": {"type", "text"},
+        "ReasoningDelta": {"type", "text"},
+        "ToolCallStarted": {"type", "call_id", "name"},
+        "ToolCallArgumentsDelta": {"type", "call_id", "delta"},
+        "ToolCallCompleted": {"type", "tool_call"},
+        "UsageUpdated": {"type", "usage"},
+        "MessageCompleted": {"type", "stop_reason", "model"},
+        "StreamFailed": {"type", "error"},
+    }
+    assert "LlmStreamEvent" not in classes
+    for name, expected in expected_events.items():
+        assert fields(name) == expected
     assert fields("ToolDefinition") == {"name", "description", "input_schema"}
     assert not (PACKAGE_ROOT / "llm/message_codec.py").exists()
 
@@ -180,7 +237,15 @@ def test_llm_message_is_a_discriminated_union() -> None:
         for node in assistant.body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     }
-    assert assistant_fields == {"content", "stop_reason", "role"}
+    assert assistant_fields == {
+        "content",
+        "stop_reason",
+        "role",
+        "provider",
+        "model",
+        "response_model",
+        "usage",
+    }
 
 
 def test_agent_does_not_depend_on_entry_packages() -> None:

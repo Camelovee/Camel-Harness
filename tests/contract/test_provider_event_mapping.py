@@ -9,10 +9,15 @@ from camel_harness.llm import (
     LlmStopReason,
     LlmStreamEvent,
     LlmStreamEventType,
+    LlmUsage,
+    MessageCompleted,
     ReasoningBlock,
+    StreamStarted,
     TextBlock,
+    TextDelta,
     ToolResultMessage,
     ToolUseBlock,
+    UsageUpdated,
     UserMessage,
 )
 from camel_harness.llm.anthropic import AnthropicLlmAdapter
@@ -25,10 +30,7 @@ class _FakeAdapter(LlmAdapter):
         return "fake"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 def test_vendor_adapters_share_llm_adapter_base() -> None:
@@ -44,7 +46,7 @@ async def test_llm_service_delegates_request_to_adapter() -> None:
 
     events = [event async for event in service.stream(request)]
 
-    assert events[0].type is LlmStreamEventType.MESSAGE_COMPLETED
+    assert events[0].type == LlmStreamEventType.MESSAGE_COMPLETED
     assert service.provider_id == "fake"
 
 
@@ -63,15 +65,15 @@ def test_anthropic_maps_text_and_tool_call() -> None:
     stop = SimpleNamespace(type="content_block_stop", index=0)
 
     assert (
-        AnthropicLlmAdapter._map_event(start, blocks, {})[0][0]
-        is LlmStreamEventType.TOOL_CALL_STARTED
+        AnthropicLlmAdapter._map_event(start, blocks, {})[0].type
+        == LlmStreamEventType.TOOL_CALL_STARTED
     )
-    assert AnthropicLlmAdapter._map_event(delta, blocks, {})[0][0] is (
+    assert AnthropicLlmAdapter._map_event(delta, blocks, {})[0].type == (
         LlmStreamEventType.TOOL_CALL_ARGUMENTS_DELTA
     )
     completed = AnthropicLlmAdapter._map_event(stop, blocks, {})[0]
-    assert completed[0] is LlmStreamEventType.TOOL_CALL_COMPLETED
-    assert completed[1]["arguments"] == {"path": "README.md"}
+    assert completed.type == LlmStreamEventType.TOOL_CALL_COMPLETED
+    assert completed.tool_call.arguments == {"path": "README.md"}
 
 
 def test_anthropic_exposes_input_tokens_as_usage_event() -> None:
@@ -83,8 +85,8 @@ def test_anthropic_exposes_input_tokens_as_usage_event() -> None:
     events = AnthropicLlmAdapter._map_event(start, {}, {})
 
     assert events == [
-        (LlmStreamEventType.STREAM_STARTED, {}),
-        (LlmStreamEventType.USAGE_UPDATED, {"input_tokens": 42}),
+        StreamStarted(),
+        UsageUpdated(LlmUsage(**{"input_tokens": 42})),
     ]
 
 
@@ -103,16 +105,14 @@ def test_openai_maps_text_and_tool_call() -> None:
     )
 
     completion_state = {"has_tool_call": False}
-    assert OpenAiLlmAdapter._map_event(text, calls, completion_state) == [
-        (LlmStreamEventType.TEXT_DELTA, {"text": "你好"})
-    ]
+    assert OpenAiLlmAdapter._map_event(text, calls, completion_state) == [TextDelta(text="你好")]
     assert (
-        OpenAiLlmAdapter._map_event(start, calls, completion_state)[0][0]
-        is LlmStreamEventType.TOOL_CALL_STARTED
+        OpenAiLlmAdapter._map_event(start, calls, completion_state)[0].type
+        == LlmStreamEventType.TOOL_CALL_STARTED
     )
     completed = OpenAiLlmAdapter._map_event(done, calls, completion_state)[0]
-    assert completed[0] is LlmStreamEventType.TOOL_CALL_COMPLETED
-    assert completed[1]["arguments"] == {"path": "README.md"}
+    assert completed.type == LlmStreamEventType.TOOL_CALL_COMPLETED
+    assert completed.tool_call.arguments == {"path": "README.md"}
 
 
 def test_anthropic_normalizes_stop_reason() -> None:
@@ -127,9 +127,7 @@ def test_anthropic_normalizes_stop_reason() -> None:
     AnthropicLlmAdapter._map_event(delta, {}, completion)
     completed = AnthropicLlmAdapter._map_event(stop, {}, completion)
 
-    assert completed == [
-        (LlmStreamEventType.MESSAGE_COMPLETED, {"stop_reason": LlmStopReason.LENGTH.value})
-    ]
+    assert completed == [MessageCompleted(LlmStopReason.LENGTH, model=None)]
 
 
 def test_openai_normalizes_stop_reason() -> None:
@@ -147,9 +145,9 @@ def test_openai_normalizes_stop_reason() -> None:
     tool_use = OpenAiLlmAdapter._map_event(completed, {}, {"has_tool_call": True})
     length = OpenAiLlmAdapter._map_event(incomplete, {}, {"has_tool_call": False})
 
-    assert stopped[-1][1]["stop_reason"] == LlmStopReason.STOP.value
-    assert tool_use[-1][1]["stop_reason"] == LlmStopReason.TOOL_USE.value
-    assert length[-1][1]["stop_reason"] == LlmStopReason.LENGTH.value
+    assert stopped[-1].stop_reason == LlmStopReason.STOP.value
+    assert tool_use[-1].stop_reason == LlmStopReason.TOOL_USE.value
+    assert length[-1].stop_reason == LlmStopReason.LENGTH.value
 
 
 def test_anthropic_groups_consecutive_tool_results() -> None:
@@ -204,6 +202,12 @@ def test_provider_requests_do_not_replay_reasoning_as_conversation_text() -> Non
     assistant = AssistantMessage(
         (ReasoningBlock("仅用于界面展示"), TextBlock("对用户的回答")),
         LlmStopReason.STOP,
+        provider="private-provider",
+        model="private-model",
+        usage=LlmUsage(10, 5),
+    )
+    tool = ToolResultMessage(
+        "call", "read_file", "内容", details={"content_ref": {"path": "/private/artifact"}}
     )
 
     openai_items = OpenAiLlmAdapter._convert_messages((assistant,))
@@ -213,3 +217,109 @@ def test_provider_requests_do_not_replay_reasoning_as_conversation_text() -> Non
     assert anthropic_messages == [
         {"role": "assistant", "content": [{"type": "text", "text": "对用户的回答"}]}
     ]
+    assert OpenAiLlmAdapter._convert_messages((tool,)) == [
+        {"type": "function_call_output", "call_id": "call", "output": "内容"}
+    ]
+    assert AnthropicLlmAdapter._convert_messages((tool,)) == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call", "content": "内容", "is_error": False}
+            ],
+        }
+    ]
+
+
+def test_anthropic_usage_includes_cache_without_double_counting() -> None:
+    event = SimpleNamespace(
+        type="message_start",
+        message=SimpleNamespace(
+            model="actual-model",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=0,
+                cache_read_input_tokens=50,
+                cache_creation_input_tokens=20,
+            ),
+        ),
+    )
+    events = AnthropicLlmAdapter._map_event(event, {}, {})
+    assert events[0] == StreamStarted(model="actual-model")
+    assert events[1].usage == LlmUsage(
+        **{
+            "input_tokens": 80,
+            "output_tokens": 0,
+            "cache_read_tokens": 50,
+            "cache_write_tokens": 20,
+        }
+    )
+
+
+def test_openai_usage_preserves_total_input_and_cache_reasoning_details() -> None:
+    event = SimpleNamespace(
+        type="response.completed",
+        response=SimpleNamespace(
+            model="actual-model",
+            usage=SimpleNamespace(
+                input_tokens=80,
+                output_tokens=15,
+                input_tokens_details=SimpleNamespace(cached_tokens=50, cache_write_tokens=0),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=5),
+            ),
+        ),
+    )
+    events = OpenAiLlmAdapter._map_event(event, {}, {"has_tool_call": False})
+    assert events[0].usage == LlmUsage(
+        **{
+            "input_tokens": 80,
+            "output_tokens": 15,
+            "cache_read_tokens": 50,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 5,
+        }
+    )
+    assert events[-1] == MessageCompleted(LlmStopReason.STOP, model="actual-model")
+
+
+def test_openai_missing_usage_fields_are_not_reported_as_zero() -> None:
+    event = SimpleNamespace(
+        type="response.completed", response=SimpleNamespace(usage=SimpleNamespace(input_tokens=5))
+    )
+    events = OpenAiLlmAdapter._map_event(event, {}, {"has_tool_call": False})
+    assert events[0].usage == LlmUsage(**{"input_tokens": 5})
+
+
+def test_anthropic_final_usage_merges_partial_cumulative_fields() -> None:
+    state: dict[str, int] = {}
+    first = AnthropicLlmAdapter._map_usage(
+        SimpleNamespace(
+            input_tokens=10,
+            cache_read_input_tokens=50,
+            cache_creation_input_tokens=20,
+        ),
+        state,
+    )
+    assert first["input_tokens"] == 80
+    delta = SimpleNamespace(
+        type="message_delta",
+        delta=SimpleNamespace(stop_reason="end_turn"),
+        usage=SimpleNamespace(
+            input_tokens=15,
+            output_tokens=30,
+            cache_read_input_tokens=None,
+            cache_creation_input_tokens=None,
+            output_tokens_details=SimpleNamespace(thinking_tokens=5),
+        ),
+    )
+    for _ in range(2):
+        result = AnthropicLlmAdapter._map_event(delta, {}, {}, state)[0].usage
+        assert result == LlmUsage(
+            **{
+                "input_tokens": 85,
+                "output_tokens": 30,
+                "cache_read_tokens": 50,
+                "cache_write_tokens": 20,
+                "reasoning_tokens": 5,
+            }
+        )
+    assert AnthropicLlmAdapter._map_usage(SimpleNamespace(), None) == {}

@@ -27,6 +27,10 @@ function projectStoredMessage(message: WireMessage, index: number): Message | nu
       id: `assistant-${index}-${message.content.length}`,
       role: "assistant",
       content: message.content,
+      provider: message.provider,
+      model: message.model,
+      response_model: message.response_model,
+      usage: message.usage,
     };
   }
   if (message.role === "toolResult") {
@@ -40,6 +44,7 @@ function projectStoredMessage(message: WireMessage, index: number): Message | nu
           name: message.tool_name,
           content: message.content,
           is_error: message.is_error,
+          details: message.details,
         },
       ],
     };

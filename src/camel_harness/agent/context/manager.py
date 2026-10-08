@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from ..resources import MemoryStore, ProjectRules, Skills
-from ..session.log import SessionLog
+from ..session import ContextSnapshot
 from ..state import AgentOptions
 from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
 
@@ -66,14 +66,14 @@ class ContextManager:
 
     async def compact_if_needed(
         self,
-        session: SessionLog,
+        snapshot: ContextSnapshot,
         options: AgentOptions,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> CompactionResult | None:
-        """根据只读 SessionLog 生成压缩计划，不执行会话持久化。"""
+        """根据只读 ContextSnapshot 生成压缩计划，不执行会话持久化。"""
 
-        return await self._compaction.compact_if_needed(session, options, trigger=trigger)
+        return await self._compaction.compact_if_needed(snapshot, options, trigger=trigger)
 
 
 def _memory_tokens(name: str, description: str) -> set[str]:

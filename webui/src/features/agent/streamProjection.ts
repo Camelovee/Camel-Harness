@@ -53,7 +53,7 @@ export function projectAgentEvent(
   }
   if (event.type === "message_update") {
     if (event.assistant_event.type === "usage_updated") {
-      const data = event.assistant_event.data;
+      const data = event.assistant_event.usage;
       context.setUsage((current) => ({
         ...current,
         input: typeof data.input_tokens === "number" ? data.input_tokens : current.input,
@@ -83,8 +83,9 @@ export function projectAgentEvent(
     if (event.message.role === "assistant") {
       const assistantId = ensureAssistant(event.message_id);
       const content = event.message.content;
+      const { provider, model, response_model, usage } = event.message;
       context.setMessages((current) => current.map((message) =>
-        message.id === assistantId ? { ...message, content } : message,
+        message.id === assistantId ? { ...message, content, provider, model, response_model, usage } : message,
       ));
       context.streamAssistantId.current = null;
       context.setStreamAssistantId(null);
@@ -141,7 +142,7 @@ function projectMessageUpdate(
   if (update.type !== "text_delta" && update.type !== "reasoning_delta") return;
   const assistantId = ensureAssistant(event.message_id);
   const type = update.type === "text_delta" ? "text" : "reasoning";
-  const delta = String(update.data.text ?? "");
+  const delta = update.text;
   context.setMessages((current) =>
     current.map((message) =>
       message.id === assistantId
@@ -222,6 +223,7 @@ function appendToolResultMessage(
             name: message.tool_name,
             content: message.content,
             is_error: message.is_error,
+            details: message.details,
           },
         ],
       },

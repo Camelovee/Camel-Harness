@@ -34,9 +34,12 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
-    LlmStreamEventType,
+    MessageCompleted,
     TextBlock,
+    TextDelta,
+    ToolCallCompleted,
     ToolResultMessage,
+    ToolUseBlock,
     create_anthropic_adapter,
     create_openai_adapter,
 )
@@ -74,24 +77,17 @@ class ScriptedAdapter(LlmAdapter):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.task.get("mode") == "resume" and self.calls == 1:
-            yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "未完成"})
+            yield TextDelta("未完成")
             raise RuntimeError("评测注入：模型流中断")
         if self.task["calls"] and self.calls == 1:
             for index, call in enumerate(self.task["calls"]):
-                yield LlmStreamEvent(
-                    LlmStreamEventType.TOOL_CALL_COMPLETED,
-                    {"call_id": f"eval-{index}", **call},
+                yield ToolCallCompleted(
+                    ToolUseBlock(f"eval-{index}", call["name"], call["arguments"])
                 )
-            yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED,
-                {"stop_reason": LlmStopReason.TOOL_USE.value},
-            )
+            yield MessageCompleted(LlmStopReason.TOOL_USE)
             return
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": self.task["answer"]})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield TextDelta(self.task["answer"])
+        yield MessageCompleted(LlmStopReason.STOP)
 
 
 def load_tasks() -> list[dict[str, Any]]:
@@ -174,14 +170,14 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
         sessions = SessionManager(JsonlSessionStorage(Path(root) / "sessions"))
         registry = ToolRegistry()
         await registry.register_provider(BuiltinToolProvider())
+        await sessions.create(task["id"], workspace, task["prompt"][:60])
         agent = Agent(
-            task["id"],
+            sessions.bind(task["id"]),
             workspace,
             AgentOptions(model, max_turns=4, max_duration_seconds=120, thinking=False),
             llm,
             registry,
             ToolExecutor(registry, validate_tool_arguments, PermissionService(EvalApproval())),
-            sessions,
             ContextManager(CompactionEngine(llm)),
         )
         endings: list[Any] = []
@@ -192,7 +188,7 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
             if provider == "fake" and task.get("mode") == "resume":
                 await agent.resume(permission_mode=PermissionMode.DEFAULT)
                 resumed = True
-            messages = await sessions.messages(task["id"])
+            messages = await sessions.bind(task["id"]).messages()
             failures = _grade(task, workspace, messages, resumed)
             if not endings or endings[-1].status != "completed":
                 failures.append("run_not_completed")

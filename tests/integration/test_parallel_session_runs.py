@@ -20,7 +20,8 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
-    LlmStreamEventType,
+    MessageCompleted,
+    TextDelta,
 )
 
 
@@ -38,10 +39,8 @@ class GatedLlm(LlmAdapter):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.started.set()
         await self.finish.wait()
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "独立完成"})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED, {"stop_reason": LlmStopReason.STOP.value}
-        )
+        yield TextDelta(text="独立完成")
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Path) -> None:
@@ -56,13 +55,12 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
         llm = LlmClient(adapter)
         registry = ToolRegistry()
         return Agent(
-            session_id,
+            sessions.bind(session_id),
             workspace,
             AgentOptions("fake"),
             llm,
             registry,
             ToolExecutor(registry, validate_tool_arguments),
-            sessions,
             ContextManager(CompactionEngine(llm)),
         )
 
@@ -95,8 +93,8 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
         assert second[-1]["status"] == "completed"
         assert {event["session_id"] for event in first} == {"a"}
         assert {event["session_id"] for event in second} == {"b"}
-        assert len(await sessions.messages("a")) == 1
-        assert len(await sessions.messages("b")) == 2
+        assert len(await sessions.bind("a").messages()) == 1
+        assert len(await sessions.bind("b").messages()) == 2
     finally:
         await runs.close()
         await asyncio.gather(*tasks, return_exceptions=True)

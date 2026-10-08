@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
-from .message import Message
+from .message import LlmStopReason, LlmUsage, Message, ToolUseBlock
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,15 +43,100 @@ class LlmStreamEventType(StrEnum):
     USAGE_UPDATED = "usage_updated"
     MESSAGE_COMPLETED = "message_completed"
     STREAM_FAILED = "stream_failed"
-    STREAM_CANCELLED = "stream_cancelled"
 
 
 @dataclass(frozen=True, slots=True)
-class LlmStreamEvent:
-    """Provider 产生的规范模型增量，不携带 Agent 运行坐标。"""
+class StreamStarted:
+    """模型流已开始，可包含厂商报告的实际模型。"""
 
-    type: LlmStreamEventType
-    data: dict[str, Any] = field(default_factory=dict)
+    model: str | None = None
+    type: Literal["stream_started"] = field(default="stream_started", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TextDelta:
+    """可见回答的文本增量。"""
+
+    text: str
+    type: Literal["text_delta"] = field(default="text_delta", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningDelta:
+    """仅用于观测的推理文本增量。"""
+
+    text: str
+    type: Literal["reasoning_delta"] = field(default="reasoning_delta", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallStarted:
+    """工具调用开始；厂商索引留在适配器内部。"""
+
+    call_id: str
+    name: str
+    type: Literal["tool_call_started"] = field(default="tool_call_started", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallArgumentsDelta:
+    """工具参数的 JSON 文本片段。"""
+
+    call_id: str
+    delta: str
+    type: Literal["tool_call_arguments_delta"] = field(
+        default="tool_call_arguments_delta", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallCompleted:
+    """完整工具调用只复用 LLM 内容块，不反向依赖 Agent 工具类型。"""
+
+    tool_call: ToolUseBlock
+    type: Literal["tool_call_completed"] = field(default="tool_call_completed", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class UsageUpdated:
+    """单次响应的累计用量快照，未报告字段仍为未知。"""
+
+    usage: LlmUsage
+    type: Literal["usage_updated"] = field(default="usage_updated", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MessageCompleted:
+    """完整响应的结束原因；本事件不提前代表会话消息已保存。"""
+
+    stop_reason: LlmStopReason
+    model: str | None = None
+    type: Literal["message_completed"] = field(default="message_completed", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stop_reason, LlmStopReason):
+            raise ValueError("响应结束原因必须使用 LlmStopReason")
+
+
+@dataclass(frozen=True, slots=True)
+class StreamFailed:
+    """模型流错误；运行终态仍由 Agent 统一表达。"""
+
+    error: str
+    type: Literal["stream_failed"] = field(default="stream_failed", init=False)
+
+
+LlmStreamEvent: TypeAlias = (
+    StreamStarted
+    | TextDelta
+    | ReasoningDelta
+    | ToolCallStarted
+    | ToolCallArgumentsDelta
+    | ToolCallCompleted
+    | UsageUpdated
+    | MessageCompleted
+    | StreamFailed
+)
 
 
 class LlmAdapter(ABC):

@@ -25,7 +25,11 @@ from camel_harness.llm import (
     LlmStopReason,
     LlmStreamEvent,
     LlmStreamEventType,
+    MessageCompleted,
+    TextDelta,
+    ToolCallCompleted,
     ToolResultMessage,
+    ToolUseBlock,
 )
 
 
@@ -44,32 +48,14 @@ class FakeLlm(LlmAdapter):
         self.calls += 1
         self.requests.append(request)
         if self.calls == 1:
-            yield LlmStreamEvent(
-                LlmStreamEventType.TOOL_CALL_COMPLETED,
-                {
-                    "call_id": "call-1",
-                    "name": "read_file",
-                    "arguments": {"path": "sample.txt", "max_lines": 1},
-                },
+            yield ToolCallCompleted(
+                ToolUseBlock("call-1", "read_file", {"path": "sample.txt", "max_lines": 1})
             )
-            yield LlmStreamEvent(
-                LlmStreamEventType.TOOL_CALL_COMPLETED,
-                {
-                    "call_id": "call-2",
-                    "name": "read_file",
-                    "arguments": {"path": "sample.txt"},
-                },
-            )
-            yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED,
-                {"stop_reason": LlmStopReason.TOOL_USE.value},
-            )
+            yield ToolCallCompleted(ToolUseBlock("call-2", "read_file", {"path": "sample.txt"}))
+            yield MessageCompleted(LlmStopReason.TOOL_USE, model=None)
         else:
-            yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "已读取文件"})
-            yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED,
-                {"stop_reason": LlmStopReason.STOP.value},
-            )
+            yield TextDelta(text="已读取文件")
+            yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 class ApprovalFakeLlm(LlmAdapter):
@@ -85,25 +71,14 @@ class ApprovalFakeLlm(LlmAdapter):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.calls == 1:
-            yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "我准备写入文件。"})
-            yield LlmStreamEvent(
-                LlmStreamEventType.TOOL_CALL_COMPLETED,
-                {
-                    "call_id": "write-call",
-                    "name": "write_file",
-                    "arguments": {"path": "sample.txt", "content": "内容"},
-                },
+            yield TextDelta(text="我准备写入文件。")
+            yield ToolCallCompleted(
+                ToolUseBlock("write-call", "write_file", {"path": "sample.txt", "content": "内容"})
             )
-            yield LlmStreamEvent(
-                LlmStreamEventType.MESSAGE_COMPLETED,
-                {"stop_reason": LlmStopReason.TOOL_USE.value},
-            )
+            yield MessageCompleted(LlmStopReason.TOOL_USE, model=None)
             return
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "文件已写入。"})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield TextDelta(text="文件已写入。")
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 class TruncatedToolLlm(LlmAdapter):
@@ -114,18 +89,14 @@ class TruncatedToolLlm(LlmAdapter):
         return "fake"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield LlmStreamEvent(
-            LlmStreamEventType.TOOL_CALL_COMPLETED,
-            {
-                "call_id": "truncated-write",
-                "name": "write_file",
-                "arguments": {"path": "should-not-exist.txt", "content": "不应写入"},
-            },
+        yield ToolCallCompleted(
+            ToolUseBlock(
+                "truncated-write",
+                "write_file",
+                {"path": "should-not-exist.txt", "content": "不应写入"},
+            )
         )
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.LENGTH.value},
-        )
+        yield MessageCompleted(LlmStopReason.LENGTH, model=None)
 
 
 async def test_agent_completes_a_tool_loop(tmp_path) -> None:
@@ -136,14 +107,14 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
     context = ContextManager(CompactionEngine(llm))
+    await sessions.create("session-1", tmp_path, "读取文件")
     agent = Agent(
-        "session-1",
+        sessions.bind("session-1"),
         tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
         ToolExecutor(registry, validate_tool_arguments),
-        sessions,
         context,
     )
 
@@ -162,12 +133,12 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     assert [event.type for event in events].count("turn_end") == 2
     assert any(event.type == "tool_execution_end" for event in events)
     assert "已读取文件" == "".join(
-        str(event.assistant_event.data["text"])
+        str(event.assistant_event.text)
         for event in events
         if event.type == "message_update"
-        and event.assistant_event.type is LlmStreamEventType.TEXT_DELTA
+        and event.assistant_event.type == LlmStreamEventType.TEXT_DELTA
     )
-    assert [message.role for message in await sessions.messages("session-1")] == [
+    assert [message.role for message in await sessions.bind("session-1").messages()] == [
         "user",
         "assistant",
         "toolResult",
@@ -237,14 +208,14 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     approval = WebApproval(timeout_seconds=2)
     permission = PermissionService(approval)
     context = ContextManager(CompactionEngine(llm))
+    await sessions.create("session-approval", tmp_path, "写入文件")
     agent = Agent(
-        "session-approval",
+        sessions.bind("session-approval"),
         tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
         ToolExecutor(registry, validate_tool_arguments, permission),
-        sessions,
         context,
     )
 
@@ -292,14 +263,14 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
     sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
+    await sessions.create("session-length", tmp_path, "截断工具调用")
     agent = Agent(
-        "session-length",
+        sessions.bind("session-length"),
         tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
         ToolExecutor(registry, validate_tool_arguments),
-        sessions,
         ContextManager(CompactionEngine(llm)),
     )
 
@@ -307,7 +278,7 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
     unsubscribe = agent.subscribe(events.append)
     await agent.run("写文件")
     unsubscribe()
-    messages = await sessions.messages("session-length")
+    messages = await sessions.bind("session-length").messages()
 
     assert not (tmp_path / "should-not-exist.txt").exists()
     assert events[-1].type == "agent_end"

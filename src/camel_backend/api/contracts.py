@@ -75,7 +75,7 @@ class SessionResponse(BaseModel):
     archived: bool = False
     parent_session_id: str | None = None
     parent_tool_call_id: str | None = None
-    schema_version: int = 2
+    schema_version: int = 1
 
     @classmethod
     def from_metadata(cls, metadata: SessionMetadata) -> SessionResponse:

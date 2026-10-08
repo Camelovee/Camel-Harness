@@ -43,7 +43,7 @@ def _render_event(event: AgentEvent) -> None:
     """把一条 AgentEvent 投影为终端增量。"""
 
     if event.type == "message_update" and event.assistant_event.type == "text_delta":
-        typer.echo(str(event.assistant_event.data.get("text", "")), nl=False)
+        typer.echo(event.assistant_event.text, nl=False)
     elif event.type == "tool_execution_start":
         typer.echo(f"\n[调用工具] {event.name}")
     elif event.type == "tool_execution_end":

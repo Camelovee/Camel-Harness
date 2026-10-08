@@ -31,8 +31,12 @@ async def test_large_result_is_offloaded_to_session(tmp_path, depth) -> None:
         ToolResult("call-1", "read_file", "123456789"),
         ToolContext(session_id, workspace),
     )
-    assert result.metadata["original_chars"] == 9
-    reference = str(result.metadata["content_ref"])
+    reference_data = result.metadata["content_ref"]
+    assert reference_data["original_chars"] == 9
+    assert reference_data["size_bytes"] == 9
+    assert reference_data["preview_chars"] == 5
+    assert reference_data["mime_type"] == "text/plain; charset=utf-8"
+    reference = reference_data["path"]
     assert "完整内容" in result.content
     path = Path(reference)
     assert path.is_absolute()
@@ -56,8 +60,8 @@ async def test_large_results_do_not_overwrite_repeated_call_ids(tmp_path) -> Non
         ToolResult("../call", "read_file", "abcdef", True, {"source": "测试"}), context
     )
     assert first.metadata["content_ref"] != second.metadata["content_ref"]
-    assert Path(str(first.metadata["content_ref"])).read_text() == "123456"
-    assert Path(str(second.metadata["content_ref"])).read_text() == "abcdef"
+    assert Path(first.metadata["content_ref"]["path"]).read_text() == "123456"
+    assert Path(second.metadata["content_ref"]["path"]).read_text() == "abcdef"
     assert second.is_error
     assert second.metadata["source"] == "测试"
 

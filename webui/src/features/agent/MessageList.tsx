@@ -143,6 +143,15 @@ function ConversationMessage({
           (streaming && !reasoning ? <span className="waiting-dots">· · ·</span> : "")
         )}
       </div>
+      {message.role === "assistant" && !streaming && (message.model || message.usage) && (
+        <div className="message-meta">
+          {[message.provider, message.response_model ?? message.model].filter(Boolean).join(" / ")}
+          {message.usage && (
+            <> · 输入 {message.usage.input_tokens?.toLocaleString() ?? "未知"}
+              {" · 输出 "}{message.usage.output_tokens?.toLocaleString() ?? "未知"} Token</>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -214,6 +223,12 @@ function ToolMessage({ message }: { message: Message }) {
         <span className="tool-state">{block?.is_error ? "失败" : "已完成"}</span>
       </summary>
       <div className="tool-detail">{block?.content ?? "无结果"}</div>
+      {block?.details?.content_ref && (
+        <div className="tool-detail">
+          完整结果：{block.details.content_ref.path}
+          {" · "}{block.details.content_ref.size_bytes.toLocaleString()} 字节
+        </div>
+      )}
     </details>
   );
 }

@@ -65,7 +65,7 @@ async def test_tool_results_remain_distinct_messages(tmp_path) -> None:
     ]
 
 
-async def test_context_log_restores_compacted_surface_after_restart(tmp_path) -> None:
+async def test_context_snapshot_restores_compacted_surface_after_restart(tmp_path) -> None:
     root = tmp_path / "sessions"
     first = SessionManager(JsonlSessionStorage(root))
     await first.create("session-1", tmp_path, "压缩恢复")
@@ -76,14 +76,15 @@ async def test_context_log_restores_compacted_surface_after_restart(tmp_path) ->
         for index in range(8)
     )
     for message in originals:
-        await first.append_message("session-1", message)
+        await first.bind("session-1").append_message(message)
     summary = UserMessage("[Compacted History]\n\n历史摘要")
-    await first.replace_context("session-1", 0, 5, summary)
+    snapshot = await first.bind("session-1").context_snapshot()
+    await first.bind("session-1").compact("历史摘要", snapshot.nodes[6].entry_id, snapshot=snapshot)
 
     restarted = SessionManager(JsonlSessionStorage(root))
 
-    assert await restarted.messages("session-1") == originals
-    assert await restarted.context_messages("session-1") == (
+    assert await restarted.bind("session-1").messages() == originals
+    assert await restarted.bind("session-1").context_messages() == (
         summary,
         originals[6],
         originals[7],
@@ -94,20 +95,22 @@ async def test_context_log_restores_compacted_surface_after_restart(tmp_path) ->
     ]
     assert len(rows) == 10
     assert [row["type"] for row in rows] == ["session", *(["message"] * 8), "compaction"]
-    assert rows[-1]["summary"]["content"].startswith("[Compacted History]")
+    assert rows[-1]["summary"] == "历史摘要"
+    assert rows[-1]["firstKeptEntryId"] == rows[7]["id"]
 
 
 async def test_metadata_update_does_not_shift_compaction_coordinates(tmp_path) -> None:
     sessions = SessionManager(JsonlSessionStorage(tmp_path))
     await sessions.create("session-1", tmp_path, "初始名称")
-    await sessions.append_message("session-1", UserMessage("旧消息"))
+    await sessions.bind("session-1").append_message(UserMessage("旧消息"))
     await sessions.update("session-1", name="新名称", archived=True)
-    await sessions.append_message("session-1", UserMessage("新消息"))
-    await sessions.replace_context("session-1", 0, 0, UserMessage("摘要"))
+    await sessions.bind("session-1").append_message(UserMessage("新消息"))
+    snapshot = await sessions.bind("session-1").context_snapshot()
+    await sessions.bind("session-1").compact("摘要", snapshot.nodes[1].entry_id, snapshot=snapshot)
 
     restarted = SessionManager(JsonlSessionStorage(tmp_path))
-    assert await restarted.context_messages("session-1") == (
-        UserMessage("摘要"),
+    assert await restarted.bind("session-1").context_messages() == (
+        UserMessage("[Compacted History]\n\n摘要"),
         UserMessage("新消息"),
     )
     metadata = await restarted.get("session-1")
@@ -115,6 +118,108 @@ async def test_metadata_update_does_not_shift_compaction_coordinates(tmp_path) -
     assert metadata.name == "新名称"
     assert metadata.archived is True
     assert metadata.message_count == 2
+
+
+async def test_compaction_rejects_stale_snapshot_after_another_writer(tmp_path) -> None:
+    """校验生成摘要时的版本，而不是提交时重新加载得到的版本。"""
+    first = SessionManager(JsonlSessionStorage(tmp_path))
+    await first.create("session", tmp_path, "并发测试")
+    session = first.bind("session")
+    await session.append_message(UserMessage("旧消息"))
+    snapshot = await session.context_snapshot()
+    second = SessionManager(JsonlSessionStorage(tmp_path)).bind("session")
+    await second.append_message(UserMessage("并发新增"))
+    path = first.directory("session") / "session.jsonl"
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="并发修改"):
+        await session.compact("过期摘要", snapshot.nodes[0].entry_id, snapshot=snapshot)
+    assert path.read_bytes() == before
+    assert snapshot.messages == (UserMessage("旧消息"),)
+    assert await second.context_messages() == (UserMessage("旧消息"), UserMessage("并发新增"))
+
+
+async def test_compaction_returns_durable_snapshot_and_rejects_reuse(tmp_path) -> None:
+    manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await manager.create("session", tmp_path, "压缩测试")
+    session = manager.bind("session")
+    await session.append_message(UserMessage("旧消息"))
+    await session.append_message(UserMessage("近期消息"))
+    snapshot = await session.context_snapshot()
+    # 元数据更新不改变上下文，因此不应使压缩计划失效。
+    await manager.update("session", name="新名称")
+    updated = await session.compact("摘要", snapshot.nodes[1].entry_id, snapshot=snapshot)
+    assert updated.messages == (UserMessage("[Compacted History]\n\n摘要"), UserMessage("近期消息"))
+    assert updated.revision != snapshot.revision
+    assert updated.leaf_id == updated.revision
+    assert (
+        updated
+        == await SessionManager(JsonlSessionStorage(tmp_path)).bind("session").context_snapshot()
+    )
+    assert snapshot.messages == (UserMessage("旧消息"), UserMessage("近期消息"))
+    with pytest.raises(ValueError, match="并发修改"):
+        await session.compact("重复摘要", snapshot.nodes[1].entry_id, snapshot=snapshot)
+
+
+async def test_competing_compactions_commit_only_once(tmp_path) -> None:
+    manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await manager.create("session", tmp_path, "并发压缩")
+    first = manager.bind("session")
+    second = SessionManager(JsonlSessionStorage(tmp_path)).bind("session")
+    await first.append_message(UserMessage("旧消息"))
+    kept_id = await first.append_message(UserMessage("保留消息"))
+    snapshot = await first.context_snapshot()
+    outcomes = await asyncio.gather(
+        first.compact("摘要 A", kept_id, snapshot=snapshot),
+        second.compact("摘要 B", kept_id, snapshot=snapshot),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(item, ValueError) for item in outcomes) == 1
+    assert (await first.context_snapshot()).revision != snapshot.revision
+    rows = (manager.directory("session") / "session.jsonl").read_text("utf-8").splitlines()
+    assert [json.loads(row)["type"] for row in rows] == [
+        "session",
+        "message",
+        "message",
+        "compaction",
+    ]
+
+
+async def test_invalid_compaction_never_appends(tmp_path) -> None:
+    manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await manager.create("session", tmp_path, "区间校验")
+    session = manager.bind("session")
+    await session.append_message(UserMessage("消息"))
+    path = manager.directory("session") / "session.jsonl"
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="可见上下文"):
+        await session.compact("摘要", "missing-entry", snapshot=await session.context_snapshot())
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "bad_record",
+    [
+        {"type": "message", "timestamp": "now"},
+        {
+            "type": "session_info",
+            "timestamp": "now",
+            "name": 3,
+            "cwd": "/workspace",
+            "archived": False,
+        },
+        {"type": "unknown", "timestamp": "now"},
+    ],
+)
+async def test_malformed_typed_event_does_not_break_other_sessions(tmp_path, bad_record) -> None:
+    manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await manager.create("bad", tmp_path, "损坏会话")
+    await manager.create("good", tmp_path, "正常会话")
+    path = manager.directory("bad") / "session.jsonl"
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(bad_record) + "\n")
+    assert [item.session_id for item in await manager.list()] == ["good"]
+    with pytest.raises(ValueError, match="会话日志损坏"):
+        await manager.bind("bad").messages()
 
 
 async def test_incomplete_tail_is_rejected_without_appending(tmp_path) -> None:
@@ -126,7 +231,7 @@ async def test_incomplete_tail_is_rejected_without_appending(tmp_path) -> None:
     original = path.read_bytes()
 
     with pytest.raises(ValueError, match="尾部不完整"):
-        await sessions.append_message("session-1", UserMessage("不能写入"))
+        await sessions.bind("session-1").append_message(UserMessage("不能写入"))
     assert path.read_bytes() == original
 
 
@@ -166,3 +271,24 @@ async def test_concurrent_metadata_updates_preserve_independent_fields(tmp_path)
     assert metadata is not None
     assert metadata.name == "新名称"
     assert metadata.archived is True
+
+
+async def test_bound_session_isolated_and_missing_binding_does_not_create(tmp_path) -> None:
+    manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    with pytest.raises(KeyError, match="会话不存在"):
+        manager.bind("missing")
+    assert not (tmp_path / "sessions").exists()
+    await manager.create("first", tmp_path, "第一个会话")
+    await manager.create("second", tmp_path, "第二个会话")
+    first = manager.bind("first")
+    second = manager.bind("second")
+    assert first.session_id == "first"
+    assert second.session_id == "second"
+    await first.append_message(UserMessage("只属于第一个会话"))
+    assert await second.messages() == ()
+    assert await first.messages() == (UserMessage("只属于第一个会话"),)
+    await manager.delete("first")
+    with pytest.raises(KeyError, match="会话不存在"):
+        await first.append_message(UserMessage("不自动重建"))
+    assert await manager.get("first") is None
+    assert await second.messages() == ()

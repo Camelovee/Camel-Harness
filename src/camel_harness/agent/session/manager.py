@@ -1,63 +1,103 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from camel_harness.llm import Message
+from camel_harness.llm import LlmUsage, Message
 
-from ..events import AgentEvent, MessageEndEvent
+from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
 from .jsonl import JsonlSessionStorage
-from .log import SessionLog, SessionLogEvent
 from .metadata import SessionMetadata
 
 
+class Session:
+    """绑定单个已存在会话，只提供运行所需的历史与保存能力。"""
+
+    def __init__(self, session_id: str, storage: JsonlSessionStorage) -> None:
+        storage.directory(session_id)
+        self._session_id = session_id
+        self._repository = storage
+        self._leaf_id: str | None = None
+        self._use_latest = True
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    async def append_message(self, message: Message) -> str:
+        """追加完整规范消息，不接受运行事件或流式增量。"""
+        entry_id = await self._repository.append_message(
+            self._session_id, message, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+        if not self._use_latest:
+            self._leaf_id = entry_id
+        return entry_id
+
+    async def messages(self) -> tuple[Message, ...]:
+        """读取当前分支的原始完整消息；全树审计使用 entries。"""
+        return await self._repository.messages(
+            self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+
+    async def context_snapshot(self) -> ContextSnapshot:
+        """读取已重放的只读快照，不向 Agent 暴露可变日志。"""
+        return await self._repository.context_snapshot(
+            self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+
+    async def entries(self) -> tuple[SessionEntry, ...]:
+        """读取整棵历史树供审计；运行与恢复使用当前分支，不混入兄弟分支。"""
+        return await self._repository.entries(self._session_id)
+
+    async def branch(self, entry_id: str | None) -> ContextSnapshot:
+        """选择历史节点或空根；后续追加形成新分支，不改写既有条目。"""
+        snapshot = await self._repository.context_snapshot(
+            self._session_id, leaf_id=entry_id, use_latest=False
+        )
+        self._leaf_id = entry_id
+        self._use_latest = False
+        return snapshot
+
+    async def context_messages(self) -> tuple[Message, ...]:
+        """读取已应用历史压缩操作的模型上下文。"""
+
+        return (await self.context_snapshot()).messages
+
+    async def compact(
+        self,
+        summary: str,
+        first_kept_entry_id: str,
+        *,
+        snapshot: ContextSnapshot,
+        tokens_before: int = 0,
+        usage: LlmUsage | None = None,
+    ) -> ContextSnapshot:
+        """校验计划快照并追加压缩条目，保留历史树，返回落盘后的新快照。"""
+
+        event = SessionCompactionEvent(
+            datetime.now(UTC).isoformat(), summary, first_kept_entry_id, tokens_before, usage
+        )
+        updated = await self._repository.compact(
+            self._session_id, event, snapshot, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+        if not self._use_latest:
+            self._leaf_id = updated.leaf_id
+        return updated
+
+
 class SessionManager:
-    """管理会话元数据、消息和压缩上下文。"""
+    """入口层管理会话创建、元数据、父子关系与级联删除。"""
 
     def __init__(self, storage: JsonlSessionStorage) -> None:
         self._repository = storage
 
+    def bind(self, session_id: str) -> Session:
+        """绑定已存在的会话；创建和工作区选择由入口层完成。"""
+        return Session(session_id, self._repository)
+
     def directory(self, session_id: str) -> Path:
         """返回关联文件所属的会话目录，包含子会话的真实位置。"""
         return self._repository.directory(session_id)
-
-    async def record_agent_event(self, event: AgentEvent) -> None:
-        """只把完整消息终态写入会话；增量和运行事件不属于持久化消息。"""
-
-        if isinstance(event, MessageEndEvent):
-            await self.append_message(event.session_id, event.message)
-
-    async def append_message(self, session_id: str, message: Message) -> None:
-        """追加一条完整规范消息；流式增量不得调用此方法。"""
-
-        await self._repository.append_message(session_id, message)
-
-    async def messages(self, session_id: str) -> tuple[Message, ...]:
-        """读取完整规范消息，供 UI 展示、审计和重新压缩使用。"""
-        return await self._repository.messages(session_id)
-
-    async def context_log(self, session_id: str) -> SessionLog:
-        """从追加式持久化事件重建 Agent 的上下文日志。"""
-
-        return SessionLog(session_id, await self._repository.context_events(session_id))
-
-    async def context_messages(self, session_id: str) -> tuple[Message, ...]:
-        """读取已应用历史压缩操作的模型上下文。"""
-
-        return (await self.context_log(session_id)).derive_messages()
-
-    async def replace_context(
-        self,
-        session_id: str,
-        start_seq: int,
-        end_seq: int,
-        summary: Message,
-    ) -> SessionLogEvent:
-        """用摘要遮蔽一段旧上下文，同时保留完整原始对话。"""
-
-        log = await self.context_log(session_id)
-        event = log.replace_context(start_seq, end_seq, summary)
-        await self._repository.append_context_event(session_id, event)
-        return event
 
     async def create(
         self,

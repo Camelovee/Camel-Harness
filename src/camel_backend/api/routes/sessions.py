@@ -66,7 +66,7 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
         manager = dependencies.require_sessions()
         if await manager.get(session_id) is None:
             raise KeyError("会话不存在")
-        messages = await manager.messages(session_id)
+        messages = await manager.bind(session_id).messages()
         return SessionMessagesResponse(
             messages=[message_to_dict(message) for message in messages],
             session_id=session_id,

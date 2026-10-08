@@ -31,8 +31,13 @@ class FileToolResultStorage:
         preview = result.content[: self._max_inline_chars]
         metadata = {
             **result.metadata,
-            "content_ref": reference,
-            "original_chars": len(result.content),
+            "content_ref": {
+                "path": reference,
+                "mime_type": "text/plain; charset=utf-8",
+                "size_bytes": len(result.content.encode("utf-8")),
+                "original_chars": len(result.content),
+                "preview_chars": len(preview),
+            },
         }
         return ToolResult(
             result.call_id,

@@ -6,6 +6,8 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
+    StreamFailed,
+    TextDelta,
     UserMessage,
 )
 
@@ -22,7 +24,7 @@ class FlakyAdapter(LlmAdapter):
         self.calls += 1
         if self.calls == 1:
             raise ConnectionError("临时断开")
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "ok"})
+        yield TextDelta(text="ok")
 
 
 class FailedEventAdapter(LlmAdapter):
@@ -38,12 +40,9 @@ class FailedEventAdapter(LlmAdapter):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.calls == 1:
-            yield LlmStreamEvent(
-                LlmStreamEventType.STREAM_FAILED,
-                {"error": "临时断开"},
-            )
+            yield StreamFailed(error="临时断开")
             raise ConnectionError("临时断开")
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "ok"})
+        yield TextDelta(text="ok")
 
 
 async def test_retry_only_before_first_event() -> None:
@@ -52,7 +51,7 @@ async def test_retry_only_before_first_event() -> None:
     request = LlmRequest("fake-model", (UserMessage("hi"),))
     events = [event async for event in service.stream(request)]
     assert inner.calls == 2
-    assert events[0].data["text"] == "ok"
+    assert events[0].text == "ok"
 
 
 async def test_failure_event_before_content_is_hidden_when_retry_succeeds() -> None:

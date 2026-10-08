@@ -45,7 +45,7 @@ function event(id: string, sequence: number, body: object): AgentEvent {
 function output(id: string, sequence: number, text: string) {
   streams.get(id)!.emit(event(id, sequence, {
     type: "message_update", message_id: "assistant",
-    assistant_event: { type: "text_delta", data: { text } },
+    assistant_event: { type: "text_delta", text },
   }));
 }
 
@@ -116,8 +116,8 @@ describe("按会话隔离并行运行", () => {
     act(() => {
       output("a", 2, "A 的回答");
       output("b", 2, "B 的回答");
-      streams.get("a")!.emit(event("a", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", data: { input_tokens: 11 } } }));
-      streams.get("b")!.emit(event("b", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", data: { input_tokens: 22 } } }));
+      streams.get("a")!.emit(event("a", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", usage: { input_tokens: 11, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null, reasoning_tokens: null } } }));
+      streams.get("b")!.emit(event("b", 3, { type: "message_update", message_id: "assistant", assistant_event: { type: "usage_updated", usage: { input_tokens: 22, output_tokens: null, cache_read_tokens: null, cache_write_tokens: null, reasoning_tokens: null } } }));
     });
     expect(result.current.messages[0].content[0].text).toBe("B 的回答");
     expect(result.current.usage.input).toBe(22);

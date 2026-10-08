@@ -6,6 +6,7 @@ from .message import (
     AssistantContent,
     AssistantMessage,
     LlmStopReason,
+    LlmUsage,
     Message,
     ReasoningBlock,
     TextBlock,
@@ -14,9 +15,33 @@ from .message import (
     UserMessage,
 )
 from .openai import OpenAiLlmAdapter, create_openai_adapter
-from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent, LlmStreamEventType, ToolDefinition
+from .protocol import (
+    LlmAdapter,
+    LlmRequest,
+    LlmStreamEvent,
+    LlmStreamEventType,
+    MessageCompleted,
+    ReasoningDelta,
+    StreamFailed,
+    StreamStarted,
+    TextDelta,
+    ToolCallArgumentsDelta,
+    ToolCallCompleted,
+    ToolCallStarted,
+    ToolDefinition,
+    UsageUpdated,
+)
 
 __all__ = [
+    "StreamStarted",
+    "TextDelta",
+    "ReasoningDelta",
+    "ToolCallStarted",
+    "ToolCallArgumentsDelta",
+    "ToolCallCompleted",
+    "UsageUpdated",
+    "MessageCompleted",
+    "StreamFailed",
     "AssistantContent",
     "AssistantMessage",
     "AnthropicLlmAdapter",
@@ -26,6 +51,7 @@ __all__ = [
     "LlmStreamEvent",
     "LlmStreamEventType",
     "LlmStopReason",
+    "LlmUsage",
     "Message",
     "OpenAiLlmAdapter",
     "ReasoningBlock",

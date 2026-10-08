@@ -36,6 +36,7 @@ src/
 - Agent 自己持有单一 Run 任务，WebUI、CLI 和子 Agent 通过轻量 `subscribe()` 观察事件；
 - 文本、thinking、usage 和工具调用增量通过 `message_update.assistant_event` 实时转发；
 - LLM 协议不携带 Session、Run、Turn 等 Agent 运行坐标，由 `Agent` 在公开事件中统一补齐；
+- LLM 流事件使用九种具体 dataclass 的判别联合，文本、工具调用、用量和结束原因通过明确属性传递，不使用通用 `data` 字典；
 - 事件 `sequence` 在整个 Run 内单调递增，可用于 SSE 排序和去重；
 - 流正常结束后批量追加完整 assistant 消息，不保存 chunk；
 - `Tool` ABC 直接字段式定义，支持显式注册和 MCP；
@@ -45,7 +46,8 @@ src/
 - 浏览器异步审批与 CLI 审批；
 - 每个会话目录内一份 `session.jsonl`；子会话位于父目录的 `subagents/` 下；
 - 追加式上下文投影和历史压缩；
-- Session 独立管理会话；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
+- SessionEvent 使用 id/parentId 构成历史树，ContextSnapshot 提供当前叶分支的只读上下文；压缩按条目 ID 定位，校验计划快照后保存并返回新快照；
+- Agent 只依赖绑定单个会话的 Session；SessionManager 在入口层管理 CRUD 和父子关系，Session 不感知 AgentEvent；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
 - 一个 Agent 只绑定一个 Session 和 Workspace，运行期间支持 steering、主动停止和基于完整 JSONL 消息的恢复；
 - WebUI 提供运行中追加、停止与继续，CLI 提供运行中输入、`/cancel` 和 `/resume`；
 - SSE 仅在 Backend 传输层使用 `yield`，断开连接时显式中止对应 Run；
@@ -158,9 +160,13 @@ class ExampleTool(Tool):
 
 - 首行 `session` 保存会话 ID、工作目录及初始元数据；其后按顺序追加 `message`、`compaction` 和 `session_info`。
 - `message` 只保存完整的 user、assistant 和 toolResult；压缩不删除原始消息，模型上下文由日志重放得到。
+- 树格式日志版本为 1：会话头以外的条目都有 `id`、`parentId`、`timestamp`；压缩记录保存字符串 `summary`、`firstKeptEntryId`、`tokensBefore` 及可用 usage，不再保存序号区间。父节点为 null 时开始一个根分支。版本号重新从 1 开始，不表示兼容历史 version=1 的旧格式。
+- `Session.entries()` 查看整棵树，`Session.branch(entry_id)` 选择历史节点后追加形成分叉，`branch(None)` 从空根开始；`messages()` 读取当前分支的未压缩历史，`context_snapshot()` 读取已应用压缩的上下文。分支选择只能在 Agent 空闲时进行；目前不提供 WebUI/HTTP 分支导航。
+- 分支叶游标保留在绑定 Session 内存中；仅切换不写文件，重启恢复最后追加的条目。旧分支保留且可再次选择，元数据和总消息数仍按整份日志投影。
 - 孙会话继续放在其父会话目录的 `subagents/` 下；删除父会话时级联删除后代会话日志。
 - 超大工具结果存放在对应会话目录的 `tool-results/` 下，消息保留预览和完整文件的绝对路径；删除会话时一并清理结果文件。工作区文件工具不因这些引用而获得目录外的访问权限。
-- 旧的平铺 JSONL 不会在运行时自动读取；迁移时应保留原文件作备份。
+- 完整回答保存 `provider`、`model`、不同于请求模型的 `response_model` 和 `usage`；usage 输入包含缓存、输出包含推理，明细不重复累计，未知值不伪造为零。工具结果的 `details.content_ref` 保存完整文件路径、媒体类型、字节数和截断信息，WebUI 实时与历史消息均保留并展示这些信息。
+- 旧平铺 JSONL 和 version=2 的区间日志不会在运行时自动读取；本次未修改或删除旧会话文件，旧格式需要另行一次性转换并保留原文件。`migrate_flat_sessions.py` 只调整目录，不转换日志格式。
 
 ## 质量检查
 

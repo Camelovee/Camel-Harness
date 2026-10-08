@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent, LlmStreamEventType
+from .protocol import LlmAdapter, LlmRequest, LlmStreamEvent
 
 
 class LlmClient:
@@ -29,7 +29,7 @@ class LlmClient:
             pending_failure: LlmStreamEvent | None = None
             try:
                 async for event in self._adapter.stream(request):
-                    if not emitted and event.type is LlmStreamEventType.STREAM_FAILED:
+                    if not emitted and event.type == "stream_failed":
                         pending_failure = event
                         continue
                     emitted = True

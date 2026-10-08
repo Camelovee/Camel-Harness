@@ -14,7 +14,8 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
-    LlmStreamEventType,
+    MessageCompleted,
+    TextDelta,
     UserMessage,
 )
 
@@ -39,11 +40,8 @@ class SteerableLlm(LlmAdapter):
             text = "第一轮"
         else:
             text = "已调整"
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": text})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield TextDelta(text=text)
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 class BlockingLlm(LlmAdapter):
@@ -57,7 +55,7 @@ class BlockingLlm(LlmAdapter):
         return "fake"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "未完成"})
+        yield TextDelta(text="未完成")
         self.blocked.set()
         await asyncio.Event().wait()
 
@@ -74,27 +72,24 @@ class CompletingLlm(LlmAdapter):
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.requests.append(request)
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "继续完成"})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield TextDelta(text="继续完成")
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
-def build_test_agent(
+async def build_test_agent(
     tmp_path, session_id: str, adapter: LlmAdapter
 ) -> tuple[Agent, SessionManager]:
     sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
     llm = LlmClient(adapter)
     registry = ToolRegistry()
+    await sessions.create(session_id, tmp_path, "运行控制测试")
     agent = Agent(
-        session_id,
+        sessions.bind(session_id),
         tmp_path,
         AgentOptions("fake-model"),
         llm,
         registry,
         ToolExecutor(registry, validate_tool_arguments),
-        sessions,
         ContextManager(CompactionEngine(llm)),
     )
     return agent, sessions
@@ -102,7 +97,7 @@ def build_test_agent(
 
 async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
     runtime = SteerableLlm()
-    agent, sessions = build_test_agent(tmp_path, "session-steer", runtime)
+    agent, sessions = await build_test_agent(tmp_path, "session-steer", runtime)
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
@@ -115,7 +110,7 @@ async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
 
     assert queued.run_id == events[0].run_id
     assert [event.type for event in events].count("turn_start") == 2
-    messages = await sessions.messages("session-steer")
+    messages = await sessions.bind("session-steer").messages()
     assert [message.role for message in messages] == ["user", "assistant", "user", "assistant"]
     assert isinstance(messages[2], UserMessage)
     assert messages[2].content == "改为只给结论"
@@ -124,7 +119,7 @@ async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
 
 async def test_abort_emits_cancelled_end_without_persisting_partial_assistant(tmp_path) -> None:
     runtime = BlockingLlm()
-    agent, sessions = build_test_agent(tmp_path, "session-abort", runtime)
+    agent, sessions = await build_test_agent(tmp_path, "session-abort", runtime)
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
@@ -137,7 +132,7 @@ async def test_abort_emits_cancelled_end_without_persisting_partial_assistant(tm
 
     assert events[-1].type == "agent_end"
     assert events[-1].status == "cancelled"
-    assert [message.role for message in await sessions.messages("session-abort")] == ["user"]
+    assert [message.role for message in await sessions.bind("session-abort").messages()] == ["user"]
     assert not agent.is_running
 
 
@@ -145,7 +140,7 @@ async def test_cancelling_waiter_does_not_take_ownership_of_run(tmp_path) -> Non
     """取消等待 run() 的调用方，不得隐式取消 Agent 自己持有的任务。"""
 
     runtime = BlockingLlm()
-    agent, _ = build_test_agent(tmp_path, "session-waiter-cancel", runtime)
+    agent, _ = await build_test_agent(tmp_path, "session-waiter-cancel", runtime)
     events: list = []
     unsubscribe = agent.subscribe(events.append)
     waiter = asyncio.create_task(agent.run("继续运行"))
@@ -165,9 +160,9 @@ async def test_cancelling_waiter_does_not_take_ownership_of_run(tmp_path) -> Non
 
 async def test_resume_continues_from_persisted_user_message(tmp_path) -> None:
     runtime = CompletingLlm()
-    agent, sessions = build_test_agent(tmp_path, "session-resume", runtime)
+    agent, sessions = await build_test_agent(tmp_path, "session-resume", runtime)
     await sessions.ensure("session-resume", tmp_path, "恢复测试")
-    await sessions.append_message("session-resume", UserMessage("继续这个任务"))
+    await sessions.bind("session-resume").append_message(UserMessage("继续这个任务"))
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
@@ -177,7 +172,7 @@ async def test_resume_continues_from_persisted_user_message(tmp_path) -> None:
     assert events[0].type == "agent_start"
     assert events[-1].status == "completed"
     assert runtime.requests[0].messages == (UserMessage("继续这个任务"),)
-    assert [message.role for message in await sessions.messages("session-resume")] == [
+    assert [message.role for message in await sessions.bind("session-resume").messages()] == [
         "user",
         "assistant",
     ]
@@ -185,7 +180,7 @@ async def test_resume_continues_from_persisted_user_message(tmp_path) -> None:
 
 async def test_agent_rejects_a_second_active_run(tmp_path) -> None:
     runtime = BlockingLlm()
-    agent, _ = build_test_agent(tmp_path, "session-busy", runtime)
+    agent, _ = await build_test_agent(tmp_path, "session-busy", runtime)
     first = asyncio.create_task(agent.run("第一个任务"))
     await runtime.blocked.wait()
 

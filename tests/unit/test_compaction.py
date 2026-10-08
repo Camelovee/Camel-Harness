@@ -14,7 +14,7 @@ from camel_harness.agent.resources import (
     ProjectRules,
     Skills,
 )
-from camel_harness.agent.session import SessionLog, SessionLogEvent
+from camel_harness.agent.session import ContextNode, ContextSnapshot
 from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
@@ -22,9 +22,10 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
-    LlmStreamEventType,
+    MessageCompleted,
     ReasoningBlock,
     TextBlock,
+    TextDelta,
     UserMessage,
 )
 
@@ -39,11 +40,8 @@ class SummaryLlm(LlmAdapter):
         return "fake"
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield LlmStreamEvent(LlmStreamEventType.TEXT_DELTA, {"text": "保留目标、决策和待办。"})
-        yield LlmStreamEvent(
-            LlmStreamEventType.MESSAGE_COMPLETED,
-            {"stop_reason": LlmStopReason.STOP.value},
-        )
+        yield TextDelta(text="保留目标、决策和待办。")
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
 
 
 class RecordingSummaryLlm(SummaryLlm):
@@ -70,18 +68,17 @@ def _engine(
     )
 
 
-def _log(count: int = 8) -> SessionLog:
-    events = tuple(
-        SessionLogEvent.append(
-            index,
-            index,
+def _log(count: int = 8) -> ContextSnapshot:
+    nodes = tuple(
+        ContextNode(
+            f"entry-{index}",
             UserMessage(f"消息 {index}")
             if index % 2 == 0
             else AssistantMessage((TextBlock(f"消息 {index}"),), LlmStopReason.STOP),
         )
         for index in range(count)
     )
-    return SessionLog("session-1", events)
+    return ContextSnapshot(f"entry-{count - 1}", f"entry-{count - 1}", nodes)
 
 
 async def test_basic_compaction_summarizes_old_three_quarters() -> None:
@@ -90,10 +87,9 @@ async def test_basic_compaction_summarizes_old_three_quarters() -> None:
     result = await engine.compact_if_needed(_log(), _OPTIONS)
 
     assert result is not None
-    assert result.start_seq == 0
-    assert result.end_seq == 5
-    assert isinstance(result.summary_message, UserMessage)
-    assert "保留目标、决策和待办。" in result.summary_message.content
+    assert result.first_kept_entry_id == "entry-6"
+    assert result.tokens_before > 0
+    assert "保留目标、决策和待办。" in result.summary
 
 
 async def test_basic_compaction_skips_history_below_pressure() -> None:
@@ -122,14 +118,13 @@ async def test_basic_compaction_does_not_reinject_reasoning() -> None:
         (ReasoningBlock("不应重新注入的推理"), TextBlock("可见结论")),
         LlmStopReason.STOP,
     )
-    log = SessionLog(
-        "session-1",
+    log = ContextSnapshot(
+        "entry-2",
+        "entry-2",
         (
-            SessionLogEvent.append(0, 0, reasoning),
-            SessionLogEvent.append(1, 1, UserMessage("继续")),
-            SessionLogEvent.append(
-                2, 2, AssistantMessage((TextBlock("结果"),), LlmStopReason.STOP)
-            ),
+            ContextNode("entry-0", reasoning),
+            ContextNode("entry-1", UserMessage("继续")),
+            ContextNode("entry-2", AssistantMessage((TextBlock("结果"),), LlmStopReason.STOP)),
         ),
     )
 
@@ -189,3 +184,26 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
     assert "保持线性会话" in result
     assert "load_skill" in result
     assert "memory_load" not in result
+
+
+def test_compaction_budget_excludes_response_audit_and_tool_details() -> None:
+    """审计元数据不属于模型输入，不应影响压缩触发或摘要文字。"""
+    from camel_harness.agent.context.compaction import _model_message_dict
+    from camel_harness.llm import LlmUsage, ToolResultMessage
+
+    message = AssistantMessage(
+        (TextBlock("回答"),),
+        LlmStopReason.STOP,
+        provider="provider",
+        model="model",
+        usage=LlmUsage(100, 20),
+    )
+    assert _model_message_dict(message) == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "回答"}],
+        "stop_reason": "stop",
+    }
+    tool = ToolResultMessage(
+        "call", "read_file", "预览", details={"content_ref": {"path": "private"}}
+    )
+    assert "details" not in _model_message_dict(tool)
