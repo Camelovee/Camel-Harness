@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 import typer
 
 from camel_cli.approval import ConsoleApproval
-from camel_harness.agent import SessionId
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.runtime import build_agent, build_session_manager
 
@@ -63,7 +63,7 @@ def main(
             if not workspace_sessions:
                 raise typer.BadParameter("当前工作区没有可选择的历史会话")
             resolved_session_id = workspace_sessions[0].session_id
-        resolved_session_id = resolved_session_id or SessionId.new().value
+        resolved_session_id = resolved_session_id or uuid4().hex
         metadata = await sessions.get(resolved_session_id)
         agent_workspace = Path(metadata.workspace) if metadata is not None else resolved_workspace
         await sessions.ensure(resolved_session_id, agent_workspace, "新会话")

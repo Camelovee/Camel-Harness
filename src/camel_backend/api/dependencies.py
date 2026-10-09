@@ -2,10 +2,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from camel_backend.approval import WebApproval
 from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.web_settings import WebSettingsStore
 from camel_harness.agent.session import SessionManager
-from camel_harness.agent.tools import ApprovalCenter
 
 WorkspacePicker = Callable[[], Awaitable[Path | None]]
 
@@ -20,7 +20,7 @@ class HttpDependencies:
     _session_service: SessionService | None = field(default=None, init=False, repr=False)
     _settings_service: SettingsService | None = field(default=None, init=False, repr=False)
     _settings: WebSettingsStore | None = field(default=None, init=False, repr=False)
-    _approvals: ApprovalCenter | None = field(default=None, init=False, repr=False)
+    _approvals: WebApproval | None = field(default=None, init=False, repr=False)
     _select_workspace: WorkspacePicker | None = field(default=None, init=False, repr=False)
 
     def bind(
@@ -31,7 +31,7 @@ class HttpDependencies:
         session_service: SessionService,
         settings_service: SettingsService,
         settings: WebSettingsStore,
-        approvals: ApprovalCenter | None = None,
+        approvals: WebApproval | None = None,
         select_workspace: WorkspacePicker | None = None,
     ) -> None:
         """一次发布完整运行时依赖，避免请求观察到部分初始化状态。"""
@@ -93,7 +93,7 @@ class HttpDependencies:
             raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
         return self._settings
 
-    def approvals(self) -> ApprovalCenter | None:
+    def approvals(self) -> WebApproval | None:
         """返回 Web 审批中心；当前入口未启用时返回空。"""
 
         return self._approvals

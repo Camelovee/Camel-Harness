@@ -7,7 +7,6 @@ from camel_harness.agent.tools import (
     ToolExecutor,
     ToolRegistry,
     ToolResult,
-    validate_tool_arguments,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
 from camel_harness.agent.tools.subagent import (
@@ -65,7 +64,7 @@ async def test_subagent_provider_exposes_only_delegate_tool() -> None:
 async def test_invalid_tool_arguments_are_normalized(tmp_path) -> None:
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
-    executor = ToolExecutor(registry, validate_tool_arguments)
+    executor = ToolExecutor(registry)
 
     result = await executor.execute(
         ToolCall("call-1", "read_file", {}),

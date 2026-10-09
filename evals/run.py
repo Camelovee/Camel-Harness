@@ -24,7 +24,6 @@ from camel_harness.agent.tools import (
     PermissionService,
     ToolExecutor,
     ToolRegistry,
-    validate_tool_arguments,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
 from camel_harness.llm import (
@@ -115,7 +114,7 @@ def _adapter(provider: str, task: dict[str, Any]) -> LlmAdapter:
     key_name = "anthropic_api_key" if provider == "anthropic" else "openai_api_key"
     key = settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
     if not key:
-        raise ValueError(f"真实 Provider 评测需要在 ~/.camel/config.yaml 配置 {key_name}")
+        raise ValueError(f"真实 Provider 评测需要在 ~/.camel/config.json 配置 {key_name}")
     if provider == "anthropic":
         return create_anthropic_adapter(api_key=key, base_url=settings.anthropic_base_url)
     return create_openai_adapter(api_key=key, base_url=settings.openai_base_url)
@@ -177,7 +176,7 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
             AgentOptions(model, max_turns=4, max_duration_seconds=120, thinking=False),
             llm,
             registry,
-            ToolExecutor(registry, validate_tool_arguments, PermissionService(EvalApproval())),
+            ToolExecutor(registry, PermissionService(EvalApproval())),
             ContextManager(CompactionEngine(llm)),
         )
         endings: list[Any] = []

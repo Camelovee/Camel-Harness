@@ -4,42 +4,8 @@ import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
-from uuid import uuid4
 
 from camel_harness.llm import UserMessage
-
-
-@dataclass(frozen=True, slots=True)
-class SessionId:
-    """会话标识，使用值对象避免不同类型的 ID 被误传。"""
-
-    value: str
-
-    @classmethod
-    def new(cls) -> SessionId:
-        return cls(uuid4().hex)
-
-
-@dataclass(frozen=True, slots=True)
-class RunId:
-    """一次 Agent 执行及其全部 Turn 的标识。"""
-
-    value: str
-
-    @classmethod
-    def new(cls) -> RunId:
-        return cls(uuid4().hex)
-
-
-@dataclass(frozen=True, slots=True)
-class TurnId:
-    """一次 assistant 响应及其工具结果的标识。"""
-
-    value: str
-
-    @classmethod
-    def new(cls) -> TurnId:
-        return cls(uuid4().hex)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +15,6 @@ class AgentOptions:
     model: str
     max_output_tokens: int = 4096
     max_turns: int = 20
-    max_total_tokens: int = 200_000
     max_duration_seconds: float = 900
     thinking: bool = True
 
@@ -60,8 +25,6 @@ class AgentOptions:
             raise ValueError("Agent 最大输出 token 必须大于 0")
         if self.max_turns <= 0:
             raise ValueError("Agent 最大 Turn 数必须大于 0")
-        if self.max_total_tokens <= 0:
-            raise ValueError("Agent 总 token 预算必须大于 0")
         if self.max_duration_seconds <= 0:
             raise ValueError("Agent 最大运行时间必须大于 0")
 
@@ -85,7 +48,6 @@ class StopReason(StrEnum):
     PROVIDER_FAILED = "provider_failed"
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
-    BUDGET_EXCEEDED = "budget_exceeded"
 
 
 @dataclass(slots=True)
@@ -99,7 +61,6 @@ class AgentRun:
     turn: int = 0
     sequence: int = 0
     stop_reason: StopReason | None = None
-    max_total_tokens: int = 200_000
     total_tokens: int = 0
 
     def start(self) -> None:
@@ -135,12 +96,9 @@ class AgentRun:
         self.stop_reason = StopReason.CANCELLED
 
     def record_tokens(self, input_tokens: int, output_tokens: int) -> None:
-        """累计 Turn 用量并强制执行总 token 预算。"""
+        """累计已知请求用量，仅作审计，不代表上下文窗口大小。"""
 
         self.total_tokens += input_tokens + output_tokens
-        if self.total_tokens > self.max_total_tokens:
-            self.fail(StopReason.BUDGET_EXCEEDED)
-            raise RuntimeError("Agent 已超过本轮 token 预算")
 
 
 @dataclass(frozen=True, slots=True)

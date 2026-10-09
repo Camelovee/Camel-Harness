@@ -7,15 +7,18 @@ from camel_harness import Agent, AgentBusyError, AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.tools import ToolExecutor, ToolRegistry, validate_tool_arguments
+from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
+    LlmUsage,
     MessageCompleted,
+    StreamFailed,
     TextDelta,
+    UsageUpdated,
     UserMessage,
 )
 
@@ -89,7 +92,7 @@ async def build_test_agent(
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
     )
     return agent, sessions
@@ -189,3 +192,113 @@ async def test_agent_rejects_a_second_active_run(tmp_path) -> None:
 
     await agent.abort()
     await first
+
+
+async def test_subscriber_failure_does_not_break_persistence_or_duplicate_terminal(
+    tmp_path,
+) -> None:
+    agent, sessions = await build_test_agent(tmp_path, "observer-failure", CompletingLlm())
+    events: list = []
+    calls = 0
+
+    def broken(event) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("观察者故障")
+
+    agent.subscribe(broken)
+    agent.subscribe(events.append)
+    await agent.run("完成")
+    assert calls == 1
+    assert len(await sessions.bind("observer-failure").messages()) == 2
+    assert len([event for event in events if event.type == "agent_end"]) == 1
+    assert events[-1].status == "completed"
+    assert not agent.is_running
+
+
+async def test_terminal_observer_failure_does_not_emit_a_second_terminal(tmp_path) -> None:
+    agent, _ = await build_test_agent(tmp_path, "terminal-failure", CompletingLlm())
+    events: list = []
+
+    async def broken(event) -> None:
+        if event.type == "agent_end":
+            raise RuntimeError("终态观察者故障")
+
+    agent.subscribe(broken)
+    agent.subscribe(events.append)
+    await agent.run("完成")
+    await agent.wait_for_idle()
+    assert [event.type for event in events].count("agent_end") == 1
+    assert events[-1].status == "completed"
+    assert not agent.is_running
+
+
+async def test_repair_failure_still_reports_terminal_and_cleans_run(tmp_path, monkeypatch) -> None:
+    runtime = BlockingLlm()
+    agent, _ = await build_test_agent(tmp_path, "repair-failure", runtime)
+    events: list = []
+    agent.subscribe(events.append)
+
+    async def broken_repair(run) -> None:
+        raise OSError("日志不可写")
+
+    monkeypatch.setattr(agent, "_repair_dangling_tool_calls", broken_repair)
+    task = asyncio.create_task(agent.run("开始"))
+    await runtime.blocked.wait()
+    assert await agent.abort()
+    assert await agent.abort()
+    await task
+    assert [event.type for event in events].count("agent_end") == 1
+    assert events[-1].status == "cancelled"
+    assert "修复失败" in events[-1].error
+    assert not agent.is_running
+
+
+async def test_large_usage_does_not_stop_completed_response(tmp_path) -> None:
+    class LargeUsageLlm(CompletingLlm):
+        async def stream(self, request):
+            yield UsageUpdated(LlmUsage(500_000, 100_000))
+            async for event in super().stream(request):
+                yield event
+
+    agent, sessions = await build_test_agent(tmp_path, "large-usage", LargeUsageLlm())
+    events: list = []
+    agent.subscribe(events.append)
+    await agent.run("完成")
+    assert events[-1].status == "completed"
+    assert events[-1].total_tokens == 600_000
+    assert len(await sessions.bind("large-usage").messages()) == 2
+
+
+async def test_slow_subscriber_is_removed_without_hanging_run(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("camel_harness.agent.agent._LISTENER_TIMEOUT_SECONDS", 0.01)
+    agent, _ = await build_test_agent(tmp_path, "slow-observer", CompletingLlm())
+    calls = 0
+    events: list = []
+
+    async def blocked(event):
+        nonlocal calls
+        calls += 1
+        await asyncio.Event().wait()
+
+    agent.subscribe(blocked)
+    agent.subscribe(events.append)
+    await asyncio.wait_for(agent.run("完成"), 1)
+    assert calls == 1
+    assert events[-1].status == "completed"
+
+
+async def test_failed_response_keeps_known_usage_but_not_partial_message(tmp_path):
+    class FailedUsageLlm(CompletingLlm):
+        async def stream(self, request):
+            yield TextDelta("未完成")
+            yield UsageUpdated(LlmUsage(120, 30))
+            yield StreamFailed("模型故障")
+
+    agent, sessions = await build_test_agent(tmp_path, "failed-usage", FailedUsageLlm())
+    events: list = []
+    agent.subscribe(events.append)
+    await agent.run("开始")
+    assert events[-1].status == "failed"
+    assert events[-1].total_tokens == 150
+    assert [message.role for message in await sessions.bind("failed-usage").messages()] == ["user"]

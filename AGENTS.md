@@ -32,14 +32,18 @@ Backend / CLI -> Agent -> LLM
 - 事件可用内部基类共享运行坐标，但公开 `AgentEvent` 仍须保持具体事件的判别联合。
 - 公开事件使用 `session_id + run_id + turn_id`运行坐标，`sequence` 必须在整个 Run 内单调递增。
 - `agent_end` 是正常、失败和取消 Run 的唯一终态事件；可恢复运行错误通过该事件传递，不在其后再抛出破坏 SSE。
+- 完整消息保存与事件通知分离；订阅者异常或异步等待超时不得破坏消息保存及唯一终态，通知保留有界背压。子 Agent 委派必须读取终态判定成功，并在父任务取消时关闭子 Agent。
+- 累计 token 用量仅用于审计；上下文窗口与压缩阈值归 ContextManager/Compaction 管理，不引入累计消耗终止预算或固定重复工具调用次数限制。Turn 数与运行时长限制保留。
 - `camel_harness.agent.runtime` 是唯一完整组合模块；Agent 不得依赖 Backend 或 CLI。
 - HTTP 路由只做请求校验、状态码和输出投影。
+- Backend 的会话模型改绑、级联删除及模型删除必须与 Run 启动共用互斥边界；组合工厂只绑定已存在的会话，不隐式创建。
 
 ## LLM、工具与会话
 
 - 默认 Provider 为 Anthropic，同时支持 OpenAI；两者必须使用官方 Python SDK。
-- CLI、Backend 与真实评测统一通过 `AgentSettings.load()` 读取 `~/.camel/config.yaml`；不读取环境变量或项目 `.env`，配置错误不得回显密钥。
-- 配置缺失时自动创建默认 YAML，新建目录和文件分别使用 `0700`、`0600` 权限；并发启动不得覆盖已有配置或读取未完成的文件。
+- CLI、Backend 与真实评测统一通过 `AgentSettings.load()` 读取 `~/.camel/config.json`；不读取环境变量或项目 `.env`，配置错误不得回显密钥。
+- 配置缺失时自动创建默认 JSON，新建目录和文件分别使用 `0700`、`0600` 权限；并发启动不得覆盖已有配置或读取未完成的文件。
+- 压缩配置统一放在 `compaction` 对象，不与普通回答输出预算耦合；按 token 估算保留近期完整消息区间，截断摘要最多重试一次且不得落盘，所有已知尝试用量计入 Run，取消不重试。运行时不兼容旧 YAML 或旧平铺压缩字段。
 - WebUI 全局配置编辑由 Backend 校验并以 `0600` 权限原子保存；已存密钥不得回传，省略密钥字段须保留旧值，配置文件修改在重启后生效。
 - 厂商对象只能存在于 `camel_harness.llm`，对外统一为 `LlmStreamEvent`。
 - `LlmStreamEvent` 使用具体 dataclass 的判别联合；文本、工具调用、用量和结束原因使用各自字段，不恢复通用 `type + data` 容器或泄漏厂商索引。

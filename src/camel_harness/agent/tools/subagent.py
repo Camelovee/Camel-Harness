@@ -4,14 +4,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
+from uuid import uuid4
 
-from camel_harness.llm import LlmClient, TextDelta
+from camel_harness.llm import AssistantMessage, LlmClient, TextBlock
 
 from ..agent import Agent
 from ..context import ContextManager
 from ..events import AgentEvent
 from ..session import SessionManager
-from ..state import AgentOptions, SessionId
+from ..state import AgentOptions
 from .executor import ToolExecutor
 from .file_result_storage import FileToolResultStorage
 from .permissions import PermissionService
@@ -19,7 +20,6 @@ from .registry import ToolProvider, ToolRegistry
 from .types import (
     PermissionMode,
     Tool,
-    ToolArgumentValidator,
     ToolCall,
     ToolContext,
     ToolResult,
@@ -70,7 +70,6 @@ class LocalSubagentRunner:
         llm: LlmClient,
         sessions: SessionManager,
         registry: ToolRegistry,
-        validate_arguments: ToolArgumentValidator,
         permission: PermissionService,
         context: ContextManager,
         options: AgentOptions,
@@ -78,7 +77,6 @@ class LocalSubagentRunner:
         self._llm = llm
         self._sessions = sessions
         self._registry = registry
-        self._validate_arguments = validate_arguments
         self._permission = permission
         self._context = context
         self._options = options
@@ -88,12 +86,11 @@ class LocalSubagentRunner:
         registry = self._registry.subset(allowed)
         executor = ToolExecutor(
             registry,
-            self._validate_arguments,
             self._permission,
             FileToolResultStorage(self._sessions.directory).normalize,
         )
         options = replace(self._options, max_turns=8)
-        session_id = f"sub-{SessionId.new().value}"
+        session_id = f"sub-{uuid4().hex}"
         mode = (
             request.permission_mode
             if request.agent_type is SubagentType.GENERAL
@@ -117,11 +114,19 @@ class LocalSubagentRunner:
             self._context,
         )
 
-        parts: list[str] = []
+        content = ""
+        succeeded = False
+        error = "子 Agent 未产生终态"
 
         def collect_text(event: AgentEvent) -> None:
-            if event.type == "message_update" and isinstance(event.assistant_event, TextDelta):
-                parts.append(event.assistant_event.text)
+            nonlocal content, succeeded, error
+            if event.type == "message_end" and isinstance(event.message, AssistantMessage):
+                content = "".join(
+                    block.text for block in event.message.content if isinstance(block, TextBlock)
+                )
+            elif event.type == "agent_end":
+                succeeded = event.status == "completed"
+                error = event.error or f"子 Agent 未完成：{event.stop_reason}"
 
         unsubscribe = agent.subscribe(collect_text)
         try:
@@ -133,8 +138,10 @@ class LocalSubagentRunner:
         except Exception as exc:
             return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)
         finally:
+            # run() 的等待被 shield 隔离，父任务取消时必须显式关闭子任务。
+            await agent.close()
             unsubscribe()
-        return SubagentResult(session_id, "".join(parts), True)
+        return SubagentResult(session_id, content if succeeded else error, succeeded)
 
 
 class DelegateTaskTool(Tool):

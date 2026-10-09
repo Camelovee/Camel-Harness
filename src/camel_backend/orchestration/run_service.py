@@ -64,16 +64,21 @@ class RunService:
         agent = self._agents.get(session_id)
         return agent is not None and agent.is_running
 
-    async def release(self, session_id: str) -> bool:
-        """移除空闲 Agent；活动 Run 存在时拒绝释放。"""
+    @asynccontextmanager
+    async def mutation(self) -> AsyncIterator[None]:
+        """入口写用例共用启动锁，覆盖检查、改绑或删除的完整区间。"""
         async with self._lock:
-            agent = self._agents.get(session_id)
-            if agent is None:
-                return True
-            if agent.is_running:
-                return False
-            self._agents.pop(session_id)
-            self._agent_settings.pop(session_id, None)
+            yield
+
+    async def release_idle_locked(self, session_id: str) -> bool:
+        """仅在 mutation 内使用，避免释放与会话删除之间重新创建 Agent。"""
+        agent = self._agents.get(session_id)
+        if agent is None:
+            return True
+        if agent.is_running:
+            return False
+        self._agents.pop(session_id)
+        self._agent_settings.pop(session_id, None)
         await agent.close()
         return True
 

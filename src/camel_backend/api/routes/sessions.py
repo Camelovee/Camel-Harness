@@ -1,8 +1,8 @@
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter
 
-from camel_harness.agent import SessionId
 from camel_harness.agent.session import message_to_dict
 
 from ..contracts import (
@@ -39,7 +39,7 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
             else dependencies.workspace
         )
         result = await dependencies.require_sessions().create(
-            SessionId.new().value, workspace, body.name.strip()
+            uuid4().hex, workspace, body.name.strip()
         )
         return SessionResponse.from_metadata(result)
 

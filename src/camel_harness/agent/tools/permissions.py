@@ -67,18 +67,6 @@ class ApprovalHandler(ABC):
         raise NotImplementedError
 
 
-class ApprovalCenter(ApprovalHandler):
-    """支持查询和处理待审批请求的审批中心。"""
-
-    @abstractmethod
-    async def list_pending(self) -> tuple[PendingApproval, ...]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def resolve(self, request_id: str, approved: bool) -> bool:
-        raise NotImplementedError
-
-
 def default_permission_decision(request: PermissionRequest) -> PermissionDecision:
     """提供保守且可预测的本地工具授权默认策略。"""
 

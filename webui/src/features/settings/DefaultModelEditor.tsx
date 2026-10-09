@@ -60,7 +60,7 @@ export function DefaultModelEditor() {
   return (
     <section className="settings-config" aria-labelledby="default-model-heading">
       <h3 id="default-model-heading">配置文件默认模型</h3>
-      <p className="settings-footnote">保存到 {config?.path ?? "~/.camel/config.yaml"}，供 CLI 和后端使用。</p>
+      <p className="settings-footnote">保存到 {config?.path ?? "~/.camel/config.json"}，供 CLI 和后端使用。</p>
       <form onSubmit={(event) => void save(event)} onChange={() => setSaved(false)}>
         <fieldset disabled={busy || !config} className="settings-config-fields">
           <div className="settings-form-grid">
@@ -94,7 +94,7 @@ export function DefaultModelEditor() {
         </fieldset>
         {error && <p role="alert">{error}</p>}
         {!config && <button type="button" className="secondary-button" disabled={busy} onClick={() => void reload()}>重新加载</button>}
-        {saved && <p role="status">默认模型已保存到 config.yaml，请重启后端生效。</p>}
+        {saved && <p role="status">默认模型已保存到 config.json，请重启后端生效。</p>}
       </form>
     </section>
   );

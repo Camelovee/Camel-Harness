@@ -21,7 +21,6 @@ def test_agent_run_enforces_turn_limit() -> None:
         ("model", ""),
         ("max_output_tokens", 0),
         ("max_turns", 0),
-        ("max_total_tokens", 0),
         ("max_duration_seconds", 0),
     ),
 )
@@ -38,3 +37,12 @@ def test_agent_options_do_not_duplicate_bound_llm_provider() -> None:
     """Provider 由 LlmClient 绑定，不在 AgentOptions 中维护第二份状态。"""
 
     assert not hasattr(AgentOptions("fake-model"), "provider")
+
+
+def test_usage_is_audit_not_a_cumulative_stop_budget() -> None:
+    run = AgentRun("session", "run")
+    run.start()
+    run.record_tokens(300_000, 100_000)
+    run.record_tokens(300_000, 100_000)
+    assert run.total_tokens == 800_000
+    assert run.status is RunStatus.RUNNING

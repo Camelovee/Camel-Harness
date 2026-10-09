@@ -2,7 +2,6 @@ import pytest
 
 from camel_harness.agent.resources import MemoryEntry, MemoryStore, Skills, SkillSource
 from camel_harness.agent.tools import ToolCall, ToolContext, ToolExecutor, ToolRegistry
-from camel_harness.agent.tools.executor import validate_tool_arguments
 from camel_harness.agent.tools.skill_loader import SkillToolProvider
 
 
@@ -26,7 +25,7 @@ async def test_skill_discovery_and_three_stage_loading(tmp_path) -> None:
 
     registry = ToolRegistry()
     await registry.register_provider(SkillToolProvider(skills))
-    executor = ToolExecutor(registry, validate_tool_arguments)
+    executor = ToolExecutor(registry)
     context = ToolContext("session-1", tmp_path)
     body = await executor.execute(ToolCall("call-1", "load_skill", {"name": "review"}), context)
     assert "先检查测试" in body.content

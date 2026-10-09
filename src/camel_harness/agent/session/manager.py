@@ -58,11 +58,6 @@ class Session:
         self._use_latest = False
         return snapshot
 
-    async def context_messages(self) -> tuple[Message, ...]:
-        """读取已应用历史压缩操作的模型上下文。"""
-
-        return (await self.context_snapshot()).messages
-
     async def compact(
         self,
         summary: str,

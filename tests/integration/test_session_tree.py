@@ -7,7 +7,7 @@ from camel_harness.agent import Agent, AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionCompactionEvent, SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.tools import ToolExecutor, ToolRegistry, validate_tool_arguments
+from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
@@ -36,7 +36,7 @@ async def test_branch_append_preserves_siblings_and_restores_last_written_leaf(t
     entries = await session.entries()
     assert [(item.id, item.parent_id) for item in entries] == [(root, None), (a, root), (b, root)]
     assert await session.messages() == (UserMessage("共同起点"), UserMessage("方案 B"))
-    assert await session.context_messages() == await session.messages()
+    assert (await session.context_snapshot()).messages == await session.messages()
     restarted = SessionManager(JsonlSessionStorage(tmp_path)).bind("tree")
     assert (await restarted.context_snapshot()).leaf_id == b
     assert await restarted.messages() == await session.messages()
@@ -93,9 +93,12 @@ async def test_compaction_and_append_stay_on_selected_branch(tmp_path) -> None:
     assert (await session.entries())[-1].parent_id == compacted.id
     restarted = manager.bind("tree")
     assert (await restarted.context_snapshot()).leaf_id == following
-    assert await restarted.context_messages() == (*updated.messages, UserMessage("A 继续"))
+    assert (await restarted.context_snapshot()).messages == (
+        *updated.messages,
+        UserMessage("A 继续"),
+    )
     await restarted.branch(b)
-    assert await restarted.context_messages() == (
+    assert (await restarted.context_snapshot()).messages == (
         UserMessage("共同起点"),
         UserMessage("B 的近期消息"),
     )
@@ -184,7 +187,7 @@ async def test_agent_uses_selected_branch_not_sibling_history(tmp_path) -> None:
         AgentOptions("fake"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
     )
     await agent.run("走新方案")

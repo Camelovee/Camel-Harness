@@ -73,7 +73,7 @@ src/
 uv sync --locked --extra dev --python 3.11
 npm ci --prefix webui
 npm run build --prefix webui
-# 首次启动会自动创建 ~/.camel/config.yaml。
+# 首次启动会自动创建 ~/.camel/config.json。
 uv run camel-harness-web
 ```
 
@@ -81,26 +81,40 @@ uv run camel-harness-web
 
 ## 配置
 
-CLI、Backend 和真实评测统一读取全局 `~/.camel/config.yaml`，不读取环境变量或项目 `.env`。完整字段见 [config.example.yaml](config.example.yaml)。文件缺失时自动创建默认配置，新建目录权限为 `0700`、文件为 `0600`；已有文件不覆盖。默认密钥为空，首次启动后可在 WebUI“设置 → 配置文件默认模型”填写。空文件使用默认值，未知字段和格式错误会明确报错。修改后重启入口进程生效，CLI 的 `--provider`、`--model` 可临时覆盖文件值。
+CLI、Backend 和真实评测统一读取全局 `~/.camel/config.json`，不读取环境变量或项目 `.env`。完整字段见 [config.example.json](config.example.json)。文件缺失时自动创建默认配置，新建目录权限为 `0700`、文件为 `0600`；已有文件不覆盖。默认密钥为空，首次启动后可在 WebUI“设置 → 配置文件默认模型”填写。使用 `{}` 加载默认值；空文件、注释、尾逗号、未知字段和格式错误会明确报错。修改后重启入口进程生效，CLI 的 `--provider`、`--model` 可临时覆盖文件值。
 
-```yaml
-provider: anthropic
-model: claude-sonnet-4-6
-anthropic_api_key: "填写你的密钥"
-anthropic_base_url: null
-openai_api_key: null
-openai_base_url: null
-session_dir: ~/.camel/sessions
-max_output_tokens: 4096
-max_total_tokens: 200000
-max_duration_seconds: 900
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic_api_key": "填写你的密钥",
+  "max_output_tokens": 4096,
+  "max_duration_seconds": 900,
+  "compaction": {
+    "enabled": true,
+    "context_window_tokens": 128000,
+    "reserve_tokens": 16384,
+    "keep_recent_tokens": 20000,
+    "min_messages": 8,
+    "max_output_tokens": 8192,
+    "retry_max_output_tokens": 16384
+  }
+}
 ```
+
+`compaction` 独立于普通回答预算：窗口减预留预算为压缩触发阈值，按估算 token 保留近期历史并保持工具消息配对。默认首次摘要上限 8192，遇到 `length` 最多以 16384 上限重新总结一次，不续写、不保存截断摘要。所有请求用量仅用于累计审计，不作为上下文窗口或终止预算。摘要输入超出窗口、空摘要、缺少完成事件或取消都不提交压缩，最终失败通过 `agent_end` 报告并保留原历史。估算按 UTF-8 字节，包含系统提示和工具定义，不等同于精确 tokenizer；请按实际模型设置窗口与输出上限，兼容端点不保证遵守关闭思考的请求。
+
+运行限制保留最大 Turn 数、最大时长和单次输出上限，不限制同一合法工具参数的调用次数。普通订阅者异常或异步通知超过 5 秒时移除该订阅者，不撤销已保存的消息；终态只生成一次。子 Agent 只回传最后完整回答，并以终态判定成功；父任务取消会关闭子 Agent。
+
+旧 JSON 若含 `max_total_tokens`，请删除该废弃字段；严格配置加载不保留兼容入口。
+
+旧 YAML 不再由运行时读取。已有用户可运行 `uv run python scripts/migrate_config.py` 一次性转换：保留模型、凭据与存储字段，旧压缩参数重置为新的独立默认值；不覆盖已有 JSON，不删除旧文件。脚本不输出密钥。不要把用户配置提交到 Git。
 
 使用 OpenAI 时将 `provider` 改为 `openai`，填写对应的 `model` 和 `openai_api_key`。相对 `session_dir` 固定相对于用户主目录解析；`mcp_config` 仍相对于 Agent 工作区。配置文件含密钥，请保持 `0600` 权限。
 
-WebUI 左下角“设置”可添加多个 Anthropic/OpenAI 模型配置并保存到本机 `~/.camel/web-settings.json`（自定义 `session_dir` 时位于其父目录），文件权限为 `0600`。浏览器接口不会返回已保存的 API Key；自定义模型留空密钥时使用 YAML 中对应 Provider 的密钥。会话选择从下一次 Run 生效。
+WebUI 左下角“设置”可添加多个 Anthropic/OpenAI 模型配置并保存到本机 `~/.camel/web-settings.json`（自定义 `session_dir` 时位于其父目录），文件权限为 `0600`。浏览器接口不会返回已保存的 API Key；自定义模型留空密钥时使用 JSON 中对应 Provider 的密钥。会话选择从下一次 Run 生效。
 
-在“设置 → 配置文件默认模型”中，通过表单选择 Provider、填写模型 ID、API Key 和自定义接口地址，直接保存到全局 `config.yaml`。密钥不回显，留空保留旧值，勾选“清除”才会删除。预算、会话目录及另一厂商配置保持原值。保存后重启后端使 WebUI 生效，CLI 下次启动时读取；文件被其他编辑器改动后须重新加载。
+在“设置 → 配置文件默认模型”中，通过表单选择 Provider、填写模型 ID、API Key 和自定义接口地址，直接保存到全局 `config.json`。密钥不回显，留空保留旧值，勾选“清除”才会删除。预算、会话目录及另一厂商配置保持原值。保存后重启后端使 WebUI 生效，CLI 下次启动时读取；文件被其他编辑器改动后须重新加载。
 
 ## 运行
 
@@ -187,7 +201,7 @@ uv build
 ```bash
 uv run python -m evals.run --provider anthropic --model 你的模型ID --output baseline.json
 uv run python -m evals.provider_smoke --provider anthropic --model 你的模型ID
-# OpenAI 同理改成 --provider openai，并在 YAML 中配置 openai_api_key。
+# OpenAI 同理改成 --provider openai，并在 JSON 中配置 openai_api_key。
 ```
 
 当前已记录的真实协议兼容端点基线与失败样本见 [评测说明](evals/README.md)。运行真实评测可能产生 API 费用。评测只在临时工作区写文件，工具审批只允许文件编辑与固定的 `python -m pytest -q`；这不是 OS 沙箱。

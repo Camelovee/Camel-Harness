@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 
 from camel_backend.api.sse import open_agent_sse
-from camel_backend.orchestration import RunService
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.orchestration import RunService, SessionService, SettingsService
+from camel_backend.web_settings import ModelInput, WebSettingsStore
 from camel_harness import Agent, AgentBusyError, AgentOptions
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.tools import ToolExecutor, ToolRegistry, validate_tool_arguments
+from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
@@ -60,7 +60,7 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
             AgentOptions("fake"),
             llm,
             registry,
-            ToolExecutor(registry, validate_tool_arguments),
+            ToolExecutor(registry),
             ContextManager(CompactionEngine(llm)),
         )
 
@@ -98,3 +98,87 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
     finally:
         await runs.close()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("operation", ["update", "delete", "delete_model"])
+async def test_session_mutations_wait_for_startup_and_recheck_active_run(tmp_path, operation):
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    store = WebSettingsStore(
+        tmp_path / "web-settings.json",
+        AgentSettings(model="fake", anthropic_api_key="test-only-key"),
+    )
+    await store.add_model(ModelInput(name="备用", provider="anthropic", model="fake-other"))
+    snapshot = await store.snapshot()
+    model_id = str(snapshot["models"][1]["id"])
+    await sessions.create("locked", tmp_path, "互斥测试")
+    await sessions.update("locked", model_id=model_id)
+    adapter = GatedLlm()
+
+    async def build(session_id, workspace, settings):
+        llm = LlmClient(adapter)
+        registry = ToolRegistry()
+        return Agent(
+            sessions.bind(session_id),
+            workspace,
+            AgentOptions(settings.model),
+            llm,
+            registry,
+            ToolExecutor(registry),
+            ContextManager(CompactionEngine(llm)),
+        )
+
+    runs = RunService(build, sessions, store)
+    service = SessionService(sessions, runs, store)
+    settings_service = SettingsService(store, sessions, runs)
+    task = None
+    mutation = None
+    try:
+        async with runs.acquire("locked") as agent:
+            if operation == "update":
+                change = service.update("locked", model_id="environment")
+            elif operation == "delete":
+                change = service.delete_cascade("locked")
+            else:
+                change = settings_service.delete_model(model_id)
+            mutation = asyncio.create_task(change)
+            await asyncio.sleep(0)
+            assert not mutation.done()
+            task = asyncio.create_task(agent.run("保持运行"))
+            await asyncio.wait_for(adapter.started.wait(), 1)
+        with pytest.raises(AgentBusyError):
+            await asyncio.wait_for(mutation, 1)
+        assert (await sessions.get("locked")).model_id == model_id
+        assert (await store.resolve(model_id))[0] == model_id
+    finally:
+        await runs.close()
+        await asyncio.gather(*(item for item in (task, mutation) if item), return_exceptions=True)
+
+
+async def test_delete_holds_startup_lock_until_session_is_removed(tmp_path, monkeypatch):
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("delete", tmp_path, "删除测试")
+    store = WebSettingsStore(tmp_path / "web.json", AgentSettings(model="fake"))
+
+    async def forbidden_build(*args):
+        pytest.fail("删除过程不得重建 Agent")
+
+    runs = RunService(forbidden_build, sessions, store)
+    service = SessionService(sessions, runs, store)
+    deleting, proceed = asyncio.Event(), asyncio.Event()
+    original_delete = sessions.delete
+
+    async def gated_delete(session_id):
+        deleting.set()
+        await proceed.wait()
+        return await original_delete(session_id)
+
+    monkeypatch.setattr(sessions, "delete", gated_delete)
+    delete = asyncio.create_task(service.delete_cascade("delete"))
+    await deleting.wait()
+    lookup = asyncio.create_task(runs.require_agent("delete"))
+    await asyncio.sleep(0)
+    assert not lookup.done()
+    proceed.set()
+    await delete
+    with pytest.raises(KeyError):
+        await lookup

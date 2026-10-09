@@ -13,7 +13,6 @@ from camel_harness.agent.tools import (
     PermissionService,
     ToolExecutor,
     ToolRegistry,
-    validate_tool_arguments,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
 from camel_harness.agent.tools.subagent import LocalSubagentRunner, SubagentRequest, SubagentType
@@ -99,6 +98,44 @@ class TruncatedToolLlm(LlmAdapter):
         yield MessageCompleted(LlmStopReason.LENGTH, model=None)
 
 
+async def test_four_identical_valid_calls_are_all_executed(tmp_path):
+    class RepeatedLlm(FakeLlm):
+        async def stream(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                for index in range(4):
+                    yield ToolCallCompleted(
+                        ToolUseBlock(f"read-{index}", "read_file", {"path": "sample.txt"})
+                    )
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            else:
+                yield TextDelta("完成")
+                yield MessageCompleted(LlmStopReason.STOP)
+
+    (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("repeated", tmp_path, "重复读取")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    llm = LlmClient(RepeatedLlm())
+    agent = Agent(
+        sessions.bind("repeated"),
+        tmp_path,
+        AgentOptions("fake"),
+        llm,
+        registry,
+        ToolExecutor(registry),
+        ContextManager(CompactionEngine(llm)),
+    )
+    events: list = []
+    agent.subscribe(events.append)
+    await agent.run("重复检查")
+    results = [event.result for event in events if event.type == "tool_execution_end"]
+    assert len(results) == 4
+    assert all(not result.is_error for result in results)
+    assert events[-1].status == "completed"
+
+
 async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
     runtime = FakeLlm()
@@ -114,7 +151,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         context,
     )
 
@@ -157,7 +194,15 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
 @pytest.mark.parametrize("content", ["内容", "内容" * 15_000], ids=["small", "large"])
 async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     (tmp_path / "sample.txt").write_text(content, encoding="utf-8")
-    llm = LlmClient(FakeLlm())
+
+    class IntermediateTextLlm(FakeLlm):
+        async def stream(self, request):
+            if self.calls == 0:
+                yield TextDelta("准备读取，不是最终结论")
+            async for event in super().stream(request):
+                yield event
+
+    llm = LlmClient(IntermediateTextLlm())
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("parent", tmp_path, "父会话")
     registry = ToolRegistry()
@@ -166,7 +211,6 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
         llm,
         sessions,
         registry,
-        validate_tool_arguments,
         PermissionService(),
         ContextManager(CompactionEngine(llm)),
         AgentOptions("fake-model"),
@@ -184,6 +228,7 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     )
 
     assert result.succeeded
+    assert result.content == "已读取文件"
     metadata = await sessions.get(result.session_id)
     assert metadata is not None
     assert metadata.parent_session_id == "parent"
@@ -215,7 +260,7 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments, permission),
+        ToolExecutor(registry, permission),
         context,
     )
 
@@ -270,7 +315,7 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
     )
 

@@ -84,7 +84,7 @@ async def test_context_snapshot_restores_compacted_surface_after_restart(tmp_pat
     restarted = SessionManager(JsonlSessionStorage(root))
 
     assert await restarted.bind("session-1").messages() == originals
-    assert await restarted.bind("session-1").context_messages() == (
+    assert (await restarted.bind("session-1").context_snapshot()).messages == (
         summary,
         originals[6],
         originals[7],
@@ -109,7 +109,7 @@ async def test_metadata_update_does_not_shift_compaction_coordinates(tmp_path) -
     await sessions.bind("session-1").compact("摘要", snapshot.nodes[1].entry_id, snapshot=snapshot)
 
     restarted = SessionManager(JsonlSessionStorage(tmp_path))
-    assert await restarted.bind("session-1").context_messages() == (
+    assert (await restarted.bind("session-1").context_snapshot()).messages == (
         UserMessage("[Compacted History]\n\n摘要"),
         UserMessage("新消息"),
     )
@@ -135,7 +135,10 @@ async def test_compaction_rejects_stale_snapshot_after_another_writer(tmp_path) 
         await session.compact("过期摘要", snapshot.nodes[0].entry_id, snapshot=snapshot)
     assert path.read_bytes() == before
     assert snapshot.messages == (UserMessage("旧消息"),)
-    assert await second.context_messages() == (UserMessage("旧消息"), UserMessage("并发新增"))
+    assert (await second.context_snapshot()).messages == (
+        UserMessage("旧消息"),
+        UserMessage("并发新增"),
+    )
 
 
 async def test_compaction_returns_durable_snapshot_and_rejects_reuse(tmp_path) -> None:

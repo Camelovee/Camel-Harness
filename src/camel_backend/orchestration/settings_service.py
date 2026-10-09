@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import tempfile
 from pathlib import Path
 
-import yaml
 from pydantic import ValidationError
 
 from camel_backend.web_settings import ModelInput, Provider, WebSettingsStore
@@ -18,7 +18,7 @@ from .run_service import RunService
 
 
 class SettingsService:
-    """编排模型配置、全局 YAML 编辑与删除模型后的会话改绑。"""
+    """编排模型配置、全局 JSON 编辑与删除模型后的会话改绑。"""
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class SettingsService:
         self._store = store
         self._sessions = sessions
         self._runs = runs
-        self._config_path = config_path or Path.home() / ".camel" / "config.yaml"
+        self._config_path = config_path or Path.home() / ".camel" / "config.json"
         self._config_lock = asyncio.Lock()
 
     def _config_snapshot(self) -> dict[str, object]:
@@ -106,12 +106,13 @@ class SettingsService:
                     delete=False,
                 ) as stream:
                     temporary = Path(stream.name)
-                    yaml.safe_dump(
+                    json.dump(
                         settings.model_dump(mode="json"),
                         stream,
-                        allow_unicode=True,
-                        sort_keys=False,
+                        ensure_ascii=False,
+                        indent=2,
                     )
+                    stream.write("\n")
                     stream.flush()
                     os.fsync(stream.fileno())
                 temporary.replace(self._config_path)
@@ -128,10 +129,12 @@ class SettingsService:
 
     async def delete_model(self, model_id: str) -> None:
         """删除模型配置并把使用它的会话改绑到新的默认模型。"""
-        related = [item for item in await self._sessions.list() if item.model_id == model_id]
-        if any(self._runs.is_running(item.session_id) for item in related):
-            raise AgentBusyError("使用此模型的会话运行结束后才能删除")
-        await self._store.delete_model(model_id)
-        replacement = str((await self._store.snapshot())["default_model_id"])
-        for metadata in related:
-            await self._sessions.update(metadata.session_id, model_id=replacement)
+        async with self._runs.mutation():
+            related = [item for item in await self._sessions.list() if item.model_id == model_id]
+            if any(self._runs.is_running(item.session_id) for item in related):
+                raise AgentBusyError("使用此模型的会话运行结束后才能删除")
+            await self._store.delete_model(model_id)
+            replacement = str((await self._store.snapshot())["default_model_id"])
+            for metadata in related:
+                await self._runs.release_idle_locked(metadata.session_id)
+                await self._sessions.update(metadata.session_id, model_id=replacement)

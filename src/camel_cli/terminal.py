@@ -49,6 +49,8 @@ def _render_event(event: AgentEvent) -> None:
     elif event.type == "tool_execution_end":
         status = "失败" if event.result.is_error else "完成"
         typer.echo(f"[工具{status}] {event.result.name}")
+    elif event.type == "agent_end" and event.status != "completed":
+        typer.echo(f"\n[Agent {event.status}] {event.error or event.stop_reason}", err=True)
 
 
 async def run_repl(

@@ -1,3 +1,4 @@
+import json
 import stat
 from pathlib import Path
 
@@ -37,15 +38,24 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
         sessions=sessions,
         session_service=SessionService(sessions, runs, store),
         settings_service=SettingsService(
-            store, sessions, runs, config_path=tmp_path / "config.yaml"
+            store, sessions, runs, config_path=tmp_path / "config.json"
         ),
         settings=store,
     )
     app = FastAPI()
     install_exception_handlers(app)
     app.include_router(create_router(dependencies))
-    path = tmp_path / "config.yaml"
-    path.write_text("max_output_tokens: 1234\nopenai_api_key: other-secret\n", encoding="utf-8")
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "max_output_tokens": 1234,
+                "openai_api_key": "other-secret",
+                "compaction": {"max_output_tokens": 6000},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         config = await client.get("/api/settings/config")
@@ -67,6 +77,7 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
         assert AgentSettings.load(path).anthropic_api_key == "config-secret"
         assert AgentSettings.load(path).openai_api_key == "other-secret"
         assert AgentSettings.load(path).max_output_tokens == 1234
+        assert AgentSettings.load(path).compaction.max_output_tokens == 6000
         assert AgentSettings.load(path).model == "custom-default"
         assert AgentSettings.load(path).anthropic_base_url == "https://example.test/anthropic"
 

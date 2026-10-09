@@ -22,7 +22,6 @@ from .tools import (
     PermissionService,
     ToolExecutor,
     ToolRegistry,
-    validate_tool_arguments,
 )
 from .tools.builtin import BuiltinToolProvider
 from .tools.file_result_storage import FileToolResultStorage
@@ -44,13 +43,16 @@ async def build_agent(
     session_id: str,
     workspace: Path,
     approval: ApprovalHandler,
-    sessions: SessionManager | None = None,
+    sessions: SessionManager,
 ) -> Agent:
     """在一个组合函数中创建完整 Agent。"""
 
+    metadata = await sessions.get(session_id)
+    if metadata is None:
+        raise KeyError(f"会话不存在：{session_id}")
+    if Path(metadata.workspace).resolve() != workspace.resolve():
+        raise ValueError("Agent 工作区必须与会话工作区一致")
     llm = LlmClient(_build_llm_adapter(settings))
-    sessions = sessions or build_session_manager(settings)
-    await sessions.ensure(session_id, workspace, "新会话")
     session = sessions.bind(session_id)
     skills = Skills(workspace)
     memories = MemoryStore(workspace)
@@ -67,22 +69,18 @@ async def build_agent(
     permission = PermissionService(approval)
     executor = ToolExecutor(
         registry,
-        validate_tool_arguments,
         permission,
         FileToolResultStorage(sessions.directory).normalize,
     )
     options = AgentOptions(
         model=settings.model,
         max_output_tokens=settings.max_output_tokens,
-        max_total_tokens=settings.max_total_tokens,
         max_duration_seconds=settings.max_duration_seconds,
     )
     context = ContextManager(
         CompactionEngine(
             llm,
-            pressure_threshold_chars=settings.max_context_chars,
-            min_messages_to_compact=settings.compaction_min_messages,
-            max_summary_tokens=settings.max_compaction_tokens,
+            settings=settings.compaction,
         ),
         ProjectRules(),
         skills,
@@ -92,7 +90,6 @@ async def build_agent(
         llm,
         sessions,
         registry,
-        validate_tool_arguments,
         permission,
         context,
         options,
@@ -116,13 +113,13 @@ def _build_llm_adapter(settings: AgentSettings) -> LlmAdapter:
 
     if settings.provider == "anthropic":
         if not settings.anthropic_api_key:
-            raise ValueError("请在 ~/.camel/config.yaml 中配置 anthropic_api_key")
+            raise ValueError("请在 ~/.camel/config.json 中配置 anthropic_api_key")
         return create_anthropic_adapter(
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
         )
     if not settings.openai_api_key:
-        raise ValueError("请在 ~/.camel/config.yaml 中配置 openai_api_key")
+        raise ValueError("请在 ~/.camel/config.json 中配置 openai_api_key")
     return create_openai_adapter(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,

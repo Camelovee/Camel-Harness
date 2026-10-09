@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from camel_harness.agent.config import AgentSettings
 
 Provider = Literal["anthropic", "openai"]
-# 默认模型的持久化 ID 保持稳定，配置来源由 YAML 加载器决定。
+# 默认模型的持久化 ID 保持稳定，配置来源由 JSON 加载器决定。
 DEFAULT_MODEL_ID = "environment"
 
 

@@ -1,0 +1,21 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic_api_key": null,
+  "anthropic_base_url": null,
+  "openai_api_key": null,
+  "openai_base_url": null,
+  "max_output_tokens": 4096,
+  "max_duration_seconds": 900,
+  "compaction": {
+    "enabled": true,
+    "context_window_tokens": 128000,
+    "reserve_tokens": 16384,
+    "keep_recent_tokens": 20000,
+    "min_messages": 8,
+    "max_output_tokens": 8192,
+    "retry_max_output_tokens": 16384
+  },
+  "session_dir": ".camel/sessions",
+  "mcp_config": ".mcp.json"
+}

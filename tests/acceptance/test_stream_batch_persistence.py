@@ -8,7 +8,6 @@ from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import (
     ToolExecutor,
     ToolRegistry,
-    validate_tool_arguments,
 )
 from camel_harness.llm import (
     LlmAdapter,
@@ -60,7 +59,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         context,
     )
     events: list = []
@@ -129,7 +128,7 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
         AgentOptions("fake-model", max_turns=1),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         context,
     )
     events: list = []
@@ -169,7 +168,7 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
         AgentOptions("fake-model"),
         llm,
         registry,
-        ToolExecutor(registry, validate_tool_arguments),
+        ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
     )
     events: list = []

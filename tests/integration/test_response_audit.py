@@ -7,7 +7,7 @@ from camel_harness import Agent, AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.tools import ToolExecutor, ToolRegistry, validate_tool_arguments
+from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
 from camel_harness.agent.tools.file_result_storage import FileToolResultStorage
 from camel_harness.llm import (
@@ -65,7 +65,6 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
         registry,
         ToolExecutor(
             registry,
-            validate_tool_arguments,
             normalize_result=FileToolResultStorage(sessions.directory, 5).normalize,
         ),
         ContextManager(CompactionEngine(llm)),
@@ -93,7 +92,7 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
     assert reference["original_chars"] == len(path.read_text("utf-8"))
     assert reference["preview_chars"] == 5
     assert path.read_text("utf-8") == "1: 大结果中文内容"
-    assert await restarted.context_messages() == messages
+    assert (await restarted.context_snapshot()).messages == messages
     for event in events:
         if event.type == "message_end" and event.message.role in {"assistant", "toolResult"}:
             wire = json.loads(encode_sse(event).split("data: ")[1])["message"]

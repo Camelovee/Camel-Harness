@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -26,12 +25,6 @@ class PermissionMode(StrEnum):
     ACCEPT_EDITS = "accept_edits"
     PLAN = "plan"
     YOLO = "yolo"
-
-
-ToolArgumentValidator = Callable[
-    [ToolDefinition, dict[str, object]],
-    tuple[str, ...],
-]
 
 
 @dataclass(frozen=True, slots=True)

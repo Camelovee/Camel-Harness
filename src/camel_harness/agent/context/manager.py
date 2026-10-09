@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable
 from pathlib import Path
+
+from camel_harness.llm import LlmUsage, ToolDefinition
 
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session import ContextSnapshot
@@ -70,10 +74,27 @@ class ContextManager:
         options: AgentOptions,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
+        on_usage: Callable[[LlmUsage], None] | None = None,
+        system_prompt: str = "",
+        tools: tuple[ToolDefinition, ...] = (),
     ) -> CompactionResult | None:
         """根据只读 ContextSnapshot 生成压缩计划，不执行会话持久化。"""
 
-        return await self._compaction.compact_if_needed(snapshot, options, trigger=trigger)
+        tool_text = json.dumps(
+            [
+                {"name": tool.name, "description": tool.description, "schema": tool.input_schema}
+                for tool in tools
+            ],
+            ensure_ascii=False,
+        )
+        overhead = (len((system_prompt + tool_text).encode("utf-8")) + 2) // 3
+        return await self._compaction.compact_if_needed(
+            snapshot,
+            options,
+            trigger=trigger,
+            on_usage=on_usage,
+            context_overhead_tokens=overhead,
+        )
 
 
 def _memory_tokens(name: str, description: str) -> set[str]:

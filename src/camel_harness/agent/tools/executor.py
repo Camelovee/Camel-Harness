@@ -16,7 +16,6 @@ from .permissions import (
 )
 from .registry import ToolRegistry
 from .types import (
-    ToolArgumentValidator,
     ToolCall,
     ToolContext,
     ToolResult,
@@ -41,12 +40,10 @@ class ToolExecutor:
     def __init__(
         self,
         registry: ToolRegistry,
-        validate_arguments: ToolArgumentValidator,
         permission: PermissionService | None = None,
         normalize_result: ResultNormalizer | None = None,
     ) -> None:
         self._registry = registry
-        self._validate_arguments = validate_arguments
         self._permission = permission
         self._normalize_result = normalize_result
 
@@ -61,7 +58,7 @@ class ToolExecutor:
         except KeyError as exc:
             return ToolResult(call.call_id, call.name, str(exc), is_error=True)
 
-        errors = self._validate_arguments(tool.to_definition(), call.arguments)
+        errors = validate_tool_arguments(tool.to_definition(), call.arguments)
         if errors:
             return ToolResult(call.call_id, call.name, "；".join(errors), is_error=True)
         if self._permission is not None:

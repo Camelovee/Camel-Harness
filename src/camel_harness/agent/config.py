@@ -1,27 +1,50 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Literal
 
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+
+class CompactionSettings(BaseModel):
+    """独立的压缩策略与摘要预算；窗口大小需与所选模型匹配。"""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = True
+    context_window_tokens: int = Field(default=128_000, gt=0)
+    reserve_tokens: int = Field(default=16_384, gt=0)
+    keep_recent_tokens: int = Field(default=20_000, gt=0)
+    min_messages: int = Field(default=8, ge=2)
+    max_output_tokens: int = Field(default=8192, gt=0)
+    retry_max_output_tokens: int = Field(default=16_384, gt=0)
+
+    @model_validator(mode="after")
+    def validate_budgets(self) -> CompactionSettings:
+        if self.retry_max_output_tokens < self.max_output_tokens:
+            raise ValueError("压缩重试预算不能小于首次摘要预算")
+        if self.reserve_tokens >= self.context_window_tokens:
+            raise ValueError("压缩预留预算必须小于模型上下文窗口")
+        if self.keep_recent_tokens + self.retry_max_output_tokens >= (
+            self.context_window_tokens - self.reserve_tokens
+        ):
+            raise ValueError("近期历史与摘要预算必须留出足够的上下文空间")
+        return self
 
 
 class AgentSettings(BaseModel):
-    """应用配置；仅从用户级 YAML 显式加载，默认使用 Anthropic。"""
+    """应用配置；仅从用户级 JSON 显式加载，默认使用 Anthropic。"""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     provider: Literal["anthropic", "openai"] = "anthropic"
     model: str = "claude-sonnet-4-6"
-    max_output_tokens: int = 4096
-    max_context_chars: int = 120_000
-    compaction_min_messages: int = 8
-    max_compaction_tokens: int = 2048
-    max_total_tokens: int = 200_000
-    max_duration_seconds: float = 900
+    max_output_tokens: int = Field(default=4096, gt=0)
+    compaction: CompactionSettings = Field(default_factory=CompactionSettings)
+    max_duration_seconds: float = Field(default=900, gt=0)
     session_dir: Path = Field(default_factory=lambda: Path.home() / ".camel" / "sessions")
     mcp_config: str = ".mcp.json"
     anthropic_api_key: str | None = Field(default=None, repr=False)
@@ -33,19 +56,17 @@ class AgentSettings(BaseModel):
     def load(cls, path: Path | None = None) -> AgentSettings:
         """入口读取配置；缺失时创建默认文件，错误不回显含密钥的原文。"""
 
-        config_path = path or Path.home() / ".camel" / "config.yaml"
+        config_path = path or Path.home() / ".camel" / "config.json"
         config_path = config_path.expanduser()
         try:
             if not config_path.exists():
                 cls._create_default(config_path)
             with config_path.open(encoding="utf-8") as stream:
-                data = yaml.safe_load(stream)
-        except (yaml.YAMLError, UnicodeError):
-            raise ValueError(f"配置文件 YAML 格式错误：{config_path}") from None
+                data = json.load(stream)
+        except (json.JSONDecodeError, UnicodeError):
+            raise ValueError(f"配置文件 JSON 格式错误：{config_path}") from None
         except OSError:
             raise ValueError(f"配置文件无法创建或读取：{config_path}") from None
-        if data is None:
-            data = {}
         if not isinstance(data, dict):
             raise ValueError(f"配置文件顶层必须是字段映射：{config_path}")
         try:
@@ -58,7 +79,7 @@ class AgentSettings(BaseModel):
 
     @classmethod
     def _create_default(cls, path: Path) -> None:
-        """完整写入后独占发布，避免并发启动覆盖配置或读到半份 YAML。"""
+        """完整写入后独占发布，避免并发启动覆盖配置或读到半份 JSON。"""
 
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         temporary: Path | None = None
@@ -71,7 +92,8 @@ class AgentSettings(BaseModel):
                 delete=False,
             ) as stream:
                 temporary = Path(stream.name)
-                yaml.safe_dump(cls().model_dump(mode="json"), stream, sort_keys=False)
+                json.dump(cls().model_dump(mode="json"), stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
