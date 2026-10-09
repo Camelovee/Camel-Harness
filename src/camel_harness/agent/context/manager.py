@@ -3,14 +3,26 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-from camel_harness.llm import LlmUsage, ToolDefinition
+from camel_harness.llm import LlmUsage, Message, ToolDefinition, UserMessage
 
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session import ContextSnapshot
-from ..state import AgentOptions
 from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
+
+
+class ContextResourceError(RuntimeError):
+    """动态资源加载失败，与压缩失败保持独立错误边界。"""
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedContext:
+    """提示和可选压缩计划；只有 Session 提交后才能使用新的历史投影。"""
+
+    system_prompt: str
+    compaction: CompactionResult | None
 
 
 class ContextManager:
@@ -31,6 +43,39 @@ class ContextManager:
         self._skills = skills
         self._memories = memories
         self._max_rules_chars = max_rules_chars
+
+    @staticmethod
+    def resolve_query(messages: tuple[Message, ...]) -> str:
+        """恢复任务时优先使用最近用户文字，不以压缩摘要代替用户意图。"""
+
+        return next(
+            (message.content for message in reversed(messages) if isinstance(message, UserMessage)),
+            "继续当前任务",
+        )
+
+    async def prepare(
+        self,
+        snapshot: ContextSnapshot,
+        model: str,
+        *,
+        query: str,
+        workspace: Path,
+        system_prompt: str,
+        tools: tuple[ToolDefinition, ...] = (),
+        on_usage: Callable[[LlmUsage], None] | None = None,
+    ) -> PreparedContext:
+        """每 Turn 从基础提示组装资源并生成计划，不读取或提交会话日志。"""
+
+        try:
+            dynamic_context = await self.build_system_context(query, workspace)
+        except Exception as exc:
+            raise ContextResourceError(str(exc)) from exc
+        if dynamic_context:
+            system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+        compacted = await self.compact_if_needed(
+            snapshot, model, on_usage=on_usage, system_prompt=system_prompt, tools=tools
+        )
+        return PreparedContext(system_prompt, compacted)
 
     async def build_system_context(self, prompt: str, workspace: Path) -> str:
         """组装项目规则、Skill 索引和与当前任务相关的 Memory。"""
@@ -71,7 +116,7 @@ class ContextManager:
     async def compact_if_needed(
         self,
         snapshot: ContextSnapshot,
-        options: AgentOptions,
+        model: str,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
         on_usage: Callable[[LlmUsage], None] | None = None,
@@ -90,7 +135,7 @@ class ContextManager:
         overhead = (len((system_prompt + tool_text).encode("utf-8")) + 2) // 3
         return await self._compaction.compact_if_needed(
             snapshot,
-            options,
+            model,
             trigger=trigger,
             on_usage=on_usage,
             context_overhead_tokens=overhead,

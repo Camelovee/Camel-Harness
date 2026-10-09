@@ -14,7 +14,7 @@ class AgentOptions:
 
     model: str
     max_output_tokens: int = 4096
-    max_turns: int = 20
+    max_turns: int = 50
     max_duration_seconds: float = 900
     thinking: bool = True
 

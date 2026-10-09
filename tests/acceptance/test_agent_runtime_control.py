@@ -379,6 +379,41 @@ async def test_resource_failure_is_not_classified_as_provider_failure(tmp_path, 
     assert events[-1].error == "规则无法读取"
 
 
+async def test_new_prompt_does_not_read_raw_history_for_resource_query(tmp_path, monkeypatch):
+    agent, sessions = await build_test_agent(tmp_path, "new-query", CompletingLlm())
+    queries = []
+
+    async def unexpected_read():
+        raise AssertionError("新输入不应额外读取原始历史")
+
+    async def build_context(query, workspace):
+        queries.append(query)
+        return ""
+
+    monkeypatch.setattr(agent._session, "messages", unexpected_read)
+    monkeypatch.setattr(agent._context, "build_system_context", build_context)
+    events = []
+    agent.subscribe(events.append)
+    await agent.run("当前任务")
+    assert events[-1].status == "completed"
+    assert queries == ["当前任务"]
+    assert len(await sessions.bind("new-query").messages()) == 2
+
+
+async def test_resume_uses_context_manager_to_select_last_user_query(tmp_path, monkeypatch):
+    agent, sessions = await build_test_agent(tmp_path, "resume-query", CompletingLlm())
+    await sessions.bind("resume-query").append_message(UserMessage("继续实现测试"))
+    queries = []
+
+    async def build_context(query, workspace):
+        queries.append(query)
+        return ""
+
+    monkeypatch.setattr(agent._context, "build_system_context", build_context)
+    await agent.resume()
+    assert queries == ["继续实现测试"]
+
+
 async def test_close_failure_allows_cleanup_retry(tmp_path):
     agent, _ = await build_test_agent(tmp_path, "close-retry", CompletingLlm())
     attempts = 0

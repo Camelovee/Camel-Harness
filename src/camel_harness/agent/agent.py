@@ -15,12 +15,13 @@ from camel_harness.llm import (
     LlmStreamEventType,
     Message,
     StreamFailed,
+    ToolDefinition,
     ToolResultMessage,
     ToolUseBlock,
     UserMessage,
 )
 
-from .context import ContextManager
+from .context import ContextManager, ContextResourceError
 from .events import (
     AgentEvent,
     AgentEventListener,
@@ -312,14 +313,15 @@ class Agent:
                 for result in initial_tool_results:
                     await self._emit_complete_message(run, "resume-repair", result)
                 pending_user: UserMessage | None = None
-                try:
-                    context_query = _last_user_text(await self._session.messages())
-                except Exception:
-                    run.fail(StopReason.SESSION_FAILED)
-                    raise
                 if prompt is not None:
                     pending_user = UserMessage(prompt)
                     context_query = prompt
+                else:
+                    try:
+                        context_query = self._context.resolve_query(await self._session.messages())
+                    except Exception:
+                        run.fail(StopReason.SESSION_FAILED)
+                        raise
                 length_recovery_used = False
                 while run.status is RunStatus.RUNNING:
                     turn_reason, has_tool_calls = await self._run_turn(
@@ -443,21 +445,15 @@ class Agent:
             await self._finish_message(
                 run, message_end_event(run, turn_id, user_message_id, user_message)
             )
-        try:
-            dynamic_context = await self._context.build_system_context(
-                context_query, self._workspace
-            )
-        except Exception:
-            run.fail(StopReason.RESOURCE_FAILED)
-            raise
-        if dynamic_context:
-            system_prompt = f"{system_prompt}\n\n{dynamic_context}"
-        history = await self._load_context(run, options, system_prompt)
+        definitions = self._tools.llm_definitions()
+        system_prompt, history = await self._prepare_context(
+            run, options.model, system_prompt, context_query, definitions
+        )
         request = LlmRequest(
             model=options.model,
             messages=history,
             system_prompt=system_prompt,
-            tools=self._tools.llm_definitions(),
+            tools=definitions,
             max_output_tokens=options.max_output_tokens,
             thinking=options.thinking,
         )
@@ -526,13 +522,15 @@ class Agent:
         ]
         return assistant_message, calls
 
-    async def _load_context(
+    async def _prepare_context(
         self,
         run: AgentRun,
-        options: AgentOptions,
+        model: str,
         system_prompt: str,
-    ) -> tuple[Message, ...]:
-        """在每个 Turn 前返回经压缩投影后的会话上下文。"""
+        query: str,
+        tools: tuple[ToolDefinition, ...],
+    ) -> tuple[str, tuple[Message, ...]]:
+        """协调只读上下文准备与会话提交，不实现资源组装或压缩策略。"""
 
         try:
             snapshot = await self._session.context_snapshot()
@@ -540,18 +538,24 @@ class Agent:
             run.fail(StopReason.SESSION_FAILED)
             raise
         try:
-            compacted = await self._context.compact_if_needed(
+            prepared = await self._context.prepare(
                 snapshot,
-                options,
+                model,
+                query=query,
+                workspace=self._workspace,
                 on_usage=lambda usage: run.record_tokens(
                     usage.input_tokens or 0, usage.output_tokens or 0
                 ),
                 system_prompt=system_prompt,
-                tools=self._tools.llm_definitions(),
+                tools=tools,
             )
+        except ContextResourceError:
+            run.fail(StopReason.RESOURCE_FAILED)
+            raise
         except Exception:
             run.fail(StopReason.CONTEXT_FAILED)
             raise
+        compacted = prepared.compaction
         if compacted is not None:
             try:
                 snapshot = await self._session.compact(
@@ -564,7 +568,7 @@ class Agent:
             except Exception:
                 run.fail(StopReason.SESSION_FAILED)
                 raise
-        return snapshot.messages
+        return prepared.system_prompt, snapshot.messages
 
     async def _reject_truncated_calls(
         self,
@@ -633,29 +637,8 @@ class Agent:
         """完整保存工具结果后发送消息事件，保持恢复所需的消息链。"""
 
         await self._emit(tool_execution_end_event(run, turn_id, result))
-        message = _tool_result_message(result)
+        message = result.to_message()
         tool_results.append(message)
         message_id = f"tool-{result.call_id}"
         await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))
         await self._finish_message(run, message_end_event(run, turn_id, message_id, message))
-
-
-def _last_user_text(messages: tuple[Message, ...]) -> str:
-    """为动态上下文检索返回最近一条用户文字。"""
-
-    return next(
-        (message.content for message in reversed(messages) if isinstance(message, UserMessage)),
-        "继续当前任务",
-    )
-
-
-def _tool_result_message(result: ToolResult) -> ToolResultMessage:
-    """将 Agent 工具结果投影为 LLM 规范消息。"""
-
-    return ToolResultMessage(
-        call_id=result.call_id,
-        name=result.name,
-        content=result.content,
-        is_error=result.is_error,
-        details=dict(result.metadata),
-    )

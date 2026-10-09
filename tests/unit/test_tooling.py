@@ -31,6 +31,17 @@ class ExampleTool(Tool):
         return ToolResult(call.call_id, call.name, "ok")
 
 
+def test_tool_result_projects_message_without_sharing_metadata():
+    result = ToolResult("call", "read_file", "结果", is_error=True, metadata={"exit_code": 1})
+    message = result.to_message()
+    assert message.call_id == result.call_id
+    assert message.name == result.name
+    assert message.content == result.content
+    assert message.is_error
+    assert message.details == result.metadata
+    assert message.details is not result.metadata
+
+
 async def test_executor_default_permissions_do_not_bypass_plan_mode(tmp_path):
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())

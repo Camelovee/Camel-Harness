@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from camel_harness.llm import ToolDefinition
+from camel_harness.llm import ToolDefinition, ToolResultMessage
 
 
 class ToolRisk(StrEnum):
@@ -45,6 +45,17 @@ class ToolResult:
     content: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_message(self) -> ToolResultMessage:
+        """投影模型可见的结果并复制附加信息，保存时机仍由 Agent 决定。"""
+
+        return ToolResultMessage(
+            call_id=self.call_id,
+            name=self.name,
+            content=self.content,
+            is_error=self.is_error,
+            details=dict(self.metadata),
+        )
 
 
 @dataclass(frozen=True, slots=True)

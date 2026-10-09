@@ -71,6 +71,7 @@ Backend / CLI -> Agent -> LLM
 - 新建会话目录和日志使用私有权限；损坏的单份日志不得阻断其他会话的列表读取。
 - 已开始的会话提交与叶游标更新必须完成后再传播取消，不得在线程仍写入时释放会话锁或提前进入工具链修复。
 - `ContextManager` 与 `CompactionEngine` 位于 `camel_harness.agent.context`，负责动态系统上下文和历史压缩；可依赖 ProjectRules、Skills、Memory 和只读 `ContextSnapshot`，但不得持有 `SessionManager`、执行会话 CRUD 或读写 JSONL。
+- ContextManager 统一组装基础与动态提示、选择检索文字并生成压缩计划；Agent 只协调快照读取与计划提交。Context/Compaction 仅接收所需模型标识，不依赖完整 AgentOptions。
 - Session 包内部负责树重放；ContextNode 只保留 entry_id 与消息，不使用隐式 seq。压缩通过 firstKeptEntryId 定位保留边界，提交时校验计划快照的 revision 与可见节点，在文件锁内完成父节点选择、校验和追加，保存成功后返回新快照。
 - Session.branch 只调整当前绑定的内存叶游标；后续追加形成分支，重启默认恢复最后写入条目。入口只能在 Agent 空闲时选择分支，Agent 不管理分支或会话字典。
 - Session 独立负责单个会话的完整消息与压缩投影，不依赖 AgentEvent 或 Agent；Agent 在 `message_end` 内部保存点先追加规范 Message、成功后再通知外部订阅者，并协调 Session 与 ContextManager，不处理 JSONL 格式。

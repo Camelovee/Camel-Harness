@@ -8,7 +8,6 @@ from enum import StrEnum
 
 from camel_harness.agent.config import CompactionSettings
 from camel_harness.agent.session import ContextSnapshot
-from camel_harness.agent.state import AgentOptions
 from camel_harness.llm import (
     LlmClient,
     LlmRequest,
@@ -73,7 +72,7 @@ class CompactionEngine:
     async def compact_if_needed(
         self,
         snapshot: ContextSnapshot,
-        options: AgentOptions,
+        model: str,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
         on_usage: Callable[[LlmUsage], None] | None = None,
@@ -103,7 +102,7 @@ class CompactionEngine:
             self._settings.context_window_tokens - self._settings.reserve_tokens
         ):
             return None
-        result = await self._compact(snapshot, options, on_usage, context_overhead_tokens)
+        result = await self._compact(snapshot, model, on_usage, context_overhead_tokens)
         if result is None:
             raise CompactionError("上下文无法在完整工具消息边界安全压缩，请减少输入或调整预算")
         return result
@@ -111,7 +110,7 @@ class CompactionEngine:
     async def _compact(
         self,
         snapshot: ContextSnapshot,
-        options: AgentOptions,
+        model: str,
         on_usage: Callable[[LlmUsage], None] | None,
         context_overhead_tokens: int,
     ) -> CompactionResult | None:
@@ -139,7 +138,7 @@ class CompactionEngine:
 
         selected = surface[:compact_end]
         replaced = tuple(node.message for node in selected)
-        summary, usage = await self._summarize(options, replaced, on_usage)
+        summary, usage = await self._summarize(model, replaced, on_usage)
         projected_tokens = _message_tokens(UserMessage("[Compacted History]\n\n" + summary))
         projected_tokens += sum(_message_tokens(node.message) for node in surface[compact_end:])
         if projected_tokens + context_overhead_tokens >= (
@@ -155,7 +154,7 @@ class CompactionEngine:
 
     async def _summarize(
         self,
-        options: AgentOptions,
+        model: str,
         messages: tuple[Message, ...],
         on_usage: Callable[[LlmUsage], None] | None,
     ) -> tuple[str, LlmUsage | None]:
@@ -193,7 +192,7 @@ class CompactionEngine:
             if attempt:
                 prompt += "\n上次摘要超过输出上限；这次进一步删去过程细节，不续写上次摘要。"
             request = LlmRequest(
-                model=options.model,
+                model=model,
                 messages=(UserMessage(transcript),),
                 system_prompt=prompt,
                 max_output_tokens=output_budget,

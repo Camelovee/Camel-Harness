@@ -48,6 +48,7 @@ src/
 - 追加式上下文投影和历史压缩；
 - SessionEvent 使用 id/parentId 构成历史树，ContextSnapshot 提供当前叶分支的只读上下文；压缩按条目 ID 定位，校验计划快照后保存并返回新快照；
 - Agent 只依赖绑定单个会话的 Session；SessionManager 在入口层管理 CRUD 和父子关系，Session 不感知 AgentEvent；`ContextManager` 统一提供压缩、ProjectRules、Skills 和 Memory 动态上下文；
+- `ContextManager.prepare()` 每 Turn 从基础提示与动态资源生成提示及可选压缩计划；Agent 协调 Session 快照读取与计划提交，再使用已提交的历史构造请求。压缩只接收模型标识与独立配置，不感知完整运行选项；
 - 一个 Agent 只绑定一个 Session 和 Workspace，运行期间支持 steering、主动停止和基于完整 JSONL 消息的恢复；
 - WebUI 提供运行中追加、停止与继续，CLI 提供运行中输入、`/cancel` 和 `/resume`；
 - SSE 仅在 Backend 传输层使用 `yield`，断开连接时显式中止对应 Run；

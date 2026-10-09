@@ -83,7 +83,13 @@ def test_context_manager_is_separate_from_session_persistence() -> None:
     assert not (PACKAGE_ROOT / "agent/compaction/context.py").exists()
     assert not list((PACKAGE_ROOT / "agent/compaction").glob("*.py"))
     assert not {"SessionManager", "JsonlSessionStorage"} & identifiers
+    assert "AgentOptions" not in identifiers
     assert not {"session.manager", "session.jsonl"} & relative_modules
+    compaction_tree = ast.parse((PACKAGE_ROOT / "agent/context/compaction.py").read_text("utf-8"))
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "AgentOptions"
+        for node in ast.walk(compaction_tree)
+    )
 
 
 def test_feature_modules_do_not_restore_ddd_layers() -> None:
@@ -288,7 +294,8 @@ def test_agent_owns_loop_and_keeps_public_surface_minimal() -> None:
         for node in agent_class.body
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("_")
     }
-    assert {"_run_turn", "_load_context", "_execute_calls"} <= private_methods
+    assert {"_run_turn", "_prepare_context", "_execute_calls"} <= private_methods
+    assert "_load_context" not in private_methods
     assert "_save_message" not in private_methods
 
 
