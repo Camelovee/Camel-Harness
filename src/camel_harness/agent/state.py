@@ -46,6 +46,11 @@ class StopReason(StrEnum):
     MODEL_LENGTH = "model_length"
     MAX_TURNS = "max_turns"
     PROVIDER_FAILED = "provider_failed"
+    SESSION_FAILED = "session_failed"
+    CONTEXT_FAILED = "context_failed"
+    RESOURCE_FAILED = "resource_failed"
+    TOOL_FAILED = "tool_failed"
+    INTERNAL_ERROR = "internal_error"
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
 

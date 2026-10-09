@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from anthropic import AsyncAnthropic
+from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
 
 from .message import (
     AssistantMessage,
@@ -36,7 +36,7 @@ from .protocol import (
 def create_anthropic_adapter(api_key: str, base_url: str | None = None) -> AnthropicLlmAdapter:
     """在 LLM 边界内创建 Anthropic 官方 SDK 适配器。"""
 
-    return AnthropicLlmAdapter(AsyncAnthropic(api_key=api_key, base_url=base_url))
+    return AnthropicLlmAdapter(AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=0))
 
 
 class AnthropicLlmAdapter(LlmAdapter):
@@ -48,6 +48,9 @@ class AnthropicLlmAdapter(LlmAdapter):
     @property
     def provider_id(self) -> str:
         return "anthropic"
+
+    async def close(self) -> None:
+        await self._client.close()
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         messages = self._convert_messages(request.messages)
@@ -94,8 +97,11 @@ class AnthropicLlmAdapter(LlmAdapter):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            yield StreamFailed(error=str(exc))
-            raise
+            retryable = isinstance(exc, APIConnectionError) or (
+                isinstance(exc, APIStatusError)
+                and (exc.status_code == 429 or exc.status_code >= 500)
+            )
+            yield StreamFailed(error=str(exc), retryable=retryable)
 
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:

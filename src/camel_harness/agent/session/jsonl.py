@@ -6,11 +6,11 @@ import json
 import logging
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TextIO
+from typing import ParamSpec, TextIO, TypeVar
 
 from camel_harness.llm import Message
 
@@ -31,6 +31,33 @@ from .metadata import SessionMetadata
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 logger = logging.getLogger(__name__)
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+async def _complete_write(action: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    """已开始的磁盘写入必须完成后才能释放会话锁和传播取消。"""
+    return await _finish_commit(asyncio.to_thread(action, *args, **kwargs))
+
+
+async def _finish_commit(operation: Awaitable[_T]) -> _T:
+    """磁盘提交及关联游标必须一起完成，不能留下半更新的绑定会话。"""
+    task = asyncio.ensure_future(operation)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            break
+    if cancelled:
+        try:
+            task.result()
+        except Exception as exc:
+            logger.warning("取消期间会话写入失败：%s", type(exc).__name__)
+        raise asyncio.CancelledError
+    return task.result()
 
 
 class JsonlSessionStorage:
@@ -51,7 +78,7 @@ class JsonlSessionStorage:
     async def create(self, metadata: SessionMetadata) -> None:
         async with self._lock(metadata.session_id):
             path = self._new_path(metadata)
-            await asyncio.to_thread(self._create_sync, path, metadata)
+            await _complete_write(self._create_sync, path, metadata)
             self._locations[metadata.session_id] = path
 
     async def append_message(
@@ -63,7 +90,7 @@ class JsonlSessionStorage:
         use_latest: bool = True,
     ) -> str:
         async with self._lock(session_id):
-            return await asyncio.to_thread(
+            return await _complete_write(
                 self._append_sync,
                 self._path(session_id),
                 message,
@@ -81,7 +108,7 @@ class JsonlSessionStorage:
         use_latest: bool = True,
     ) -> ContextSnapshot:
         async with self._lock(session_id):
-            return await asyncio.to_thread(
+            return await _complete_write(
                 self._append_compaction_sync,
                 self._path(session_id),
                 event,
@@ -133,7 +160,7 @@ class JsonlSessionStorage:
         model_id: str | None = None,
     ) -> SessionMetadata:
         async with self._lock(session_id):
-            return await asyncio.to_thread(
+            return await _complete_write(
                 self._update_metadata_sync,
                 self._path(session_id),
                 name=name,
@@ -147,7 +174,7 @@ class JsonlSessionStorage:
             path = self._path(session_id)
             if not path.exists():
                 return False
-            await asyncio.to_thread(self._delete_sync, path)
+            await _complete_write(self._delete_sync, path)
             self._locations.pop(session_id, None)
             return True
 

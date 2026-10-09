@@ -3,12 +3,10 @@
 from .agent import (
     Agent,
     AgentBusyError,
-    AgentEventListener,
     AgentNotRunningError,
     AgentResumeError,
-    Unsubscribe,
 )
-from .events import AgentEvent
+from .events import AgentEvent, AgentEventListener, Unsubscribe
 from .state import (
     AgentOptions,
     AgentRun,

@@ -123,6 +123,7 @@ class StreamFailed:
     """模型流错误；运行终态仍由 Agent 统一表达。"""
 
     error: str
+    retryable: bool = False
     type: Literal["stream_failed"] = field(default="stream_failed", init=False)
 
 
@@ -141,6 +142,10 @@ LlmStreamEvent: TypeAlias = (
 
 class LlmAdapter(ABC):
     """厂商无关的 LLM 流式协议。"""
+
+    async def close(self) -> None:
+        """释放适配器拥有的连接；无外部资源的测试实现无需覆盖。"""
+        return None
 
     @property
     @abstractmethod

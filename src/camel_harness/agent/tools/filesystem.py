@@ -1,9 +1,65 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
+
+_mutations: dict[Path, tuple[asyncio.Lock, int]] = {}
+
+
+async def _mutate_file(path: Path, action: Callable[[], int]) -> int:
+    """同一规范路径串行修改；取消不能提前释放仍在写入的线程所占的锁。"""
+
+    lock, users = _mutations.get(path, (asyncio.Lock(), 0))
+    _mutations[path] = (lock, users + 1)
+    try:
+        async with lock:
+            task = asyncio.create_task(asyncio.to_thread(action))
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+                except Exception:
+                    break
+            if cancelled:
+                # 获取异常避免无人读取的任务警告，取消仍是调用者的最终结果。
+                if not task.cancelled():
+                    task.exception()
+                raise asyncio.CancelledError
+            return task.result()
+    finally:
+        _, users = _mutations[path]
+        if users == 1:
+            del _mutations[path]
+        else:
+            _mutations[path] = (lock, users - 1)
+
+
+def _atomic_write(path: Path, content: str) -> int:
+    """完整写入同目录临时文件再替换；失败不破坏原文件或遗留临时文件。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else None
+    descriptor, raw_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(raw_path)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            data = content.encode("utf-8")
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            temporary.chmod(mode)
+        temporary.replace(path)
+        return len(data)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def resolve_in_workspace(workspace: Path, raw_path: str) -> Path:
@@ -49,7 +105,11 @@ class WriteFileTool(Tool):
     """原子覆盖工作区文件，并按需创建父目录。"""
 
     name = "write_file"
-    description = "写入工作区内 UTF-8 文件；文件存在时会覆盖原内容。"
+    description = (
+        "创建或完整覆盖工作区内 UTF-8 文件，自动创建父目录。"
+        "仅用于新文件或完整重写；局部修改优先使用 edit_file。"
+        "content 必须完整且适合单次输出额度，大文件请分阶段构建，禁止省略内容。"
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -66,14 +126,10 @@ class WriteFileTool(Tool):
         path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
         content = str(call.arguments["content"])
 
-        def write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(f".{path.name}.{call.call_id}.tmp")
-            temporary.write_text(content, encoding="utf-8")
-            temporary.replace(path)
-
-        await asyncio.to_thread(write)
-        return ToolResult(call.call_id, call.name, f"已写入 {path.relative_to(context.workspace)}")
+        size = await _mutate_file(path, lambda: _atomic_write(path, content))
+        return ToolResult(
+            call.call_id, call.name, f"已写入 {path.relative_to(context.workspace)}（{size} 字节）"
+        )
 
 
 class EditFileTool(Tool):
@@ -99,14 +155,12 @@ class EditFileTool(Tool):
         old_text = str(call.arguments["old_text"])
         new_text = str(call.arguments["new_text"])
 
-        def edit() -> None:
+        def edit() -> int:
             content = path.read_text("utf-8")
             count = content.count(old_text)
             if count != 1:
                 raise ValueError(f"old_text 必须唯一匹配，当前匹配 {count} 次")
-            temporary = path.with_name(f".{path.name}.{call.call_id}.tmp")
-            temporary.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
-            temporary.replace(path)
+            return _atomic_write(path, content.replace(old_text, new_text, 1))
 
-        await asyncio.to_thread(edit)
+        await _mutate_file(path, edit)
         return ToolResult(call.call_id, call.name, f"已编辑 {path.relative_to(context.workspace)}")

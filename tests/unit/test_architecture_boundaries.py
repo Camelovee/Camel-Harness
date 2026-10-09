@@ -203,7 +203,7 @@ def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
         "ToolCallCompleted": {"type", "tool_call"},
         "UsageUpdated": {"type", "usage"},
         "MessageCompleted": {"type", "stop_reason", "model"},
-        "StreamFailed": {"type", "error"},
+        "StreamFailed": {"type", "error", "retryable"},
     }
     assert "LlmStreamEvent" not in classes
     for name, expected in expected_events.items():

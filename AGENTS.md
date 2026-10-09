@@ -46,16 +46,21 @@ Backend / CLI -> Agent -> LLM
 - 压缩配置统一放在 `compaction` 对象，不与普通回答输出预算耦合；按 token 估算保留近期完整消息区间，截断摘要最多重试一次且不得落盘，所有已知尝试用量计入 Run，取消不重试。运行时不兼容旧 YAML 或旧平铺压缩字段。
 - WebUI 全局配置编辑由 Backend 校验并以 `0600` 权限原子保存；已存密钥不得回传，省略密钥字段须保留旧值，配置文件修改在重启后生效。
 - 厂商对象只能存在于 `camel_harness.llm`，对外统一为 `LlmStreamEvent`。
+- 规范 assistant 消息组装与流完整性校验归 LLM；Agent 负责实时事件坐标、Run 用量、消息保存点和结束后的控制流，不在组装器中引入 Session 或 Run。
+- Adapter 用 `StreamFailed(error, retryable)` 统一表达请求失败；Client 只重试首事件前的瞬时错误，SDK 不叠加重试。LLM/MCP 连接由 runtime 拥有，子 Agent 不关闭借用资源，构造失败必须清理。
 - `LlmStreamEvent` 使用具体 dataclass 的判别联合；文本、工具调用、用量和结束原因使用各自字段，不恢复通用 `type + data` 容器或泄漏厂商索引。
 - 规范消息必须使用 `Message = UserMessage | AssistantMessage | ToolResultMessage`；系统提示通过 `LlmRequest.system_prompt` 单独传递，不得恢复通用 `role/content` 消息容器。
 - 完整 AssistantMessage 保存 Provider 协议标识、请求模型、不同于请求模型的实际响应模型及厂商无关 LlmUsage；未知用量不得伪造为零。规范 input_tokens 含缓存、output_tokens 含推理，明细不重复计入总量；这些审计字段不得回传模型。
 - ToolResultMessage.details 保存工具结果的结构化附加信息；大结果使用 details.content_ref 记录文件路径、媒体类型、字节数及原始/预览字符数，不解析展示文本恢复引用，也不因引用开放工作区外的文件权限。
 - `AssistantMessage.stop_reason` 必须使用厂商无关的 `LlmStopReason`；它与 Agent Run 级 `StopReason` 是两个独立概念。
 - `length` 结束的工具调用禁止执行，必须写入错误工具结果以保持消息链完整。
+- 工具截断每个 Run 最多允许一次模型恢复 Turn，不重试历史调用或自动扩大输出额度；纯文本或再次截断结束 Run，取消、权限及 Turn/时长约束继续生效。
+- 文件写入与编辑共享规范路径的进程内串行边界；已开始的线程修改必须结束后才释放锁并传播取消，原子替换失败清理临时文件，不承诺取消回滚。
 - 模型增量实时转发；只有流正常结束后才能保存完整 assistant 消息，禁止保存 chunk。
 - 中断必须向 LLM、审批和工具协程传播；不得保存未完成 assistant，已落盘但缺少结果的工具调用必须补充错误 `ToolResultMessage`，恢复时不得自动重试历史工具。
 - `Tool` ABC 及 `ToolContext`、`ToolCall`、`ToolResult` 位于 `camel_harness.agent.tools.types`；给模型使用的 `ToolDefinition` 位于 `camel_harness.llm`，只包含最终工具名、描述和输入 Schema，不感知 namespace。
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
+- ToolExecutor 缺省权限必须保守；结果归档失败不能伪装成工具未执行。Shell 只负责输出采集和进程组清理，完整输出与预览归统一结果层管理，不提前丢弃大输出。
 - Skill 只保留发现和三层按需加载：系统上下文只列名称与描述，`load_skill` 读取正文或支持文件；不提供 Skill 写入、演化、回滚和评估链路。
 - Skill 来源为内置、项目级（工作区 `.camel/skills`）和用户级（`~/.camel/skills`），同名优先级依次递减。
 - 顶层会话默认存储在 `~/.camel/sessions/<session-id>/session.jsonl`，子会话递归存储在父会话目录的 `subagents/<session-id>/session.jsonl`；每份日志按类型追加会话头、完整消息、压缩和元数据更新。
@@ -64,6 +69,7 @@ Backend / CLI -> Agent -> LLM
 - 持久化使用 `SessionEvent` 判别联合，仅包含会话头、完整消息、压缩与元数据更新；不得持久化 AgentEvent 或新增第二份上下文日志。
 - 会话头之外的条目持久化 `id/parentId/timestamp`，构成单文件历史树；按当前叶节点恢复上下文与原始分支消息，完整树由 Session.entries 提供，不混入兄弟分支。父子 Agent 目录关系与日志内历史分支是独立概念。
 - 新建会话目录和日志使用私有权限；损坏的单份日志不得阻断其他会话的列表读取。
+- 已开始的会话提交与叶游标更新必须完成后再传播取消，不得在线程仍写入时释放会话锁或提前进入工具链修复。
 - `ContextManager` 与 `CompactionEngine` 位于 `camel_harness.agent.context`，负责动态系统上下文和历史压缩；可依赖 ProjectRules、Skills、Memory 和只读 `ContextSnapshot`，但不得持有 `SessionManager`、执行会话 CRUD 或读写 JSONL。
 - Session 包内部负责树重放；ContextNode 只保留 entry_id 与消息，不使用隐式 seq。压缩通过 firstKeptEntryId 定位保留边界，提交时校验计划快照的 revision 与可见节点，在文件锁内完成父节点选择、校验和追加，保存成功后返回新快照。
 - Session.branch 只调整当前绑定的内存叶游标；后续追加形成分支，重启默认恢复最后写入条目。入口只能在 Agent 空闲时选择分支，Agent 不管理分支或会话字典。

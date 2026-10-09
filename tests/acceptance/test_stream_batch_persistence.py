@@ -179,3 +179,4 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
     assert events[-1].type == "agent_end"
     assert events[-1].status == "failed"
     assert events[-1].error == "模拟写入失败"
+    assert events[-1].stop_reason == "session_failed"

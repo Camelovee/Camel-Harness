@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
+import signal
+import tempfile
+from dataclasses import replace
 
+from .file_result_storage import FileToolResultStorage
 from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
 
 _DANGEROUS_SHELL_PATTERNS = (
@@ -32,39 +37,66 @@ class RunShellTool(Tool):
     risk = ToolRisk.EXECUTE
     timeout_seconds = 125
 
+    def __init__(self, output_storage: FileToolResultStorage | None = None) -> None:
+        self._output_storage = output_storage
+
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         command = str(call.arguments["command"])
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
             return ToolResult(call.call_id, call.name, "危险命令已被安全规则阻止", is_error=True)
         timeout = float(call.arguments.get("timeout_seconds", 30))
-        process = await asyncio.create_subprocess_shell(
-            command,
-            cwd=context.workspace,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
+        with tempfile.TemporaryFile() as output:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=context.workspace,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout=timeout)
+            except TimeoutError:
+                await _stop_process_group(process)
+                return ToolResult(call.call_id, call.name, "Shell 命令执行超时", is_error=True)
+            except asyncio.CancelledError:
+                await _stop_process_group(process)
+                raise
+            if self._output_storage is not None:
+                result = await self._output_storage.from_file(
+                    output, call.call_id, call.name, context
+                )
+            else:
+                output.seek(0)
+                text = output.read(50_000).decode("utf-8", errors="replace")
+                truncated = output.tell() < os.fstat(output.fileno()).st_size
+                if truncated:
+                    text += "\n…输出预览已截断，当前工具未配置完整结果存储"
+                result = ToolResult(
+                    call.call_id, call.name, text, metadata={"output_truncated": truncated}
+                )
+            return replace(
+                result,
+                content=f"退出码：{process.returncode}\n{result.content}",
+                is_error=process.returncode != 0,
+                metadata={
+                    **result.metadata,
+                    "argv_preview": shlex.split(command)[:8],
+                    "exit_code": process.returncode,
+                },
+            )
+
+
+async def _stop_process_group(process: asyncio.subprocess.Process) -> None:
+    """独立进程组涵盖 Shell 后代，避免父任务取消后工具继续产生副作用。"""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except TimeoutError:
-            process.kill()
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        if sig == signal.SIGTERM:
+            try:
+                await asyncio.wait_for(process.wait(), 0.2)
+            except TimeoutError:
+                pass
+        else:
             await process.wait()
-            return ToolResult(call.call_id, call.name, "Shell 命令执行超时", is_error=True)
-        except asyncio.CancelledError:
-            if process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=2)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
-            raise
-        text = output.decode("utf-8", errors="replace")
-        if len(text) > 50_000:
-            text = f"{text[:50_000]}\n…输出已截断，共 {len(text)} 字符"
-        return ToolResult(
-            call.call_id,
-            call.name,
-            f"退出码：{process.returncode}\n{text}",
-            is_error=process.returncode != 0,
-            metadata={"argv_preview": shlex.split(command)[:8], "exit_code": process.returncode},
-        )

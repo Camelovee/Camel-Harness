@@ -109,6 +109,23 @@ async def test_basic_compaction_skips_history_below_pressure() -> None:
     assert result is None
 
 
+async def test_short_history_cannot_bypass_context_capacity_check():
+    snapshot = ContextSnapshot("entry", "entry", (ContextNode("entry", UserMessage("。" * 5000)),))
+    with pytest.raises(CompactionError, match="没有足够"):
+        await _engine().compact_if_needed(snapshot, _OPTIONS)
+
+
+async def test_disabled_compaction_does_not_disable_capacity_guard():
+    settings = CompactionSettings(enabled=False)
+    snapshot = ContextSnapshot(
+        "entry", "entry", (ContextNode("entry", UserMessage("。" * 130_000)),)
+    )
+    with pytest.raises(CompactionError, match="未开启"):
+        await CompactionEngine(LlmClient(SummaryLlm()), settings).compact_if_needed(
+            snapshot, _OPTIONS
+        )
+
+
 async def test_context_overflow_trigger_ignores_pressure_threshold() -> None:
     result = await _engine(threshold=100_000).compact_if_needed(
         _log(), _OPTIONS, trigger=CompactionTrigger.CONTEXT_OVERFLOW
@@ -467,5 +484,6 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     assert len(terminal) == 1
     assert terminal[0].status == "failed"
     assert "两次" in terminal[0].error
+    assert terminal[0].stop_reason == "context_failed"
     assert len(adapter.requests) == 2
     await agent.close()

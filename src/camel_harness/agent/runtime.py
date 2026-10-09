@@ -53,59 +53,75 @@ async def build_agent(
     if Path(metadata.workspace).resolve() != workspace.resolve():
         raise ValueError("Agent 工作区必须与会话工作区一致")
     llm = LlmClient(_build_llm_adapter(settings))
-    session = sessions.bind(session_id)
-    skills = Skills(workspace)
-    memories = MemoryStore(workspace)
-
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    await registry.register_provider(SkillToolProvider(skills))
     mcp = McpManager(workspace, workspace / settings.mcp_config)
-    await mcp.start()
-    await registry.register_provider(mcp)
-    for error in mcp.errors:
-        logger.warning("MCP 工具加载失败：%s", error)
 
-    permission = PermissionService(approval)
-    executor = ToolExecutor(
-        registry,
-        permission,
-        FileToolResultStorage(sessions.directory).normalize,
-    )
-    options = AgentOptions(
-        model=settings.model,
-        max_output_tokens=settings.max_output_tokens,
-        max_duration_seconds=settings.max_duration_seconds,
-    )
-    context = ContextManager(
-        CompactionEngine(
+    async def close_resources() -> None:
+        """组合层拥有连接，任一资源关闭失败仍尝试关闭其余资源。"""
+        try:
+            await mcp.close()
+        finally:
+            await llm.close()
+
+    try:
+        session = sessions.bind(session_id)
+        skills = Skills(workspace)
+        memories = MemoryStore(workspace)
+
+        registry = ToolRegistry()
+        result_storage = FileToolResultStorage(sessions.directory)
+        await registry.register_provider(BuiltinToolProvider(result_storage))
+        await registry.register_provider(SkillToolProvider(skills))
+        await mcp.start()
+        await registry.register_provider(mcp)
+        for error in mcp.errors:
+            logger.warning("MCP 工具加载失败：%s", error)
+
+        permission = PermissionService(approval)
+        executor = ToolExecutor(
+            registry,
+            permission,
+            result_storage.normalize,
+        )
+        options = AgentOptions(
+            model=settings.model,
+            max_output_tokens=settings.max_output_tokens,
+            max_duration_seconds=settings.max_duration_seconds,
+        )
+        context = ContextManager(
+            CompactionEngine(
+                llm,
+                settings=settings.compaction,
+            ),
+            ProjectRules(),
+            skills,
+            memories,
+        )
+        subagent = LocalSubagentRunner(
             llm,
-            settings=settings.compaction,
-        ),
-        ProjectRules(),
-        skills,
-        memories,
-    )
-    subagent = LocalSubagentRunner(
-        llm,
-        sessions,
-        registry,
-        permission,
-        context,
-        options,
-    )
-    await registry.register_provider(SubagentToolProvider(subagent.run))
+            sessions,
+            registry,
+            permission,
+            context,
+            options,
+        )
+        await registry.register_provider(SubagentToolProvider(subagent.run))
 
-    return Agent(
-        session,
-        workspace,
-        options,
-        llm,
-        registry,
-        executor,
-        context,
-        on_close=mcp.close,
-    )
+        return Agent(
+            session,
+            workspace,
+            options,
+            llm,
+            registry,
+            executor,
+            context,
+            on_close=close_resources,
+        )
+    except BaseException:
+        try:
+            await close_resources()
+        except Exception as exc:
+            logger.warning("构造失败后资源清理异常：%s", type(exc).__name__)
+        raise
 
 
 def _build_llm_adapter(settings: AgentSettings) -> LlmAdapter:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
+import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
@@ -12,6 +16,49 @@ from .tools.types import ToolCall, ToolResult
 
 MessageKind: TypeAlias = Literal["user", "assistant", "toolResult"]
 AgentEndStatus: TypeAlias = Literal["completed", "failed", "cancelled"]
+AgentEventListener = Callable[["AgentEvent"], Awaitable[None] | None]
+Unsubscribe = Callable[[], None]
+_LISTENER_TIMEOUT_SECONDS = 5
+logger = logging.getLogger(__name__)
+
+
+class _EventDispatcher:
+    """顺序交付生命周期事件并隔离故障观察者，不创建后台任务或消息队列。"""
+
+    def __init__(self) -> None:
+        self._listeners: dict[int, AgentEventListener] = {}
+        self._next_id = 0
+
+    def subscribe(self, listener: AgentEventListener) -> Unsubscribe:
+        listener_id = self._next_id
+        self._next_id += 1
+        self._listeners[listener_id] = listener
+
+        def unsubscribe() -> None:
+            self._listeners.pop(listener_id, None)
+
+        return unsubscribe
+
+    def clear(self) -> None:
+        self._listeners.clear()
+
+    async def emit(self, event: AgentEvent) -> None:
+        """有界背压不阻止真实 Run 取消；监听器自身取消只移除该监听器。"""
+
+        for listener_id, listener in tuple(self._listeners.items()):
+            try:
+                async with asyncio.timeout(_LISTENER_TIMEOUT_SECONDS):
+                    result = listener(event)
+                    if inspect.isawaitable(result):
+                        await result
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+                self._listeners.pop(listener_id, None)
+            except Exception as exc:
+                self._listeners.pop(listener_id, None)
+                logger.warning("移除故障事件订阅者：%s", type(exc).__name__)
 
 
 @dataclass(frozen=True, slots=True)

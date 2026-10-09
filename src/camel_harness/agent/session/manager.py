@@ -6,7 +6,7 @@ from pathlib import Path
 from camel_harness.llm import LlmUsage, Message
 
 from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
-from .jsonl import JsonlSessionStorage
+from .jsonl import JsonlSessionStorage, _finish_commit
 from .metadata import SessionMetadata
 
 
@@ -26,12 +26,16 @@ class Session:
 
     async def append_message(self, message: Message) -> str:
         """追加完整规范消息，不接受运行事件或流式增量。"""
-        entry_id = await self._repository.append_message(
-            self._session_id, message, leaf_id=self._leaf_id, use_latest=self._use_latest
-        )
-        if not self._use_latest:
-            self._leaf_id = entry_id
-        return entry_id
+
+        async def commit() -> str:
+            entry_id = await self._repository.append_message(
+                self._session_id, message, leaf_id=self._leaf_id, use_latest=self._use_latest
+            )
+            if not self._use_latest:
+                self._leaf_id = entry_id
+            return entry_id
+
+        return await _finish_commit(commit())
 
     async def messages(self) -> tuple[Message, ...]:
         """读取当前分支的原始完整消息；全树审计使用 entries。"""
@@ -72,12 +76,20 @@ class Session:
         event = SessionCompactionEvent(
             datetime.now(UTC).isoformat(), summary, first_kept_entry_id, tokens_before, usage
         )
-        updated = await self._repository.compact(
-            self._session_id, event, snapshot, leaf_id=self._leaf_id, use_latest=self._use_latest
-        )
-        if not self._use_latest:
-            self._leaf_id = updated.leaf_id
-        return updated
+
+        async def commit() -> ContextSnapshot:
+            updated = await self._repository.compact(
+                self._session_id,
+                event,
+                snapshot,
+                leaf_id=self._leaf_id,
+                use_latest=self._use_latest,
+            )
+            if not self._use_latest:
+                self._leaf_id = updated.leaf_id
+            return updated
+
+        return await _finish_commit(commit())
 
 
 class SessionManager:

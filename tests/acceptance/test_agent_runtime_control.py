@@ -271,7 +271,7 @@ async def test_large_usage_does_not_stop_completed_response(tmp_path) -> None:
 
 
 async def test_slow_subscriber_is_removed_without_hanging_run(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("camel_harness.agent.agent._LISTENER_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("camel_harness.agent.events._LISTENER_TIMEOUT_SECONDS", 0.01)
     agent, _ = await build_test_agent(tmp_path, "slow-observer", CompletingLlm())
     calls = 0
     events: list = []
@@ -288,6 +288,45 @@ async def test_slow_subscriber_is_removed_without_hanging_run(tmp_path, monkeypa
     assert events[-1].status == "completed"
 
 
+async def test_subscriber_self_cancellation_does_not_cancel_run(tmp_path) -> None:
+    agent, sessions = await build_test_agent(tmp_path, "observer-cancel", CompletingLlm())
+    calls = 0
+    events = []
+
+    async def cancelled_listener(event):
+        nonlocal calls
+        calls += 1
+        raise asyncio.CancelledError
+
+    agent.subscribe(cancelled_listener)
+    agent.subscribe(events.append)
+    await agent.run("完成")
+    assert calls == 1
+    assert events[-1].status == "completed"
+    assert len(await sessions.bind("observer-cancel").messages()) == 2
+
+
+async def test_sync_and_async_subscribers_preserve_order_and_unsubscribe_is_idempotent(tmp_path):
+    agent, _ = await build_test_agent(tmp_path, "observer-order", CompletingLlm())
+    delivered = []
+
+    async def async_listener(event):
+        await asyncio.sleep(0)
+        delivered.append((event.sequence, "async"))
+
+    unsubscribe = agent.subscribe(lambda event: delivered.append((event.sequence, "removed")))
+    unsubscribe()
+    unsubscribe()
+    agent.subscribe(lambda event: delivered.append((event.sequence, "sync")))
+    agent.subscribe(async_listener)
+    await agent.run("完成")
+    assert delivered
+    assert [kind for _, kind in delivered] == ["sync", "async"] * (len(delivered) // 2)
+    assert all(
+        delivered[index][0] == delivered[index + 1][0] for index in range(0, len(delivered), 2)
+    )
+
+
 async def test_failed_response_keeps_known_usage_but_not_partial_message(tmp_path):
     class FailedUsageLlm(CompletingLlm):
         async def stream(self, request):
@@ -302,3 +341,76 @@ async def test_failed_response_keeps_known_usage_but_not_partial_message(tmp_pat
     assert events[-1].status == "failed"
     assert events[-1].total_tokens == 150
     assert [message.role for message in await sessions.bind("failed-usage").messages()] == ["user"]
+
+
+async def test_steering_refreshes_dynamic_context_without_accumulating_sections(
+    tmp_path, monkeypatch
+):
+    runtime = SteerableLlm()
+    agent, _ = await build_test_agent(tmp_path, "refresh-context", runtime)
+    queries: list[str] = []
+
+    async def build_context(prompt, workspace):
+        queries.append(prompt)
+        return f"动态上下文：{prompt}"
+
+    monkeypatch.setattr(agent._context, "build_system_context", build_context)
+    task = asyncio.create_task(agent.run("先分析", system_prompt="基础提示"))
+    await runtime.started.wait()
+    await agent.steer("改为测试")
+    runtime.release.set()
+    await task
+    assert queries == ["先分析", "改为测试"]
+    assert runtime.requests[0].system_prompt == "基础提示\n\n动态上下文：先分析"
+    assert runtime.requests[1].system_prompt == "基础提示\n\n动态上下文：改为测试"
+
+
+async def test_resource_failure_is_not_classified_as_provider_failure(tmp_path, monkeypatch):
+    agent, _ = await build_test_agent(tmp_path, "resource-error", CompletingLlm())
+    events: list = []
+    agent.subscribe(events.append)
+
+    async def failed_context(*args):
+        raise OSError("规则无法读取")
+
+    monkeypatch.setattr(agent._context, "build_system_context", failed_context)
+    await agent.run("开始")
+    assert events[-1].stop_reason == "resource_failed"
+    assert events[-1].error == "规则无法读取"
+
+
+async def test_close_failure_allows_cleanup_retry(tmp_path):
+    agent, _ = await build_test_agent(tmp_path, "close-retry", CompletingLlm())
+    attempts = 0
+
+    async def close_resource():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("临时关闭失败")
+
+    agent._on_close = close_resource
+    with pytest.raises(OSError):
+        await agent.close()
+    await agent.close()
+    await agent.close()
+    assert attempts == 2
+
+
+async def test_cancelling_close_waiter_does_not_cancel_resource_cleanup(tmp_path):
+    agent, _ = await build_test_agent(tmp_path, "close-waiter", CompletingLlm())
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def close_resource():
+        entered.set()
+        await release.wait()
+
+    agent._on_close = close_resource
+    waiter = asyncio.create_task(agent.close())
+    await entered.wait()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    release.set()
+    await agent.close()
+    assert agent._closed

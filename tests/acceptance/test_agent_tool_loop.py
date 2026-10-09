@@ -83,6 +83,8 @@ class ApprovalFakeLlm(LlmAdapter):
 class TruncatedToolLlm(LlmAdapter):
     """模拟工具参数随输出长度上限被截断的响应。"""
 
+    tool_name = "write_file"
+
     @property
     def provider_id(self) -> str:
         return "fake"
@@ -91,7 +93,7 @@ class TruncatedToolLlm(LlmAdapter):
         yield ToolCallCompleted(
             ToolUseBlock(
                 "truncated-write",
-                "write_file",
+                self.tool_name,
                 {"path": "should-not-exist.txt", "content": "不应写入"},
             )
         )
@@ -134,6 +136,36 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
     assert len(results) == 4
     assert all(not result.is_error for result in results)
     assert events[-1].status == "completed"
+
+
+async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_path):
+    (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("tool-storage-failure", tmp_path, "归档失败")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    llm = LlmClient(FakeLlm())
+
+    async def failed_storage(result, context):
+        raise OSError("工具结果归档失败")
+
+    agent = Agent(
+        sessions.bind("tool-storage-failure"),
+        tmp_path,
+        AgentOptions("fake"),
+        llm,
+        registry,
+        ToolExecutor(registry, normalize_result=failed_storage),
+        ContextManager(CompactionEngine(llm)),
+    )
+    events: list = []
+    agent.subscribe(events.append)
+    await agent.run("读取")
+    assert events[-1].stop_reason == "tool_failed"
+    assert events[-1].error == "工具结果归档失败"
+    messages = await sessions.bind("tool-storage-failure").messages()
+    assert len([message for message in messages if isinstance(message, AssistantMessage)]) == 1
+    assert len([message for message in messages if isinstance(message, ToolResultMessage)]) == 2
 
 
 async def test_agent_completes_a_tool_loop(tmp_path) -> None:
@@ -301,10 +333,13 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == "内容"
 
 
-async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path) -> None:
+@pytest.mark.parametrize("tool_name", ["write_file", "mcp__remote_action"])
+async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path, tool_name) -> None:
     """达到长度上限时，工具参数即使能解析也不可执行。"""
 
-    llm = LlmClient(TruncatedToolLlm())
+    adapter = TruncatedToolLlm()
+    adapter.tool_name = tool_name
+    llm = LlmClient(adapter)
     sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
     registry = ToolRegistry()
     await registry.register_provider(BuiltinToolProvider())
@@ -329,8 +364,94 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path)
     assert events[-1].type == "agent_end"
     assert events[-1].status == "failed"
     assert events[-1].stop_reason is StopReason.MODEL_LENGTH
-    assert [message.role for message in messages] == ["user", "assistant", "toolResult"]
+    assert [message.role for message in messages] == [
+        "user",
+        "assistant",
+        "toolResult",
+        "assistant",
+        "toolResult",
+    ]
     assert isinstance(messages[1], AssistantMessage)
     assert messages[1].stop_reason is LlmStopReason.LENGTH
     assert isinstance(messages[2], ToolResultMessage)
     assert messages[2].is_error
+    assert "重新生成完整且更小的参数" in messages[2].content
+    assert "edit_file" not in messages[2].content
+    assert "文件未" not in messages[2].content
+
+
+@pytest.mark.parametrize("scenario", ["success", "text_length", "turn_limit", "cancel"])
+async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario) -> None:
+    class RecoveringLlm(TruncatedToolLlm):
+        def __init__(self):
+            self.requests = []
+
+        async def stream(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                if scenario == "text_length":
+                    yield TextDelta("未完成的文本")
+                    yield MessageCompleted(LlmStopReason.LENGTH)
+                else:
+                    async for event in super().stream(request):
+                        yield event
+            elif len(self.requests) == 2:
+                if scenario == "cancel":
+                    await asyncio.Future()
+                assert isinstance(request.messages[-1], ToolResultMessage)
+                assert request.messages[-1].is_error
+                yield ToolCallCompleted(
+                    ToolUseBlock(
+                        "small-write", "write_file", {"path": "small.txt", "content": "完整"}
+                    )
+                )
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            else:
+                yield TextDelta("已完成")
+                yield MessageCompleted(LlmStopReason.STOP)
+
+    adapter = RecoveringLlm()
+    llm = LlmClient(adapter)
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("recover", tmp_path, "截断恢复")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    agent = Agent(
+        sessions.bind("recover"),
+        tmp_path,
+        AgentOptions("fake"),
+        llm,
+        registry,
+        ToolExecutor(registry),
+        ContextManager(CompactionEngine(llm)),
+    )
+    events = []
+    agent.subscribe(events.append)
+
+    async def cancel_recovery(event):
+        if scenario == "cancel" and event.type == "turn_start" and len(adapter.requests) == 1:
+            await agent.abort()
+
+    agent.subscribe(cancel_recovery)
+    await agent.run(
+        "写文件",
+        permission_mode=PermissionMode.ACCEPT_EDITS,
+        max_turns=1 if scenario == "turn_limit" else None,
+    )
+    assert not (tmp_path / "should-not-exist.txt").exists()
+    if scenario == "success":
+        assert len(adapter.requests) == 3
+        assert (tmp_path / "small.txt").read_text() == "完整"
+        assert events[-1].status == "completed"
+    else:
+        assert not (tmp_path / "small.txt").exists()
+        assert len(adapter.requests) == 1
+        assert (
+            events[-1].stop_reason
+            is {
+                "text_length": StopReason.MODEL_LENGTH,
+                "turn_limit": StopReason.MAX_TURNS,
+                "cancel": StopReason.CANCELLED,
+            }[scenario]
+        )
+    assert sum(event.type == "agent_end" for event in events) == 1

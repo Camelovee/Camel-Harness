@@ -82,16 +82,23 @@ class CompactionEngine:
         """达到压力后总结较早消息，并返回压缩计划。"""
 
         surface = snapshot.nodes
-        if not self._settings.enabled:
-            return None
-        if len(surface) < self._settings.min_messages:
-            if trigger is CompactionTrigger.CONTEXT_OVERFLOW:
-                raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
-            return None
         messages = tuple(node.message for node in surface)
         estimated_tokens = (
             sum(_message_tokens(message) for message in messages) + context_overhead_tokens
         )
+        if not self._settings.enabled:
+            if (
+                estimated_tokens
+                >= self._settings.context_window_tokens - self._settings.reserve_tokens
+            ):
+                raise CompactionError("上下文超出安全预算且自动压缩未开启")
+            return None
+        if len(surface) < self._settings.min_messages:
+            if trigger is CompactionTrigger.CONTEXT_OVERFLOW or estimated_tokens >= (
+                self._settings.context_window_tokens - self._settings.reserve_tokens
+            ):
+                raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
+            return None
         if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < (
             self._settings.context_window_tokens - self._settings.reserve_tokens
         ):

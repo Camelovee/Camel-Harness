@@ -1,7 +1,7 @@
 """模型请求、流事件与 Provider 实现。"""
 
 from .anthropic import AnthropicLlmAdapter, create_anthropic_adapter
-from .client import LlmClient
+from .client import AssistantMessageAccumulator, LlmClient
 from .message import (
     AssistantContent,
     AssistantMessage,
@@ -33,6 +33,7 @@ from .protocol import (
 )
 
 __all__ = [
+    "AssistantMessageAccumulator",
     "StreamStarted",
     "TextDelta",
     "ReasoningDelta",

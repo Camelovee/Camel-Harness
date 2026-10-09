@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from .message import (
     AssistantMessage,
@@ -35,7 +35,7 @@ from .protocol import (
 def create_openai_adapter(api_key: str, base_url: str | None = None) -> OpenAiLlmAdapter:
     """在 LLM 边界内创建 OpenAI 官方 SDK 适配器。"""
 
-    return OpenAiLlmAdapter(AsyncOpenAI(api_key=api_key, base_url=base_url))
+    return OpenAiLlmAdapter(AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0))
 
 
 class OpenAiLlmAdapter(LlmAdapter):
@@ -47,6 +47,9 @@ class OpenAiLlmAdapter(LlmAdapter):
     @property
     def provider_id(self) -> str:
         return "openai"
+
+    async def close(self) -> None:
+        await self._client.close()
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         input_items = self._convert_messages(request.messages)
@@ -80,12 +83,20 @@ class OpenAiLlmAdapter(LlmAdapter):
         completion_state = {"has_tool_call": False}
         try:
             sdk_stream = await self._client.responses.create(**kwargs)
-            async for event in sdk_stream:
-                for mapped_event in self._map_event(event, calls, completion_state):
-                    yield mapped_event
+            try:
+                async for event in sdk_stream:
+                    for mapped_event in self._map_event(event, calls, completion_state):
+                        yield mapped_event
+            finally:
+                close = getattr(sdk_stream, "close", None) or getattr(sdk_stream, "aclose", None)
+                if close is not None:
+                    await close()
         except Exception as exc:
-            yield StreamFailed(error=str(exc))
-            raise
+            retryable = isinstance(exc, APIConnectionError) or (
+                isinstance(exc, APIStatusError)
+                and (exc.status_code == 429 or exc.status_code >= 500)
+            )
+            yield StreamFailed(error=str(exc), retryable=retryable)
 
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:

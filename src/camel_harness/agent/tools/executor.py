@@ -44,7 +44,7 @@ class ToolExecutor:
         normalize_result: ResultNormalizer | None = None,
     ) -> None:
         self._registry = registry
-        self._permission = permission
+        self._permission = permission or PermissionService()
         self._normalize_result = normalize_result
 
     async def execute(
@@ -58,32 +58,38 @@ class ToolExecutor:
         except KeyError as exc:
             return ToolResult(call.call_id, call.name, str(exc), is_error=True)
 
-        errors = validate_tool_arguments(tool.to_definition(), call.arguments)
+        try:
+            errors = validate_tool_arguments(tool.to_definition(), call.arguments)
+        except Exception as exc:
+            return ToolResult(call.call_id, call.name, f"工具参数校验失败：{exc}", is_error=True)
         if errors:
             return ToolResult(call.call_id, call.name, "；".join(errors), is_error=True)
-        if self._permission is not None:
-            request = PermissionRequest(
-                tool_name=call.name,
-                capabilities=tool.capabilities,
-                risk=tool.risk.value,
-                arguments=call.arguments,
-                mode=context.permission_mode,
-                request_id=uuid4().hex,
-                session_id=context.session_id,
-            )
+        request = PermissionRequest(
+            tool_name=call.name,
+            capabilities=tool.capabilities,
+            risk=tool.risk.value,
+            arguments=call.arguments,
+            mode=context.permission_mode,
+            request_id=uuid4().hex,
+            session_id=context.session_id,
+        )
+        try:
             decision = await self._permission.authorize(request, on_approval)
-            if decision.action is PermissionAction.DENY:
-                return ToolResult(
-                    call.call_id, call.name, f"权限拒绝：{decision.reason}", is_error=True
-                )
+        except Exception as exc:
+            return ToolResult(call.call_id, call.name, f"工具审批失败：{exc}", is_error=True)
+        if decision.action is PermissionAction.DENY:
+            return ToolResult(
+                call.call_id, call.name, f"权限拒绝：{decision.reason}", is_error=True
+            )
         try:
             result = await asyncio.wait_for(
                 tool.execute(call, context), timeout=tool.timeout_seconds
             )
-            if self._normalize_result is not None:
-                result = await self._normalize_result(result, context)
-            return result
         except TimeoutError:
             return ToolResult(call.call_id, call.name, "工具执行超时", is_error=True)
         except Exception as exc:
             return ToolResult(call.call_id, call.name, f"工具执行失败：{exc}", is_error=True)
+        # 执行可能已产生副作用；归档失败属于基础设施故障，不让模型误以为工具未执行。
+        if self._normalize_result is not None:
+            result = await self._normalize_result(result, context)
+        return result
