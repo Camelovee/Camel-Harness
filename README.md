@@ -10,6 +10,19 @@
 - 上下文：动态项目规则、Memory、Skill 三层按需加载与历史压缩。
 - 会话：本地 JSONL 历史树，保存完整消息、模型和用量，子会话与大工具结果归属对应会话。
 
+## 界面预览
+
+实际 WebUI 截图，使用临时工作区与空白配置，未调用模型。
+
+![Camel Harness 工作区首页](docs/images/webui-overview.jpg)
+
+<details>
+<summary>默认模型设置</summary>
+
+![Camel Harness 默认模型设置](docs/images/webui-settings.jpg)
+
+</details>
+
 ## 快速启动
 
 需要 Python 3.11+、Node.js 24 和 [uv](https://docs.astral.sh/uv/)。
