@@ -7,6 +7,11 @@
   "openai_base_url": null,
   "max_output_tokens": 4096,
   "max_duration_seconds": 900,
+  "memory": {
+    "enabled": true,
+    "max_entries": 5,
+    "context_tokens": 2000
+  },
   "compaction": {
     "enabled": true,
     "context_window_tokens": 128000,

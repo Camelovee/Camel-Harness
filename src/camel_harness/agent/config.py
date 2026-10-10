@@ -35,6 +35,16 @@ class CompactionSettings(BaseModel):
         return self
 
 
+class MemorySettings(BaseModel):
+    """长期记忆的自动注入预算，与压缩及回答预算相互独立。"""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = True
+    max_entries: int = Field(default=5, gt=0)
+    context_tokens: int = Field(default=2000, gt=0)
+
+
 class AgentSettings(BaseModel):
     """应用配置；仅从用户级 JSON 显式加载，默认使用 Anthropic。"""
 
@@ -44,6 +54,7 @@ class AgentSettings(BaseModel):
     model: str = "claude-sonnet-4-6"
     max_output_tokens: int = Field(default=4096, gt=0)
     compaction: CompactionSettings = Field(default_factory=CompactionSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
     max_duration_seconds: float = Field(default=900, gt=0)
     session_dir: Path = Field(default_factory=lambda: Path.home() / ".camel" / "sessions")
     mcp_config: str = ".mcp.json"

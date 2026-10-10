@@ -164,3 +164,95 @@ async def test_child_reads_its_own_archived_result_without_closing_shared_llm(tm
         str(sessions.directory(result.session_id)) in path for path in references
     )
     assert await sessions.bind("parent").messages() == ()
+
+
+@pytest.mark.parametrize("kind", list(SubagentType))
+async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_path, kind):
+    from camel_harness.agent.resources import MemoryEntry, MemoryStore
+    from camel_harness.agent.tools.memory_tools import MemoryToolProvider
+
+    memories = MemoryStore(tmp_path, tmp_path / "user-memory")
+    await memories.save(
+        MemoryEntry("language", "中文注释", "中文说明"),
+        expected_revision="0",
+        session_id="seed",
+        tool_call_id="seed",
+    )
+
+    class MemoryLlm(LlmAdapter):
+        requests = 0
+        closed = False
+
+        @property
+        def provider_id(self):
+            return "fake"
+
+        async def close(self):
+            self.closed = True
+
+        async def stream(self, request):
+            self.requests += 1
+            names = {tool.name for tool in request.tools}
+            assert {"search_memory", "read_memory"} <= names
+            assert not {"save_memory", "delete_memory"} & names
+            assert "中文说明" in request.system_prompt
+            if self.requests == 1:
+                yield ToolCallCompleted(
+                    ToolUseBlock(
+                        "read",
+                        "read_memory",
+                        {
+                            "scope": "project",
+                            "name": "language",
+                        },
+                    )
+                )
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            elif self.requests == 2:
+                assert "中文说明" in request.messages[-1].content
+                yield ToolCallCompleted(
+                    ToolUseBlock(
+                        "write",
+                        "save_memory",
+                        {
+                            "scope": "user",
+                            "name": "unauthorized",
+                            "description": "禁止",
+                            "content": "不应写入",
+                            "expected_revision": "0",
+                        },
+                    )
+                )
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            else:
+                assert request.messages[-1].is_error
+                yield TextDelta("仅完成只读记忆查询")
+                yield MessageCompleted(LlmStopReason.STOP)
+
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("parent", tmp_path, "父会话")
+    registry = ToolRegistry()
+    await registry.register_provider(MemoryToolProvider(memories))
+    adapter = MemoryLlm()
+    llm = LlmClient(adapter)
+    runner = LocalSubagentRunner(
+        llm,
+        sessions,
+        registry,
+        PermissionService(),
+        ContextManager(CompactionEngine(llm), memories=memories),
+        AgentOptions("fake"),
+    )
+    result = await runner.run(
+        SubagentRequest(
+            "查询中文注释",
+            kind,
+            tmp_path,
+            PermissionMode.YOLO,
+            "parent",
+            "delegate",
+        )
+    )
+    assert result.succeeded and result.content == "仅完成只读记忆查询"
+    assert adapter.requests == 3 and not adapter.closed
+    assert await memories.get("unauthorized", "user") is None

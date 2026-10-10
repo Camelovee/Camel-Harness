@@ -119,7 +119,14 @@ async def test_skill_discovery_does_not_read_body(tmp_path) -> None:
 
 
 async def test_memory_is_isolated_under_workspace(tmp_path) -> None:
-    memories = MemoryStore(tmp_path)
-    await memories.save(MemoryEntry("decision", "架构决策", "使用 JSONL"))
-    assert (await memories.get("decision")) == MemoryEntry("decision", "架构决策", "使用 JSONL")
+    memories = MemoryStore(tmp_path, tmp_path / "user-memory")
+    saved = await memories.save(
+        MemoryEntry("decision", "架构决策", "使用 JSONL"),
+        expected_revision="0",
+        session_id="session-1",
+        tool_call_id="call-1",
+    )
+    assert (await memories.get("decision")) == saved
+    assert saved.content == "使用 JSONL"
+    assert saved.source == {"session_id": "session-1", "tool_call_id": "call-1"}
     assert [item.name for item in await memories.list()] == ["decision"]

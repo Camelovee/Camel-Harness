@@ -70,6 +70,13 @@ class ApprovalHandler(ABC):
 def default_permission_decision(request: PermissionRequest) -> PermissionDecision:
     """提供保守且可预测的本地工具授权默认策略。"""
 
+    if "memory.write" in request.capabilities:
+        if request.mode is PermissionMode.PLAN:
+            return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止修改长期记忆")
+        return PermissionDecision(
+            PermissionAction.ASK,
+            "长期记忆修改必须确认层级和实际内容；用户级记忆影响其他项目",
+        )
     if request.mode is PermissionMode.YOLO:
         return PermissionDecision(PermissionAction.ALLOW, "YOLO 模式允许所有已注册工具")
     if request.risk == "read":

@@ -73,6 +73,13 @@ def resolve_in_workspace(workspace: Path, raw_path: str) -> Path:
     return candidate
 
 
+def _check_memory_write(workspace: Path, path: Path) -> None:
+    """通用文件工具不能绕过记忆审批，包含符号链接的规范路径别名。"""
+    roots = (workspace.resolve() / ".camel" / "memory", Path.home() / ".camel" / "memory")
+    if any(path.is_relative_to(root.resolve()) for root in roots):
+        raise ValueError("记忆目录只能通过需审批的 save_memory/delete_memory 修改")
+
+
 class ReadFileTool(Tool):
     """读取工作区内 UTF-8 文本文件。"""
 
@@ -135,6 +142,7 @@ class WriteFileTool(Tool):
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
+        _check_memory_write(context.workspace, path)
         content = str(call.arguments["content"])
 
         size = await _mutate_file(path, lambda: _atomic_write(path, content))
@@ -163,6 +171,7 @@ class EditFileTool(Tool):
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
         path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
+        _check_memory_write(context.workspace, path)
         old_text = str(call.arguments["old_text"])
         new_text = str(call.arguments["new_text"])
 

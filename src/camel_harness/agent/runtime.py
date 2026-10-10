@@ -33,13 +33,14 @@ from .tools.builtin import BuiltinToolProvider
 from .tools.file_result_storage import FileToolResultStorage
 from .tools.filesystem import ReadFileTool
 from .tools.mcp import McpManager
+from .tools.memory_tools import MemoryToolProvider
 from .tools.skill_loader import SkillToolProvider
 from .tools.subagent import SubagentRequest, SubagentResult, SubagentToolProvider, SubagentType
 
 logger = logging.getLogger(__name__)
 
 
-_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill"})
+_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill", "search_memory", "read_memory"})
 _GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
 
 
@@ -173,7 +174,7 @@ async def build_agent(
     try:
         session = sessions.bind(session_id)
         skills = Skills(workspace)
-        memories = MemoryStore(workspace)
+        memories = MemoryStore(workspace) if settings.memory.enabled else None
 
         registry = ToolRegistry()
 
@@ -186,6 +187,8 @@ async def build_agent(
         )
         await registry.register_provider(BuiltinToolProvider(result_storage))
         await registry.register_provider(SkillToolProvider(skills))
+        if memories is not None:
+            await registry.register_provider(MemoryToolProvider(memories))
         await mcp.start()
         await registry.register_provider(mcp)
         for error in mcp.errors:
@@ -210,6 +213,7 @@ async def build_agent(
             ProjectRules(),
             skills,
             memories,
+            memory_settings=settings.memory,
         )
         subagent = LocalSubagentRunner(
             llm,

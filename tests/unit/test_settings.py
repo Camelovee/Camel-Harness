@@ -136,3 +136,18 @@ def test_one_time_migration_preserves_credentials_and_never_overwrites(tmp_path:
     assert target.read_bytes() == before
     assert source.read_text(encoding="utf-8") == original
     assert sorted(path.name for path in tmp_path.iterdir()) == ["config.json", "config.yaml"]
+
+
+@pytest.mark.parametrize("field", ["max_entries", "context_tokens"])
+def test_memory_budget_validation_and_defaults(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "config.json"
+    settings = AgentSettings.load(path)
+    assert settings.memory.enabled
+    assert settings.memory.max_entries == 5
+    assert settings.memory.context_tokens == 2000
+    path.write_text(json.dumps({"memory": {field: 0}}), encoding="utf-8")
+    with pytest.raises(ValueError, match=f"memory.{field}"):
+        AgentSettings.load(path)
+    path.write_text('{"memory":{"enabled":false,"context_tokens":300}}', encoding="utf-8")
+    assert not AgentSettings.load(path).memory.enabled
+    assert AgentSettings.load(path).memory.context_tokens == 300

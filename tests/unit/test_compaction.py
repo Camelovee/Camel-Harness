@@ -273,8 +273,13 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
         "---\nname: python-style\ndescription: Python style\n---\n使用类型注解\n",
         encoding="utf-8",
     )
-    memories = MemoryStore(tmp_path)
-    await memories.save(MemoryEntry("architecture", "architecture decision", "保持线性会话"))
+    memories = MemoryStore(tmp_path, tmp_path / "user-memory")
+    await memories.save(
+        MemoryEntry("architecture", "architecture decision", "保持线性会话"),
+        expected_revision="0",
+        session_id="test",
+        tool_call_id="call",
+    )
     context = ContextManager(
         CompactionEngine(LlmClient(SummaryLlm())),
         skills=skills,

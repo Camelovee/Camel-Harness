@@ -18,3 +18,16 @@ async def test_eval_grader_reports_a_real_failure() -> None:
     result = await run_task(task, "fake", "fixture")
     assert result["passed"] is False
     assert result["failures"] == ["answer_contains"]
+
+
+async def test_memory_protocol_compares_enabled_and_disabled_without_paid_models():
+    from evals.memory_protocol import run_suite as run_memory_suite
+
+    report = await run_memory_suite()
+    assert report["kind"] == "memory_context_protocol"
+    assert report["provider"] == "fake"
+    assert report["passed"] == report["total"] == 6
+    for result in report["results"]:
+        assert [mode["enabled"] for mode in result["modes"]] == [False, True]
+        assert all(mode["wrong_references"] == 0 for mode in result["modes"])
+        assert all(mode["missing_complete_conditions"] == 0 for mode in result["modes"])

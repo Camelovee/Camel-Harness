@@ -66,6 +66,8 @@ Backend / CLI -> Agent -> LLM
 - MCP SDK 上下文由 McpManager 的唯一连接任务进入和退出，调用方只等待初始化与关闭；子 Agent 的完整组合位于 runtime，委派工具模块不得构造 Agent。
 - Skill 只保留发现和三层按需加载：系统上下文只列名称与描述，`load_skill` 读取正文或支持文件；不提供 Skill 写入、演化、回滚和评估链路。
 - Skill 来源为内置、项目级（工作区 `.camel/skills`）和用户级（`~/.camel/skills`），同名优先级依次递减。
+- Memory 使用项目 `.camel/memory` 与用户 `~/.camel/memory` 两层独立 JSON 条目，同名项目覆盖用户；ContextManager 只做预算内检索，不自动提取、改写记忆或持久化会话摘要。关闭记忆时不注入正文或注册工具。
+- 记忆写入和删除必须通过专用工具，PLAN 禁止，其他模式包括 YOLO 均需审批；版本校验与文件提交共用根目录文件锁，来源由可信工具上下文记录。通用写入、编辑工具禁止修改受管理记忆目录；子 Agent 只有只读记忆能力。Shell 非沙箱，不承诺阻止任意代码绕过。
 - 顶层会话默认存储在 `~/.camel/sessions/<session-id>/session.jsonl`，子会话递归存储在父会话目录的 `subagents/<session-id>/session.jsonl`；每份日志按类型追加会话头、完整消息、压缩和元数据更新。
 - 只有完整规范消息的 `message_end` 可触发消息持久化；Provider 增量、未完成 assistant 和临时审批事件不得写入会话日志。
 - 原始消息、模型上下文和元数据由同一日志分别投影；不在运行时兼容旧格式。

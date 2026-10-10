@@ -52,6 +52,7 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
                 "max_output_tokens": 1234,
                 "openai_api_key": "other-secret",
                 "compaction": {"max_output_tokens": 6000},
+                "memory": {"enabled": False, "context_tokens": 300},
             }
         ),
         encoding="utf-8",
@@ -78,6 +79,8 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
         assert AgentSettings.load(path).openai_api_key == "other-secret"
         assert AgentSettings.load(path).max_output_tokens == 1234
         assert AgentSettings.load(path).compaction.max_output_tokens == 6000
+        assert not AgentSettings.load(path).memory.enabled
+        assert AgentSettings.load(path).memory.context_tokens == 300
         assert AgentSettings.load(path).model == "custom-default"
         assert AgentSettings.load(path).anthropic_base_url == "https://example.test/anthropic"
 
