@@ -14,6 +14,7 @@ from .message import (
 )
 from .protocol import (
     LlmAdapter,
+    LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
     MessageCompleted,
@@ -128,7 +129,12 @@ class LlmClient:
                     await close()
             if failure is None:
                 return
-            if emitted or not failure.retryable or attempt >= self._max_attempts:
+            if (
+                emitted
+                or failure.code is LlmErrorCode.CONTEXT_OVERFLOW
+                or not failure.retryable
+                or attempt >= self._max_attempts
+            ):
                 yield failure
                 return
             await asyncio.sleep(0.25 * (2 ** (attempt - 1)))

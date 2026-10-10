@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
+    LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
@@ -105,3 +106,17 @@ async def test_retry_exhaustion_delivers_last_failure_once(monkeypatch):
     events = [event async for event in LlmClient(adapter).stream(LlmRequest("fake", ()))]
     assert adapter.calls == 3
     assert events == [StreamFailed("暂时失败", retryable=True)]
+
+
+async def test_context_overflow_never_retries_unchanged_request_even_if_marked_transient():
+    class OverflowAdapter(FailedEventAdapter):
+        async def stream(self, request):
+            self.calls += 1
+            yield StreamFailed("上下文超限", retryable=True, code=LlmErrorCode.CONTEXT_OVERFLOW)
+
+    adapter = OverflowAdapter()
+    events = [event async for event in LlmClient(adapter).stream(LlmRequest("fake", ()))]
+    assert adapter.calls == 1
+    assert events == [
+        StreamFailed("上下文超限", retryable=True, code=LlmErrorCode.CONTEXT_OVERFLOW)
+    ]

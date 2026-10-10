@@ -23,7 +23,7 @@ class BuiltinToolProvider(ToolProvider):
 
     async def discover(self) -> tuple[Tool, ...]:
         return (
-            ReadFileTool(),
+            ReadFileTool(self._output_storage.resolve_read_path if self._output_storage else None),
             WriteFileTool(),
             EditFileTool(),
             RunShellTool(self._output_storage),

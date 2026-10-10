@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from camel_harness.llm import LlmUsage, Message
+from camel_harness.llm import LlmUsage, Message, ToolResultMessage
 
 from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
 from .jsonl import JsonlSessionStorage, _finish_commit
@@ -48,6 +48,16 @@ class Session:
         return await self._repository.context_snapshot(
             self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
         )
+
+    async def tool_result_paths(self) -> frozenset[Path]:
+        """投影当前原始分支已登记的引用，压缩不撤销原始消息授权。"""
+        paths: set[Path] = set()
+        for message in await self.messages():
+            if isinstance(message, ToolResultMessage):
+                reference = message.details.get("content_ref")
+                if isinstance(reference, dict) and isinstance(reference.get("path"), str):
+                    paths.add(Path(reference["path"]))
+        return frozenset(paths)
 
     async def entries(self) -> tuple[SessionEntry, ...]:
         """读取整棵历史树供审计；运行与恢复使用当前分支，不混入兄弟分支。"""

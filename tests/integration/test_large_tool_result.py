@@ -7,6 +7,7 @@ from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import ToolContext, ToolResult
 from camel_harness.agent.tools.file_result_storage import (
     FileToolResultStorage,
+    ToolResultStorageError,
 )
 
 
@@ -78,12 +79,14 @@ async def test_result_storage_rejects_missing_session_and_symlink(tmp_path) -> N
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     store = FileToolResultStorage(sessions.directory, max_inline_chars=5)
     result = ToolResult("call", "read_file", "123456")
-    with pytest.raises(KeyError, match="会话不存在"):
+    with pytest.raises(ToolResultStorageError, match="会话不存在") as missing:
         await store.normalize(result, ToolContext("missing", tmp_path))
+    assert isinstance(missing.value.__cause__, KeyError)
     await sessions.create("session-1", tmp_path, "测试")
     outside = tmp_path / "outside"
     outside.mkdir()
     (sessions.directory("session-1") / "tool-results").symlink_to(outside)
-    with pytest.raises(ValueError, match="符号链接"):
+    with pytest.raises(ToolResultStorageError, match="符号链接") as symlink:
         await store.normalize(result, ToolContext("session-1", tmp_path))
+    assert isinstance(symlink.value.__cause__, ValueError)
     assert not list(outside.iterdir())

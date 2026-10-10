@@ -4,11 +4,22 @@ import pytest
 
 from camel_harness.agent import AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.runtime import LocalSubagentRunner
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import PermissionMode, PermissionService, ToolRegistry
-from camel_harness.agent.tools.subagent import LocalSubagentRunner, SubagentRequest, SubagentType
-from camel_harness.llm import LlmAdapter, LlmClient, StreamFailed, TextDelta
+from camel_harness.agent.tools.subagent import SubagentRequest, SubagentType
+from camel_harness.llm import (
+    LlmAdapter,
+    LlmClient,
+    LlmStopReason,
+    MessageCompleted,
+    StreamFailed,
+    TextDelta,
+    ToolCallCompleted,
+    ToolResultMessage,
+    ToolUseBlock,
+)
 
 
 class ChildLlm(LlmAdapter):
@@ -79,3 +90,77 @@ async def test_parent_cancellation_closes_child_owned_task(tmp_path):
     assert [message.role for message in await sessions.bind(children[0].session_id).messages()] == [
         "user"
     ]
+
+
+async def test_child_reads_its_own_archived_result_without_closing_shared_llm(tmp_path):
+    from camel_harness.agent.tools.builtin import BuiltinToolProvider
+
+    class ReadingLlm(LlmAdapter):
+        requests = 0
+        closed = False
+
+        @property
+        def provider_id(self):
+            return "fake"
+
+        async def close(self):
+            self.closed = True
+
+        async def stream(self, request):
+            self.requests += 1
+            if self.requests == 1:
+                yield ToolCallCompleted(ToolUseBlock("source", "read_file", {"path": "source.txt"}))
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            elif self.requests == 2:
+                result = request.messages[-1]
+                assert isinstance(result, ToolResultMessage)
+                path = result.details["content_ref"]["path"]
+                yield ToolCallCompleted(
+                    ToolUseBlock("reference", "read_file", {"path": path, "max_lines": 1})
+                )
+                yield MessageCompleted(LlmStopReason.TOOL_USE)
+            else:
+                result = request.messages[-1]
+                assert isinstance(result, ToolResultMessage) and not result.is_error
+                assert "第一行" in result.content
+                yield TextDelta("已读取子会话引用")
+                yield MessageCompleted(LlmStopReason.STOP)
+
+    (tmp_path / "source.txt").write_text("第一行\n" + "内容" * 15000, encoding="utf-8")
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("parent", tmp_path, "父会话")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    adapter = ReadingLlm()
+    llm = LlmClient(adapter)
+    runner = LocalSubagentRunner(
+        llm,
+        sessions,
+        registry,
+        PermissionService(),
+        ContextManager(CompactionEngine(llm)),
+        AgentOptions("fake"),
+    )
+    result = await runner.run(
+        SubagentRequest(
+            "读取文件及引用",
+            SubagentType.EXPLORE,
+            tmp_path,
+            PermissionMode.DEFAULT,
+            "parent",
+            "delegate",
+        )
+    )
+    assert result.succeeded and result.content == "已读取子会话引用"
+    assert adapter.requests == 3
+    assert not adapter.closed
+    messages = await sessions.bind(result.session_id).messages()
+    references = [
+        message.details["content_ref"]["path"]
+        for message in messages
+        if isinstance(message, ToolResultMessage) and "content_ref" in message.details
+    ]
+    assert references and all(
+        str(sessions.directory(result.session_id)) in path for path in references
+    )
+    assert await sessions.bind("parent").messages() == ()

@@ -19,6 +19,7 @@ from .message import (
 )
 from .protocol import (
     LlmAdapter,
+    LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
     MessageCompleted,
@@ -101,7 +102,34 @@ class AnthropicLlmAdapter(LlmAdapter):
                 isinstance(exc, APIStatusError)
                 and (exc.status_code == 429 or exc.status_code >= 500)
             )
-            yield StreamFailed(error=str(exc), retryable=retryable)
+            code = self._error_code(exc)
+            yield StreamFailed(error=str(exc), retryable=retryable and code is None, code=code)
+
+    @staticmethod
+    def _error_code(error: Exception) -> LlmErrorCode | None:
+        """只识别请求错误正文，避免异常中的请求回显误触发压缩。"""
+
+        # SDK 对 SSE error 使用原 HTTP 200 构造 APIStatusError，正文仍需严格识别。
+        if not isinstance(error, APIStatusError) or error.status_code not in {200, 400}:
+            return None
+        body = error.body
+        if not isinstance(body, dict):
+            return None
+        detail = body.get("error", body)
+        if not isinstance(detail, dict):
+            return None
+        if detail.get("code") == "context_length_exceeded":
+            return LlmErrorCode.CONTEXT_OVERFLOW
+        message = detail.get("message", "")
+        if (
+            detail.get("type") == "invalid_request_error"
+            and isinstance(message, str)
+            and message.lower()
+            .replace("`", "")
+            .startswith(("prompt is too long", "input length and max_tokens exceed context limit"))
+        ):
+            return LlmErrorCode.CONTEXT_OVERFLOW
+        return None
 
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:

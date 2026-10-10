@@ -8,6 +8,7 @@ from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from camel_harness.llm import ToolDefinition
 
+from .file_result_storage import ToolResultStorageError
 from .permissions import (
     ApprovalPendingListener,
     PermissionAction,
@@ -87,6 +88,8 @@ class ToolExecutor:
             )
         except TimeoutError:
             return ToolResult(call.call_id, call.name, "工具执行超时", is_error=True)
+        except ToolResultStorageError:
+            raise
         except Exception as exc:
             return ToolResult(call.call_id, call.name, f"工具执行失败：{exc}", is_error=True)
         # 执行可能已产生副作用；归档失败属于基础设施故障，不让模型误以为工具未执行。

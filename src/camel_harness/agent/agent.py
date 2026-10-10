@@ -10,6 +10,7 @@ from camel_harness.llm import (
     AssistantMessage,
     AssistantMessageAccumulator,
     LlmClient,
+    LlmErrorCode,
     LlmRequest,
     LlmStopReason,
     LlmStreamEventType,
@@ -21,23 +22,23 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-from .context import ContextManager, ContextResourceError
+from .context import CompactionTrigger, ContextManager, ContextResourceError
 from .events import (
+    AgentEndEvent,
+    AgentEndStatus,
     AgentEvent,
     AgentEventListener,
+    AgentStartEvent,
+    ApprovalRequestedEvent,
     MessageEndEvent,
+    MessageStartEvent,
+    MessageUpdateEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
     Unsubscribe,
     _EventDispatcher,
-    agent_end_event,
-    agent_start_event,
-    approval_requested_event,
-    message_end_event,
-    message_start_event,
-    message_update_event,
-    tool_execution_end_event,
-    tool_execution_start_event,
-    turn_end_event,
-    turn_start_event,
 )
 from .session import Session, analyze_resume
 from .state import (
@@ -73,6 +74,10 @@ class AgentNotRunningError(RuntimeError):
 
 class AgentResumeError(RuntimeError):
     """Session 尾部不满足恢复条件。"""
+
+
+class _ContextOverflowError(RuntimeError):
+    """首个流事件前拒绝的超限请求，可在修改上下文后重发。"""
 
 
 class Agent:
@@ -156,17 +161,12 @@ class Agent:
     ) -> None:
         """从 Session 最后一个完整且可继续的消息边界创建新 Run。"""
 
-        messages = await self._session.messages()
-        plan = analyze_resume(messages)
-        if not plan.resumable:
-            raise AgentResumeError(plan.reason)
         control = await self._start_run(
             prompt=None,
             system_prompt=system_prompt,
             permission_mode=permission_mode,
             max_turns=max_turns,
             thinking=thinking,
-            initial_tool_results=plan.missing_tool_results,
         )
         await self._wait_for_control(control)
 
@@ -233,7 +233,6 @@ class Agent:
         permission_mode: PermissionMode,
         max_turns: int | None,
         thinking: bool | None,
-        initial_tool_results: tuple[ToolResultMessage, ...] = (),
     ) -> RunControl:
         """原子登记活动 Run，并把执行任务交给 Agent 持有。"""
 
@@ -247,6 +246,13 @@ class Agent:
                 raise RuntimeError("Agent 已关闭")
             if self._run_control is not None:
                 raise AgentBusyError("Agent 正在运行，请使用 steer() 或等待完成")
+            initial_tool_results: tuple[ToolResultMessage, ...] = ()
+            if prompt is None:
+                # 空闲检查与恢复边界读取共享启动锁，避免使用并发 Run 的过期计划。
+                plan = analyze_resume(await self._session.messages())
+                if not plan.resumable:
+                    raise AgentResumeError(plan.reason)
+                initial_tool_results = plan.missing_tool_results
             run = AgentRun(
                 session_id=self._session_id,
                 run_id=uuid4().hex,
@@ -279,16 +285,27 @@ class Agent:
 
         await self._events.emit(event)
 
-    async def _finish_message(self, run: AgentRun, event: MessageEndEvent) -> None:
+    async def _finish_message(
+        self, run: AgentRun, turn_id: str, message_id: str, message: Message
+    ) -> None:
         """先保存完整消息，再确认完成；通知失败不撤销已保存的消息。"""
 
         try:
-            await self._session.append_message(event.message)
+            await self._session.append_message(message)
         except Exception:
             if run.status is RunStatus.RUNNING:
                 run.fail(StopReason.SESSION_FAILED)
             raise
-        await self._emit(event)
+        await self._emit(
+            MessageEndEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                message_id=message_id,
+                message=message,
+            )
+        )
 
     async def _execute_run(
         self,
@@ -306,7 +323,11 @@ class Agent:
         run.start()
         error: str | None = None
         try:
-            await self._emit(agent_start_event(run))
+            await self._emit(
+                AgentStartEvent(
+                    session_id=run.session_id, run_id=run.run_id, sequence=run.next_sequence()
+                )
+            )
             if control.abort_requested:
                 raise asyncio.CancelledError
             async with asyncio.timeout(options.max_duration_seconds):
@@ -369,7 +390,22 @@ class Agent:
                         await self._repair_dangling_tool_calls(run)
                     except Exception as exc:
                         error = f"{error or '运行未完成'}；工具链修复失败：{exc}"
-                await self._emit(agent_end_event(run, error))
+                status: AgentEndStatus = "failed"
+                if run.status is RunStatus.COMPLETED:
+                    status = "completed"
+                elif run.status is RunStatus.CANCELLED:
+                    status = "cancelled"
+                await self._emit(
+                    AgentEndEvent(
+                        session_id=run.session_id,
+                        run_id=run.run_id,
+                        sequence=run.next_sequence(),
+                        status=status,
+                        stop_reason=run.stop_reason,
+                        total_tokens=run.total_tokens,
+                        error=error,
+                    )
+                )
             finally:
                 async with self._run_lock:
                     if self._run_control is control:
@@ -398,12 +434,23 @@ class Agent:
         for result in plan.missing_tool_results:
             await self._emit_complete_message(run, "interruption-repair", result)
 
-    async def _emit_complete_message(self, run: AgentRun, turn_id: str, message: Message) -> None:
-        """恢复修复也走消息事件，避免出现绕过会话订阅者的保存路径。"""
+    async def _emit_complete_message(
+        self, run: AgentRun, turn_id: str, message: Message, *, message_id: str | None = None
+    ) -> None:
+        """非流式完整消息共享开始、保存和结束路径。"""
 
-        message_id = uuid4().hex
-        await self._emit(message_start_event(run, turn_id, message_id, message.role))
-        await self._finish_message(run, message_end_event(run, turn_id, message_id, message))
+        message_id = message_id or uuid4().hex
+        await self._emit(
+            MessageStartEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                message_id=message_id,
+                role=message.role,
+            )
+        )
+        await self._finish_message(run, turn_id, message_id, message)
 
     async def close(self) -> None:
         """幂等关闭 Agent 持有的外部连接。"""
@@ -438,14 +485,19 @@ class Agent:
 
         run.next_turn()
         turn_id = uuid4().hex
-        await self._emit(turn_start_event(run, turn_id))
-        if user_message is not None:
-            user_message_id = uuid4().hex
-            await self._emit(message_start_event(run, turn_id, user_message_id, "user"))
-            await self._finish_message(
-                run, message_end_event(run, turn_id, user_message_id, user_message)
+        await self._emit(
+            TurnStartEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                turn=run.turn,
             )
+        )
+        if user_message is not None:
+            await self._emit_complete_message(run, turn_id, user_message)
         definitions = self._tools.llm_definitions()
+        base_system_prompt = system_prompt
         system_prompt, history = await self._prepare_context(
             run, options.model, system_prompt, context_query, definitions
         )
@@ -458,33 +510,68 @@ class Agent:
             thinking=options.thinking,
         )
         assistant_message_id = uuid4().hex
-        await self._emit(message_start_event(run, turn_id, assistant_message_id, "assistant"))
-        try:
-            assistant_message, calls = await self._collect_assistant_message(
-                run,
-                turn_id,
-                assistant_message_id,
-                request,
+        await self._emit(
+            MessageStartEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                message_id=assistant_message_id,
+                role="assistant",
             )
-        except Exception:
-            run.fail(StopReason.PROVIDER_FAILED)
-            raise
-        await self._finish_message(
-            run, message_end_event(run, turn_id, assistant_message_id, assistant_message)
         )
+        while True:
+            try:
+                assistant_message, calls = await self._collect_assistant_message(
+                    run,
+                    turn_id,
+                    assistant_message_id,
+                    request,
+                )
+                break
+            except _ContextOverflowError as exc:
+                if run.context_overflow_recovery_used:
+                    run.fail(StopReason.CONTEXT_FAILED)
+                    raise RuntimeError(
+                        "上下文溢出恢复次数已用尽（每 Run 最多一次）；"
+                        f"请减少输入或调整 compaction 配置：{exc}"
+                    ) from exc
+                # 同一 Turn 只重发尚未生成内容的模型请求，不重存输入或重跑工具。
+                run.context_overflow_recovery_used = True
+                system_prompt, history = await self._prepare_context(
+                    run,
+                    options.model,
+                    base_system_prompt,
+                    context_query,
+                    definitions,
+                    trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+                )
+                request = replace(request, messages=history, system_prompt=system_prompt)
+            except Exception:
+                run.fail(StopReason.PROVIDER_FAILED)
+                raise
+        await self._finish_message(run, turn_id, assistant_message_id, assistant_message)
 
-        tool_results: list[ToolResultMessage] = []
+        tool_results: tuple[ToolResultMessage, ...] = ()
         if assistant_message.stop_reason is LlmStopReason.LENGTH:
-            await self._reject_truncated_calls(run, turn_id, calls, tool_results)
+            tool_results = await self._reject_truncated_calls(run, turn_id, calls)
         elif assistant_message.stop_reason is LlmStopReason.TOOL_USE:
-            await self._execute_calls(
+            tool_results = await self._execute_calls(
                 run=run,
                 turn_id=turn_id,
                 calls=calls,
                 permission_mode=permission_mode,
+            )
+        await self._emit(
+            TurnEndEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                message=assistant_message,
                 tool_results=tool_results,
             )
-        await self._emit(turn_end_event(run, turn_id, assistant_message, tuple(tool_results)))
+        )
         return assistant_message.stop_reason, bool(calls)
 
     async def _collect_assistant_message(
@@ -497,6 +584,7 @@ class Agent:
         """实时发送模型增量，仅在完整结束后组装规范消息。"""
 
         accumulator = AssistantMessageAccumulator(self._llm.provider_id, request.model)
+        started = False
         try:
             async for llm_event in self._llm.stream(request):
                 accumulator.feed(llm_event)
@@ -504,9 +592,21 @@ class Agent:
                     LlmStreamEventType.STREAM_STARTED,
                     LlmStreamEventType.MESSAGE_COMPLETED,
                 }:
-                    await self._emit(message_update_event(run, turn_id, message_id, llm_event))
+                    await self._emit(
+                        MessageUpdateEvent(
+                            session_id=run.session_id,
+                            run_id=run.run_id,
+                            sequence=run.next_sequence(),
+                            turn_id=turn_id,
+                            message_id=message_id,
+                            assistant_event=llm_event,
+                        )
+                    )
                 if isinstance(llm_event, StreamFailed):
+                    if llm_event.code is LlmErrorCode.CONTEXT_OVERFLOW and not started:
+                        raise _ContextOverflowError(llm_event.error)
                     raise RuntimeError(llm_event.error)
+                started = True
         finally:
             # 失败或取消也保留已知消耗，但绝不保存未完成 assistant。
             if accumulator.usage is not None:
@@ -529,6 +629,8 @@ class Agent:
         system_prompt: str,
         query: str,
         tools: tuple[ToolDefinition, ...],
+        *,
+        trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> tuple[str, tuple[Message, ...]]:
         """协调只读上下文准备与会话提交，不实现资源组装或压缩策略。"""
 
@@ -548,6 +650,7 @@ class Agent:
                 ),
                 system_prompt=system_prompt,
                 tools=tools,
+                trigger=trigger,
             )
         except ContextResourceError:
             run.fail(StopReason.RESOURCE_FAILED)
@@ -556,6 +659,9 @@ class Agent:
             run.fail(StopReason.CONTEXT_FAILED)
             raise
         compacted = prepared.compaction
+        if compacted is None and trigger is CompactionTrigger.CONTEXT_OVERFLOW:
+            run.fail(StopReason.CONTEXT_FAILED)
+            raise RuntimeError("上下文溢出恢复未生成安全压缩计划，未重发请求")
         if compacted is not None:
             try:
                 snapshot = await self._session.compact(
@@ -575,12 +681,22 @@ class Agent:
         run: AgentRun,
         turn_id: str,
         calls: list[ToolCall],
-        tool_results: list[ToolResultMessage],
-    ) -> None:
+    ) -> tuple[ToolResultMessage, ...]:
         """闭合被长度截断的工具消息链，但不执行参数。"""
 
+        tool_results: list[ToolResultMessage] = []
         for call in calls:
-            await self._emit(tool_execution_start_event(run, turn_id, call))
+            await self._emit(
+                ToolExecutionStartEvent(
+                    session_id=run.session_id,
+                    run_id=run.run_id,
+                    sequence=run.next_sequence(),
+                    turn_id=turn_id,
+                    call_id=call.call_id,
+                    name=call.name,
+                    arguments=call.arguments,
+                )
+            )
             result = ToolResult(
                 call.call_id,
                 call.name,
@@ -588,7 +704,9 @@ class Agent:
                 "请重新生成完整且更小的参数，不要重复输出同一份超长内容。",
                 is_error=True,
             )
-            await self._record_tool_result(run, turn_id, result, tool_results)
+            tool_results.append(await self._record_tool_result(run, turn_id, result))
+
+        return tuple(tool_results)
 
     async def _execute_calls(
         self,
@@ -597,12 +715,22 @@ class Agent:
         turn_id: str,
         calls: list[ToolCall],
         permission_mode: PermissionMode,
-        tool_results: list[ToolResultMessage],
-    ) -> None:
+    ) -> tuple[ToolResultMessage, ...]:
         """串行执行当前 Turn 的工具调用并实时投影审批事件。"""
 
+        tool_results: list[ToolResultMessage] = []
         for call in calls:
-            await self._emit(tool_execution_start_event(run, turn_id, call))
+            await self._emit(
+                ToolExecutionStartEvent(
+                    session_id=run.session_id,
+                    run_id=run.run_id,
+                    sequence=run.next_sequence(),
+                    turn_id=turn_id,
+                    call_id=call.call_id,
+                    name=call.name,
+                    arguments=call.arguments,
+                )
+            )
 
             async def on_approval(
                 request_id: str,
@@ -611,8 +739,18 @@ class Agent:
                 current_call: ToolCall = call,
             ) -> None:
                 await self._emit(
-                    approval_requested_event(
-                        run, turn_id, current_call, request_id, request, reason
+                    ApprovalRequestedEvent(
+                        session_id=run.session_id,
+                        run_id=run.run_id,
+                        sequence=run.next_sequence(),
+                        turn_id=turn_id,
+                        request_id=request_id,
+                        call_id=current_call.call_id,
+                        name=current_call.name,
+                        capabilities=tuple(sorted(request.capabilities)),
+                        risk=request.risk,
+                        arguments=request.arguments,
+                        reason=reason,
                     )
                 )
 
@@ -625,20 +763,29 @@ class Agent:
             except Exception:
                 run.fail(StopReason.TOOL_FAILED)
                 raise
-            await self._record_tool_result(run, turn_id, result, tool_results)
+            tool_results.append(await self._record_tool_result(run, turn_id, result))
+
+        return tuple(tool_results)
 
     async def _record_tool_result(
         self,
         run: AgentRun,
         turn_id: str,
         result: ToolResult,
-        tool_results: list[ToolResultMessage],
-    ) -> None:
-        """完整保存工具结果后发送消息事件，保持恢复所需的消息链。"""
+    ) -> ToolResultMessage:
+        """完整保存工具结果后返回，保持恢复所需的消息链。"""
 
-        await self._emit(tool_execution_end_event(run, turn_id, result))
+        await self._emit(
+            ToolExecutionEndEvent(
+                session_id=run.session_id,
+                run_id=run.run_id,
+                sequence=run.next_sequence(),
+                turn_id=turn_id,
+                result=result,
+            )
+        )
         message = result.to_message()
-        tool_results.append(message)
-        message_id = f"tool-{result.call_id}"
-        await self._emit(message_start_event(run, turn_id, message_id, "toolResult"))
-        await self._finish_message(run, message_end_event(run, turn_id, message_id, message))
+        await self._emit_complete_message(
+            run, turn_id, message, message_id=f"tool-{result.call_id}"
+        )
+        return message

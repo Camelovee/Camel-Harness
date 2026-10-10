@@ -6,6 +6,7 @@ import pytest
 from camel_backend.approval import WebApproval
 from camel_harness import Agent, AgentOptions, StopReason
 from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.runtime import LocalSubagentRunner
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import (
@@ -15,7 +16,7 @@ from camel_harness.agent.tools import (
     ToolRegistry,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
-from camel_harness.agent.tools.subagent import LocalSubagentRunner, SubagentRequest, SubagentType
+from camel_harness.agent.tools.subagent import SubagentRequest, SubagentType
 from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
@@ -200,6 +201,16 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     assert len({event.run_id for event in events}) == 1
     assert [event.type for event in events].count("turn_start") == 2
     assert [event.type for event in events].count("turn_end") == 2
+    turns = [event for event in events if event.type == "turn_end"]
+    assert isinstance(turns[0].tool_results, tuple)
+    assert [message.call_id for message in turns[0].tool_results] == ["call-1", "call-2"]
+    assert turns[1].tool_results == ()
+    saved_results = tuple(
+        event.message
+        for event in events
+        if event.type == "message_end" and isinstance(event.message, ToolResultMessage)
+    )
+    assert turns[0].tool_results == saved_results
     assert any(event.type == "tool_execution_end" for event in events)
     assert "已读取文件" == "".join(
         str(event.assistant_event.text)

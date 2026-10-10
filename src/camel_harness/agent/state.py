@@ -67,6 +67,7 @@ class AgentRun:
     sequence: int = 0
     stop_reason: StopReason | None = None
     total_tokens: int = 0
+    context_overflow_recovery_used: bool = False
 
     def start(self) -> None:
         if self.status is not RunStatus.IDLE:

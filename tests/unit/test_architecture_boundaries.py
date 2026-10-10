@@ -113,6 +113,23 @@ def test_tool_contract_lives_in_agent_tools() -> None:
     assert "ToolDefinition" in protocol_names
 
 
+def test_subagent_composition_belongs_to_runtime() -> None:
+    """委派工具只声明协议，不反向组合完整 Agent。"""
+    tool_tree = ast.parse((PACKAGE_ROOT / "agent/tools/subagent.py").read_text("utf-8"))
+    names = {node.id for node in ast.walk(tool_tree) if isinstance(node, ast.Name)}
+    assert (
+        not {"Agent", "SessionManager", "ContextManager", "ToolExecutor", "LocalSubagentRunner"}
+        & names
+    )
+    classes = {node.name for node in tool_tree.body if isinstance(node, ast.ClassDef)}
+    assert "LocalSubagentRunner" not in classes
+    runtime_tree = ast.parse((PACKAGE_ROOT / "agent/runtime.py").read_text("utf-8"))
+    assert any(
+        isinstance(node, ast.ClassDef) and node.name == "LocalSubagentRunner"
+        for node in runtime_tree.body
+    )
+
+
 def test_agent_depends_on_bound_session_not_session_manager() -> None:
     """Agent 只拿单个会话的能力，Session 保存接口不反向感知 AgentEvent。"""
     tree = ast.parse((PACKAGE_ROOT / "agent/agent.py").read_text("utf-8"))
@@ -209,7 +226,7 @@ def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
         "ToolCallCompleted": {"type", "tool_call"},
         "UsageUpdated": {"type", "usage"},
         "MessageCompleted": {"type", "stop_reason", "model"},
-        "StreamFailed": {"type", "error", "retryable"},
+        "StreamFailed": {"type", "error", "retryable", "code"},
     }
     assert "LlmStreamEvent" not in classes
     for name, expected in expected_events.items():

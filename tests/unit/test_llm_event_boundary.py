@@ -5,6 +5,7 @@ import pytest
 
 from camel_harness.llm import (
     AssistantMessageAccumulator,
+    LlmErrorCode,
     LlmStopReason,
     LlmStreamEvent,
     LlmStreamEventType,
@@ -71,6 +72,15 @@ def test_completion_requires_normalized_stop_reason() -> None:
     assert MessageCompleted(LlmStopReason.STOP).stop_reason is LlmStopReason.STOP
     with pytest.raises(ValueError, match="LlmStopReason"):
         MessageCompleted("stop")
+
+
+def test_stream_failure_requires_normalized_error_code() -> None:
+    assert (
+        StreamFailed("超限", code=LlmErrorCode.CONTEXT_OVERFLOW).code
+        is LlmErrorCode.CONTEXT_OVERFLOW
+    )
+    with pytest.raises(ValueError, match="LlmErrorCode"):
+        StreamFailed("超限", code="context_overflow")
 
 
 def test_accumulator_assembles_canonical_message_and_cumulative_usage() -> None:

@@ -194,6 +194,102 @@ async def test_agent_rejects_a_second_active_run(tmp_path) -> None:
     await first
 
 
+async def test_busy_resume_does_not_read_session(tmp_path, monkeypatch) -> None:
+    """活动 Run 的恢复请求先被拒绝，不读取正在变化的历史。"""
+
+    runtime = BlockingLlm()
+    agent, _ = await build_test_agent(tmp_path, "busy-resume", runtime)
+    first = asyncio.create_task(agent.run("当前任务"))
+    await runtime.blocked.wait()
+    original = agent._session.messages
+
+    async def unexpected_read():
+        raise AssertionError("活动 Run 不应生成恢复计划")
+
+    monkeypatch.setattr(agent._session, "messages", unexpected_read)
+    try:
+        with pytest.raises(AgentBusyError):
+            await agent.resume()
+    finally:
+        monkeypatch.setattr(agent._session, "messages", original)
+        await agent.abort()
+        await first
+
+
+async def test_resume_snapshot_and_run_registration_share_start_lock(tmp_path, monkeypatch):
+    """恢复读取期间另一个启动必须等待，不能抢先修改恢复边界。"""
+
+    runtime = BlockingLlm()
+    agent, sessions = await build_test_agent(tmp_path, "resume-start-lock", runtime)
+    await sessions.bind("resume-start-lock").append_message(UserMessage("待恢复任务"))
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = agent._session.messages
+
+    async def delayed_read():
+        entered.set()
+        await release.wait()
+        return await original()
+
+    monkeypatch.setattr(agent._session, "messages", delayed_read)
+    resumed = asyncio.create_task(agent.resume())
+    await entered.wait()
+    competing = asyncio.create_task(agent.run("竞争任务"))
+    await asyncio.sleep(0)
+    assert not competing.done()
+    release.set()
+    try:
+        with pytest.raises(AgentBusyError):
+            await competing
+        await runtime.blocked.wait()
+    finally:
+        await agent.abort()
+        await resumed
+    messages = await sessions.bind("resume-start-lock").messages()
+    assert messages == (UserMessage("待恢复任务"),)
+
+
+async def test_message_end_is_delivered_after_persistence_with_contiguous_sequence(tmp_path):
+    """完成事件确认已提交消息，事件构造不提前消耗保存期间的序号。"""
+
+    agent, sessions = await build_test_agent(tmp_path, "saved-message-events", CompletingLlm())
+    events = []
+
+    async def observe(event):
+        if event.type == "message_end":
+            messages = await sessions.bind("saved-message-events").messages()
+            assert messages[-1] == event.message
+        events.append(event)
+
+    agent.subscribe(observe)
+    await agent.run("完成任务")
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert [event.message.role for event in events if event.type == "message_end"] == [
+        "user",
+        "assistant",
+    ]
+    assert events[-1].status == "completed"
+
+
+async def test_failed_message_save_does_not_emit_message_end(tmp_path, monkeypatch):
+    """保存失败没有完成确认，并保留会话失败的唯一终态。"""
+
+    runtime = CompletingLlm()
+    agent, _ = await build_test_agent(tmp_path, "failed-message-save", runtime)
+    events = []
+    agent.subscribe(events.append)
+
+    async def failed_save(message):
+        raise OSError("会话写入失败")
+
+    monkeypatch.setattr(agent._session, "append_message", failed_save)
+    await agent.run("任务")
+    assert not runtime.requests
+    assert not any(event.type == "message_end" for event in events)
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert events[-1].stop_reason == "session_failed"
+    assert sum(event.type == "agent_end" for event in events) == 1
+
+
 async def test_subscriber_failure_does_not_break_persistence_or_duplicate_terminal(
     tmp_path,
 ) -> None:

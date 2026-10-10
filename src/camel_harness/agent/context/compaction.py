@@ -87,13 +87,17 @@ class CompactionEngine:
         )
         if not self._settings.enabled:
             if (
-                estimated_tokens
+                trigger is CompactionTrigger.CONTEXT_OVERFLOW
+                or estimated_tokens
                 >= self._settings.context_window_tokens - self._settings.reserve_tokens
             ):
                 raise CompactionError("上下文超出安全预算且自动压缩未开启")
             return None
-        if len(surface) < self._settings.min_messages:
-            if trigger is CompactionTrigger.CONTEXT_OVERFLOW or estimated_tokens >= (
+        if (
+            len(surface) < self._settings.min_messages
+            and trigger is not CompactionTrigger.CONTEXT_OVERFLOW
+        ):
+            if estimated_tokens >= (
                 self._settings.context_window_tokens - self._settings.reserve_tokens
             ):
                 raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
@@ -102,7 +106,13 @@ class CompactionEngine:
             self._settings.context_window_tokens - self._settings.reserve_tokens
         ):
             return None
-        result = await self._compact(snapshot, model, on_usage, context_overhead_tokens)
+        result = await self._compact(
+            snapshot,
+            model,
+            on_usage,
+            context_overhead_tokens,
+            require_reduction=trigger is CompactionTrigger.CONTEXT_OVERFLOW,
+        )
         if result is None:
             raise CompactionError("上下文无法在完整工具消息边界安全压缩，请减少输入或调整预算")
         return result
@@ -113,6 +123,8 @@ class CompactionEngine:
         model: str,
         on_usage: Callable[[LlmUsage], None] | None,
         context_overhead_tokens: int,
+        *,
+        require_reduction: bool,
     ) -> CompactionResult | None:
         """从尾部累计近期预算，移动切点以避免孤立工具结果。"""
 
@@ -129,10 +141,15 @@ class CompactionEngine:
         if compact_end < 2:
             compact_end = len(surface) - 1
         # ToolResult 必须与产生它的 assistant tool_use 一起进入摘要或一起保留。
-        while compact_end < len(surface) and isinstance(
-            surface[compact_end].message, ToolResultMessage
-        ):
-            compact_end += 1
+        safe_end = compact_end
+        while safe_end < len(surface) and isinstance(surface[safe_end].message, ToolResultMessage):
+            safe_end += 1
+        if safe_end == len(surface):
+            # 末尾工具区间没有后继消息，改为完整保留调用和结果，不能只保留结果。
+            while compact_end > 0 and isinstance(surface[compact_end].message, ToolResultMessage):
+                compact_end -= 1
+        else:
+            compact_end = safe_end
         if compact_end < 2 or compact_end >= len(surface):
             return None
 
@@ -141,13 +158,16 @@ class CompactionEngine:
         summary, usage = await self._summarize(model, replaced, on_usage)
         projected_tokens = _message_tokens(UserMessage("[Compacted History]\n\n" + summary))
         projected_tokens += sum(_message_tokens(node.message) for node in surface[compact_end:])
+        tokens_before = sum(_message_tokens(node.message) for node in surface)
+        if require_reduction and projected_tokens >= tokens_before:
+            raise CompactionError("上下文溢出压缩未缩小历史，未提交摘要；请减少输入或调整压缩预算")
         if projected_tokens + context_overhead_tokens >= (
             self._settings.context_window_tokens - self._settings.reserve_tokens
         ):
             raise CompactionError("压缩后的上下文仍超过安全预算，未提交摘要；请调整近期保留预算")
         return CompactionResult(
             first_kept_entry_id=surface[compact_end].entry_id,
-            tokens_before=sum(_message_tokens(node.message) for node in surface),
+            tokens_before=tokens_before,
             summary=summary.strip(),
             usage=usage,
         )

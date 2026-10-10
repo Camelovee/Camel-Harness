@@ -5,7 +5,7 @@ import codecs
 import os
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import BinaryIO
 
@@ -14,14 +14,22 @@ from .types import ToolContext, ToolResult
 _SAFE_PART = re.compile(r"[^A-Za-z0-9_-]+")
 
 
+class ToolResultStorageError(RuntimeError):
+    """工具可能已执行，结果存储失败必须终止 Run，不能伪装为执行失败。"""
+
+
 class FileToolResultStorage:
     """把超大结果保存在对应会话目录，并返回预览与绝对路径引用。"""
 
     def __init__(
-        self, session_directory: Callable[[str], Path], max_inline_chars: int = 20_000
+        self,
+        session_directory: Callable[[str], Path],
+        max_inline_chars: int = 20_000,
+        registered_paths: Callable[[str], Awaitable[frozenset[Path]]] | None = None,
     ) -> None:
         self._session_directory = session_directory
         self._max_inline_chars = max_inline_chars
+        self._registered_paths = registered_paths
 
     async def normalize(self, result: ToolResult, context: ToolContext) -> ToolResult:
         if "content_ref" in result.metadata:
@@ -29,8 +37,30 @@ class FileToolResultStorage:
         if len(result.content) <= self._max_inline_chars:
             return result
         call_id = _SAFE_PART.sub("-", result.call_id)[:80] or "result"
-        directory = self._session_directory(context.session_id) / "tool-results"
-        path = await asyncio.to_thread(self._write, directory, call_id, result.content)
+        try:
+            directory = self._session_directory(context.session_id) / "tool-results"
+            task = asyncio.create_task(
+                asyncio.to_thread(self._write, directory, call_id, result.content)
+            )
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+                except Exception:
+                    break
+            try:
+                path = task.result()
+            except Exception:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+            if cancelled:
+                path.unlink(missing_ok=True)
+                raise asyncio.CancelledError
+        except Exception as exc:
+            raise ToolResultStorageError(f"工具结果归档失败：{exc}") from exc
         reference = str(path)
         preview = result.content[: self._max_inline_chars]
         metadata = {
@@ -51,6 +81,22 @@ class FileToolResultStorage:
             metadata,
         )
 
+    async def resolve_read_path(self, session_id: str, raw_path: str) -> Path:
+        """只读当前分支已保存的引用，不以目录归属代替登记校验。"""
+        if self._registered_paths is None:
+            raise ValueError("未配置工具结果读取")
+        path = Path(raw_path)
+        directory = self._session_directory(session_id) / "tool-results"
+        if not path.is_absolute() or ".." in path.parts:
+            raise ValueError("工具结果路径必须是无穿越的绝对路径")
+        if path.parent != directory or directory.is_symlink() or path.is_symlink():
+            raise ValueError("工具结果路径不属于当前会话或包含符号链接")
+        if path not in await self._registered_paths(session_id):
+            raise ValueError("工具结果引用未在当前会话分支登记")
+        if not path.is_file() or path.resolve().parent != directory.resolve():
+            raise ValueError("工具结果文件不存在或路径无效")
+        return path
+
     async def from_file(
         self, source: BinaryIO, call_id: str, name: str, context: ToolContext
     ) -> ToolResult:
@@ -69,10 +115,10 @@ class FileToolResultStorage:
         # 源文件由工具拥有，归档线程结束前不能关闭它。
         try:
             result = task.result()
-        except Exception:
+        except Exception as exc:
             if cancelled:
                 raise asyncio.CancelledError from None
-            raise
+            raise ToolResultStorageError(f"工具结果归档失败：{exc}") from exc
         if cancelled:
             reference = result.metadata.get("content_ref")
             if reference:

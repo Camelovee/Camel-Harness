@@ -63,6 +63,7 @@ class ContextManager:
         system_prompt: str,
         tools: tuple[ToolDefinition, ...] = (),
         on_usage: Callable[[LlmUsage], None] | None = None,
+        trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> PreparedContext:
         """每 Turn 从基础提示组装资源并生成计划，不读取或提交会话日志。"""
 
@@ -73,7 +74,12 @@ class ContextManager:
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         compacted = await self.compact_if_needed(
-            snapshot, model, on_usage=on_usage, system_prompt=system_prompt, tools=tools
+            snapshot,
+            model,
+            trigger=trigger,
+            on_usage=on_usage,
+            system_prompt=system_prompt,
+            tools=tools,
         )
         return PreparedContext(system_prompt, compacted)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
@@ -77,7 +77,7 @@ class ReadFileTool(Tool):
     """读取工作区内 UTF-8 文本文件。"""
 
     name = "read_file"
-    description = "读取工作区内的 UTF-8 文本文件，可指定起始行和最大行数。"
+    description = "读取工作区文件或当前会话已登记的工具结果引用，可指定起始行和最大行数。"
     parameters = {
         "type": "object",
         "properties": {
@@ -90,8 +90,19 @@ class ReadFileTool(Tool):
     }
     capabilities = frozenset({"filesystem.read"})
 
+    def __init__(
+        self, result_path_resolver: Callable[[str, str], Awaitable[Path]] | None = None
+    ) -> None:
+        self._result_path_resolver = result_path_resolver
+
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
+        raw_path = str(call.arguments["path"])
+        try:
+            path = resolve_in_workspace(context.workspace, raw_path)
+        except ValueError:
+            if self._result_path_resolver is None:
+                raise
+            path = await self._result_path_resolver(context.session_id, raw_path)
         start = int(call.arguments.get("start_line", 1))
         limit = int(call.arguments.get("max_lines", 400))
         text = await asyncio.to_thread(path.read_text, "utf-8")

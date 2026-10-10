@@ -132,7 +132,7 @@ export type AssistantStreamEvent =
   | { type: "tool_call_completed"; tool_call: { call_id: string; name: string; arguments: Record<string, unknown> } }
   | { type: "usage_updated"; usage: Omit<LlmUsage, "total_tokens"> }
   | { type: "message_completed"; stop_reason: "stop" | "length" | "tool_use"; model: string | null }
-  | { type: "stream_failed"; error: string; retryable: boolean };
+  | { type: "stream_failed"; error: string; retryable: boolean; code: "context_overflow" | null };
 
 type AgentEventBase = {
   session_id: string;

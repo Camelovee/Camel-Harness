@@ -47,11 +47,12 @@ Backend / CLI -> Agent -> LLM
 - WebUI 全局配置编辑由 Backend 校验并以 `0600` 权限原子保存；已存密钥不得回传，省略密钥字段须保留旧值，配置文件修改在重启后生效。
 - 厂商对象只能存在于 `camel_harness.llm`，对外统一为 `LlmStreamEvent`。
 - 规范 assistant 消息组装与流完整性校验归 LLM；Agent 负责实时事件坐标、Run 用量、消息保存点和结束后的控制流，不在组装器中引入 Session 或 Run。
-- Adapter 用 `StreamFailed(error, retryable)` 统一表达请求失败；Client 只重试首事件前的瞬时错误，SDK 不叠加重试。LLM/MCP 连接由 runtime 拥有，子 Agent 不关闭借用资源，构造失败必须清理。
+- Adapter 用 `StreamFailed(error, retryable, code)` 统一表达请求失败；上下文超限使用厂商无关 `LlmErrorCode.CONTEXT_OVERFLOW`，不得由 Agent 匹配厂商错误文本。Client 只重试首事件前的瞬时错误，不重发未修改的超限请求，SDK 不叠加重试。LLM/MCP 连接由 runtime 拥有，子 Agent 不关闭借用资源，构造失败必须清理。
+- Provider 首个流事件前的上下文超限，每 Run 最多触发一次强制压缩并在同一 Turn 内重发；已开始的流不得恢复。强制压缩可跳过压力阈值和最小消息数，但必须遵守压缩开关、完整工具区间、上下文预算、快照提交及历史缩小检查；取消、时长与 Turn 限制继续生效。不得重复保存用户输入、重跑已执行工具或递归恢复摘要超限。
 - `LlmStreamEvent` 使用具体 dataclass 的判别联合；文本、工具调用、用量和结束原因使用各自字段，不恢复通用 `type + data` 容器或泄漏厂商索引。
 - 规范消息必须使用 `Message = UserMessage | AssistantMessage | ToolResultMessage`；系统提示通过 `LlmRequest.system_prompt` 单独传递，不得恢复通用 `role/content` 消息容器。
 - 完整 AssistantMessage 保存 Provider 协议标识、请求模型、不同于请求模型的实际响应模型及厂商无关 LlmUsage；未知用量不得伪造为零。规范 input_tokens 含缓存、output_tokens 含推理，明细不重复计入总量；这些审计字段不得回传模型。
-- ToolResultMessage.details 保存工具结果的结构化附加信息；大结果使用 details.content_ref 记录文件路径、媒体类型、字节数及原始/预览字符数，不解析展示文本恢复引用，也不因引用开放工作区外的文件权限。
+- ToolResultMessage.details 保存工具结果的结构化附加信息；大结果使用 details.content_ref 记录文件路径、媒体类型、字节数及原始/预览字符数，不解析展示文本恢复引用。read_file 的工作区外例外只允许当前会话分支已登记且位于自身 tool-results 目录的只读引用；不得扩展为任意文件访问或写入权限。
 - `AssistantMessage.stop_reason` 必须使用厂商无关的 `LlmStopReason`；它与 Agent Run 级 `StopReason` 是两个独立概念。
 - `length` 结束的工具调用禁止执行，必须写入错误工具结果以保持消息链完整。
 - 工具截断每个 Run 最多允许一次模型恢复 Turn，不重试历史调用或自动扩大输出额度；纯文本或再次截断结束 Run，取消、权限及 Turn/时长约束继续生效。
@@ -61,6 +62,8 @@ Backend / CLI -> Agent -> LLM
 - `Tool` ABC 及 `ToolContext`、`ToolCall`、`ToolResult` 位于 `camel_harness.agent.tools.types`；给模型使用的 `ToolDefinition` 位于 `camel_harness.llm`，只包含最终工具名、描述和输入 Schema，不感知 namespace。
 - 新工具通过 `ToolProvider` 注册，不得修改 Agent 主流程；工具执行必须经过参数校验、权限、审批、超时和结果归一化。
 - ToolExecutor 缺省权限必须保守；结果归档失败不能伪装成工具未执行。Shell 只负责输出采集和进程组清理，完整输出与预览归统一结果层管理，不提前丢弃大输出。
+- 普通结果与 Shell 分块归档故障统一使用 ToolResultStorageError 向 Agent 传播，不转为可继续执行的普通工具错误；不得自动重试已产生副作用的命令。
+- MCP SDK 上下文由 McpManager 的唯一连接任务进入和退出，调用方只等待初始化与关闭；子 Agent 的完整组合位于 runtime，委派工具模块不得构造 Agent。
 - Skill 只保留发现和三层按需加载：系统上下文只列名称与描述，`load_skill` 读取正文或支持文件；不提供 Skill 写入、演化、回滚和评估链路。
 - Skill 来源为内置、项目级（工作区 `.camel/skills`）和用户级（`~/.camel/skills`），同名优先级依次递减。
 - 顶层会话默认存储在 `~/.camel/sessions/<session-id>/session.jsonl`，子会话递归存储在父会话目录的 `subagents/<session-id>/session.jsonl`；每份日志按类型追加会话头、完整消息、压缩和元数据更新。

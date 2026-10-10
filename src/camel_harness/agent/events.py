@@ -10,9 +10,8 @@ from typing import Any, Literal, TypeAlias
 
 from camel_harness.llm import AssistantMessage, LlmStreamEvent, Message, ToolResultMessage
 
-from .state import AgentRun, StopReason
-from .tools.permissions import PermissionRequest
-from .tools.types import ToolCall, ToolResult
+from .state import StopReason
+from .tools.types import ToolResult
 
 MessageKind: TypeAlias = Literal["user", "assistant", "toolResult"]
 AgentEndStatus: TypeAlias = Literal["completed", "failed", "cancelled"]
@@ -150,7 +149,7 @@ class MessageEndEvent(MessageEventBase):
 
 @dataclass(frozen=True, slots=True)
 class ToolExecutionStartEvent(TurnEventBase):
-    """工具调用已进入实际执行阶段。"""
+    """开始处理工具调用，包含审批、拒绝与实际执行。"""
 
     call_id: str
     name: str
@@ -192,153 +191,3 @@ AgentEvent: TypeAlias = (
     | ToolExecutionEndEvent
     | ApprovalRequestedEvent
 )
-
-
-def agent_start_event(run: AgentRun) -> AgentStartEvent:
-    return AgentStartEvent(run.session_id, run.run_id, run.next_sequence())
-
-
-def agent_end_event(run: AgentRun, error: str | None = None) -> AgentEndEvent:
-    status: AgentEndStatus
-    if run.status.value == "completed":
-        status = "completed"
-    elif run.status.value == "cancelled":
-        status = "cancelled"
-    else:
-        status = "failed"
-    return AgentEndEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        status,
-        run.stop_reason,
-        run.total_tokens,
-        error,
-    )
-
-
-def turn_start_event(run: AgentRun, turn_id: str) -> TurnStartEvent:
-    return TurnStartEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        run.turn,
-    )
-
-
-def turn_end_event(
-    run: AgentRun,
-    turn_id: str,
-    message: AssistantMessage,
-    tool_results: tuple[ToolResultMessage, ...],
-) -> TurnEndEvent:
-    return TurnEndEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        message,
-        tool_results,
-    )
-
-
-def message_start_event(
-    run: AgentRun,
-    turn_id: str,
-    message_id: str,
-    role: MessageKind,
-) -> MessageStartEvent:
-    return MessageStartEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        message_id,
-        role,
-    )
-
-
-def message_update_event(
-    run: AgentRun,
-    turn_id: str,
-    message_id: str,
-    event: LlmStreamEvent,
-) -> MessageUpdateEvent:
-    return MessageUpdateEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        message_id,
-        event,
-    )
-
-
-def message_end_event(
-    run: AgentRun,
-    turn_id: str,
-    message_id: str,
-    message: Message,
-) -> MessageEndEvent:
-    return MessageEndEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        message_id,
-        message,
-    )
-
-
-def tool_execution_start_event(
-    run: AgentRun,
-    turn_id: str,
-    call: ToolCall,
-) -> ToolExecutionStartEvent:
-    return ToolExecutionStartEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        call.call_id,
-        call.name,
-        call.arguments,
-    )
-
-
-def tool_execution_end_event(
-    run: AgentRun,
-    turn_id: str,
-    result: ToolResult,
-) -> ToolExecutionEndEvent:
-    return ToolExecutionEndEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        result,
-    )
-
-
-def approval_requested_event(
-    run: AgentRun,
-    turn_id: str,
-    call: ToolCall,
-    request_id: str,
-    request: PermissionRequest,
-    reason: str,
-) -> ApprovalRequestedEvent:
-    return ApprovalRequestedEvent(
-        run.session_id,
-        run.run_id,
-        run.next_sequence(),
-        turn_id,
-        request_id,
-        call.call_id,
-        call.name,
-        tuple(sorted(request.capabilities)),
-        request.risk,
-        request.arguments,
-        reason,
-    )

@@ -45,6 +45,12 @@ class LlmStreamEventType(StrEnum):
     STREAM_FAILED = "stream_failed"
 
 
+class LlmErrorCode(StrEnum):
+    """需要上层改变请求才能恢复的厂商无关错误类别。"""
+
+    CONTEXT_OVERFLOW = "context_overflow"
+
+
 @dataclass(frozen=True, slots=True)
 class StreamStarted:
     """模型流已开始，可包含厂商报告的实际模型。"""
@@ -124,7 +130,12 @@ class StreamFailed:
 
     error: str
     retryable: bool = False
+    code: LlmErrorCode | None = None
     type: Literal["stream_failed"] = field(default="stream_failed", init=False)
+
+    def __post_init__(self) -> None:
+        if self.code is not None and not isinstance(self.code, LlmErrorCode):
+            raise ValueError("流错误类别必须使用 LlmErrorCode")
 
 
 LlmStreamEvent: TypeAlias = (

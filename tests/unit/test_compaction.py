@@ -440,10 +440,10 @@ async def test_cancelled_compaction_propagates_and_accounts_known_usage() -> Non
 
 async def test_disabled_compaction_does_not_call_provider() -> None:
     adapter = RecordingSummaryLlm()
-    result = await CompactionEngine(
-        LlmClient(adapter), CompactionSettings(enabled=False)
-    ).compact_if_needed(_log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
-    assert result is None
+    engine = CompactionEngine(LlmClient(adapter), CompactionSettings(enabled=False))
+    assert await engine.compact_if_needed(_log(), _MODEL) is None
+    with pytest.raises(CompactionError, match="未开启"):
+        await engine.compact_if_needed(_log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
     assert not adapter.requests
 
 
@@ -514,6 +514,35 @@ async def test_tool_boundary_is_not_split_by_recent_budget() -> None:
     transcript = adapter.requests[0].messages[0].content
     assert '"tool_use"' in transcript
     assert '"toolResult"' in transcript
+
+
+async def test_overflow_retains_entire_final_multi_tool_interval() -> None:
+    from camel_harness.llm import ToolResultMessage, ToolUseBlock
+
+    nodes = _log(2).nodes + (
+        ContextNode(
+            "calls",
+            AssistantMessage(
+                (ToolUseBlock("first", "read", {}), ToolUseBlock("second", "read", {})),
+                LlmStopReason.TOOL_USE,
+            ),
+        ),
+        ContextNode("result-1", ToolResultMessage("first", "read", "第一份结果" * 50)),
+        ContextNode("result-2", ToolResultMessage("second", "read", "第二份结果" * 50)),
+    )
+    snapshot = ContextSnapshot("result-2", "result-2", nodes)
+    adapter = RecordingSummaryLlm()
+    engine = CompactionEngine(LlmClient(adapter), CompactionSettings(keep_recent_tokens=50))
+
+    result = await engine.compact_if_needed(
+        snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+    )
+
+    assert result is not None
+    assert result.first_kept_entry_id == "calls"
+    assert '"tool_use"' not in adapter.requests[0].messages[0].content
+    assert "第一份结果" not in adapter.requests[0].messages[0].content
+    assert snapshot.nodes == nodes
 
 
 async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_event(

@@ -18,6 +18,7 @@ from .message import (
 )
 from .protocol import (
     LlmAdapter,
+    LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
     MessageCompleted,
@@ -96,7 +97,19 @@ class OpenAiLlmAdapter(LlmAdapter):
                 isinstance(exc, APIStatusError)
                 and (exc.status_code == 429 or exc.status_code >= 500)
             )
-            yield StreamFailed(error=str(exc), retryable=retryable)
+            code = None
+            if isinstance(exc, APIStatusError) and exc.status_code == 400:
+                code = exc.code
+                if isinstance(exc.body, dict):
+                    detail = exc.body.get("error", exc.body)
+                    if isinstance(detail, dict):
+                        code = code or detail.get("code")
+            yield self._failure(str(exc), code, retryable=retryable)
+
+    @staticmethod
+    def _failure(message: str, code: str | None, *, retryable: bool = False) -> StreamFailed:
+        normalized = LlmErrorCode.CONTEXT_OVERFLOW if code == "context_length_exceeded" else None
+        return StreamFailed(message, retryable=retryable and normalized is None, code=normalized)
 
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
@@ -163,7 +176,7 @@ class OpenAiLlmAdapter(LlmAdapter):
             except json.JSONDecodeError:
                 arguments = {"_invalid_json": event.arguments}
             return [ToolCallCompleted(ToolUseBlock(call["call_id"], call["name"], arguments))]
-        if event_type in {"response.completed", "response.incomplete"}:
+        if event_type in {"response.completed", "response.incomplete", "response.failed"}:
             usage = getattr(event.response, "usage", None)
             result: list[LlmStreamEvent] = []
             if usage is not None:
@@ -194,6 +207,15 @@ class OpenAiLlmAdapter(LlmAdapter):
                     if value is not None:
                         data[key] = value
                 result.append(UsageUpdated(LlmUsage(**data)))
+            if event_type == "response.failed":
+                error = getattr(event.response, "error", None)
+                result.append(
+                    OpenAiLlmAdapter._failure(
+                        getattr(error, "message", None) or "OpenAI 响应失败",
+                        getattr(error, "code", None),
+                    )
+                )
+                return result
             if event_type == "response.incomplete":
                 details = getattr(event.response, "incomplete_details", None)
                 detail_reason = getattr(details, "reason", None)
@@ -207,4 +229,11 @@ class OpenAiLlmAdapter(LlmAdapter):
             model = getattr(event.response, "model", None)
             result.append(MessageCompleted(stop_reason, model=model))
             return result
+        if event_type == "error":
+            return [
+                OpenAiLlmAdapter._failure(
+                    getattr(event, "message", None) or "OpenAI 流错误",
+                    getattr(event, "code", None),
+                )
+            ]
         return []
