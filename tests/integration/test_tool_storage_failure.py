@@ -31,7 +31,15 @@ from camel_harness.llm import (
 )
 
 
-async def test_shell_archive_failure_ends_run_without_repeating_side_effect(tmp_path, monkeypatch):
+async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
+    tmp_path, monkeypatch, python_command
+):
+    command = python_command(
+        "-c",
+        "from pathlib import Path; p = Path('marker'); "
+        "p.write_text(p.read_text() + 'x' if p.exists() else 'x'); print('output')",
+    )
+
     class ShellLlm(LlmAdapter):
         calls = 0
 
@@ -41,9 +49,7 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(tmp_
 
         async def stream(self, request):
             self.calls += 1
-            yield ToolCallCompleted(
-                ToolUseBlock("shell", "run_shell", {"command": "printf x >> marker; printf output"})
-            )
+            yield ToolCallCompleted(ToolUseBlock("shell", "run_shell", {"command": command}))
             yield MessageCompleted(LlmStopReason.TOOL_USE)
 
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))

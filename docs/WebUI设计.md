@@ -6,7 +6,7 @@ WebUI 不是 CLI 的简单搬运，而是一个“本地工作区工作台”：
 
 视觉参考 `deepseek-harness-java` 的本地 Web 控制台定位：对话只是入口，工作区、任务审批、插件和模型配置都属于同一个运行时控制台；本项目保留 React 技术栈，但采用本地无外部字体依赖的浅色实现。
 
-## 2. 首版信息架构
+## 2. 当前信息架构
 
 ```text
 ┌──────────────────────┬────────────────────────────────────────┐
@@ -26,7 +26,7 @@ WebUI 不是 CLI 的简单搬运，而是一个“本地工作区工作台”：
 
 FastAPI 位于 `camel_backend.api`，只负责请求校验、状态码、CORS 和 SSE 输出；产品级执行与 ReAct 循环统一由 `camel_harness.agent.Agent` 完成，运行时装配位于 `camel_harness.agent.runtime`。浏览器不得直接接触 Provider、Session 存储或 SDK 类型。
 
-HTTP 内部按四类职责封装：`router.py` 只负责聚合；`routes/` 按资源注册端点；`contracts.py` 维护 Pydantic 请求模型；`responses.py` 统一 SSE 响应。启动期由 `HttpDependencies` 一次性发布 Agent、SessionManager、WebApproval 和目录选择器；Run 路由只获取 Agent，其余路由获取各自依赖，不把 Agent 当作服务定位器。路由文件不承担应用生命周期或事件帧编码。
+HTTP 内部按四类职责封装：`router.py` 只负责聚合；`routes/` 按资源注册端点；`contracts.py` 维护 Pydantic 请求模型；`responses.py` 统一 SSE 响应。启动期由 `HttpDependencies` 一次性发布 RunService、SessionService、SettingsService、SessionManager、WebApproval 和目录选择器；RunService 按会话创建并管理 Agent，路由调用对应服务，不把 Agent 当作服务定位器。路由文件不承担应用生命周期或事件帧编码。完整职责边界以 [项目架构](项目架构.md) 为准。
 
 核心接口：
 
@@ -96,12 +96,9 @@ shared     -> React/第三方库，不依赖 app 或 features
 - feature 之间禁止直接导入；例如 Agent 完成后通过 app 注入的 `refreshWorkspaces` 回调刷新会话元数据。
 - 当前规模不引入 Redux、Context 总线或前端领域层；状态范围扩大到文件树、diff 和后台任务后再评估。
 
-## 6. 分阶段路线
+## 6. 后续功能
 
-1. 当前切片：FastAPI、SSE、会话恢复、React/Vite 浅色本地工作区工作台、浏览器审批。
-2. 工作区开发体验：文件树、代码预览、diff 审阅、可取消 Turn、工具调用详情和事件时间线。
-3. 任务运行时：把长任务、子 Agent、后台执行和通知接入 Task 上下文，前端增加任务看板。
-4. 生产化：用户认证、工作区授权、审计导出、并发限制、跨进程事件总线和可观测性。
+计划与验收统一维护在 [路书](路书.md)，本页不重复维护优先级。当前优先可复现启动、真实演示和可靠性评测；文件树、diff 审阅等按实际需求扩展。多用户、持久化后台 Run 和跨进程事件总线不是当前交付承诺。
 
 ## 7. 暂不做的事情
 

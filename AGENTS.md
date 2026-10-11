@@ -94,3 +94,8 @@ Backend / CLI -> Agent -> LLM
 ## git提交规范
 
 - 使用中文提交描述，格式为 `<type>(<scope>): <subject>`，并按需填写正文和尾注。
+
+## MCP 集成
+
+- RepoAtlas 是可选 MCP 集成（`mcp__repoatlas__*` 工具），用于代码库检索 / Wiki / 问答。公开配置见 `.mcp.example.json`，本机配置保存在不纳入 Git 的 `.mcp.json`；复现步骤见 `docs/repoatlas-mcp-demo.md`。
+- `McpManager` 强制 MCP server 的 `cwd = workspace`；通过 `--project <RepoAtlas路径>` 指定本机项目目录，必要时使用 `uv` 的绝对路径，不依赖 `cwd` 字段。

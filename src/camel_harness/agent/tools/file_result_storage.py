@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import BinaryIO
 
+from ..platform_io import is_link
 from .types import ToolContext, ToolResult
 
 _SAFE_PART = re.compile(r"[^A-Za-z0-9_-]+")
@@ -89,7 +90,7 @@ class FileToolResultStorage:
         directory = self._session_directory(session_id) / "tool-results"
         if not path.is_absolute() or ".." in path.parts:
             raise ValueError("工具结果路径必须是无穿越的绝对路径")
-        if path.parent != directory or directory.is_symlink() or path.is_symlink():
+        if path.parent != directory or is_link(directory) or is_link(path):
             raise ValueError("工具结果路径不属于当前会话或包含符号链接")
         if path not in await self._registered_paths(session_id):
             raise ValueError("工具结果引用未在当前会话分支登记")
@@ -169,14 +170,14 @@ class FileToolResultStorage:
 
     @staticmethod
     def _write(directory: Path, call_id: str, content: str) -> Path:
-        if directory.is_symlink():
+        if is_link(directory):
             raise ValueError("工具结果目录不能是符号链接")
         directory.mkdir(mode=0o700, exist_ok=True)
         # 随机文件名避免同一会话重复工具调用覆盖旧结果；mkstemp 使用私有权限。
         descriptor, name = tempfile.mkstemp(prefix=f"{call_id}-", suffix=".txt", dir=directory)
         path = Path(name)
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
                 stream.write(content)
             return path
         except BaseException:

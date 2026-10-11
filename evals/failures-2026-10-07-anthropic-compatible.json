@@ -96,32 +96,32 @@
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/README.md'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/README.md'"
         },
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/package.json'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/package.json'"
         },
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/pyproject.toml'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/pyproject.toml'"
         },
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/Cargo.toml'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/Cargo.toml'"
         },
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/go.mod'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/go.mod'"
         },
         {
           "name": "read_file",
           "is_error": true,
-          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '/private/var/folders/c4/851jb4ws5mv6n68tyqfy1p940000gn/T/camel-eval-ql2ob047/workspace/setup.py'"
+          "content_preview": "工具执行失败：[Errno 2] No such file or directory: '<eval-workspace>/setup.py'"
         },
         {
           "name": "run_shell",

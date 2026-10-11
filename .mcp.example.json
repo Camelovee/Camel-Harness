@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "repoatlas": {
+      "command": "uv",
+      "args": ["run", "--project", "<REPOATLAS_PATH>", "repoatlas-mcp"]
+    }
+  }
+}

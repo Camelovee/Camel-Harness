@@ -24,6 +24,8 @@ uv run python -m evals.provider_smoke --provider anthropic --model 模型ID
 
 优先处理失败样本，再扩大任务规模；不要把脚本化协议测试、真实模型任务效果和 Provider 兼容性混成一个数字。
 
+公开失败报告中的机器临时目录已替换为 `<eval-workspace>`，保留文件名、错误原因和判分结果；报告不是未经处理的原始日志。发布新报告前需检查密钥、用户路径和会话内容，不提交完整私人运行记录。
+
 ## 记忆开关离线对照
 
 ```bash

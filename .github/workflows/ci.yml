@@ -39,3 +39,44 @@ jobs:
         run: uv build
       - name: Diff 格式
         run: git diff --check HEAD^ HEAD
+
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.11.7"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: 锁定安装与 Windows 类型检查
+        run: |
+          uv sync --locked --extra dev --python 3.11
+          uv run --no-sync mypy src
+          uv run --no-sync lint-imports
+      - name: Windows 启动、存储与进程树回归
+        run: >-
+          uv run --no-sync pytest -q
+          tests/unit/test_platform_io.py
+          tests/unit/test_windows_shell.py
+          tests/unit/test_workspace_picker.py
+          tests/integration/test_platform_compatibility.py
+          tests/integration/test_shell_output.py
+          tests/integration/test_tool_storage_failure.py
+          tests/integration/test_session_tree.py
+          tests/integration/test_session_write_cancellation.py
+          tests/integration/test_mcp_lifecycle.py
+          tests/integration/test_memory.py::test_cross_process_compare_and_swap
+          tests/integration/test_memory.py::test_queued_cancel_does_not_execute
+          tests/integration/test_memory.py::test_inflight_cancel_waits_for_commit_and_holds_lock
+      - name: Windows CLI 与前端构建
+        run: |
+          uv run --no-sync camel-harness --help
+          npm ci --prefix webui
+          npm test --prefix webui
+          npm run build --prefix webui

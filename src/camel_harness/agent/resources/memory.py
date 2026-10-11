@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import logging
 import os
 import re
-import stat
 import tempfile
 import threading
 from dataclasses import asdict, dataclass, field, replace
@@ -15,8 +13,13 @@ from pathlib import Path
 from typing import Literal, cast
 from uuid import uuid4
 
+import portalocker
+
+from ..platform_io import IS_WINDOWS, is_link, open_regular, sync_directory
+
 MemoryScope = Literal["project", "user"]
 _SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+_WINDOWS_DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +122,7 @@ class MemoryStore:
             raise ValueError("记忆层级必须是 project 或 user")
         root = self._roots[scope]
         # 固定根目录的每一层均不得是符号链接；避免 .camel 本身绕过边界。
-        if any(path.is_symlink() for path in (root, *root.parents)):
+        if any(is_link(path) for path in (root, *root.parents)):
             raise ValueError("记忆目录不得包含符号链接")
         if create:
             # parents=True 不将 mode 应用于中间目录，逐层创建私有目录。
@@ -130,23 +133,19 @@ class MemoryStore:
         return root
 
     def _path(self, name: str, scope: MemoryScope) -> Path:
-        if not _SAFE_NAME.fullmatch(name):
+        if not _SAFE_NAME.fullmatch(name) or (IS_WINDOWS and _WINDOWS_DEVICE_NAME.fullmatch(name)):
             raise ValueError("Memory 名称包含不安全字符")
         path = self._root(scope) / f"{name}.json"
-        if path.is_symlink():
+        if is_link(path):
             raise ValueError("记忆条目不得是符号链接")
         return path
 
     def _get_sync(self, name: str, scope: MemoryScope) -> MemoryEntry | None:
         path = self._path(name, scope)
         try:
-            # O_NOFOLLOW 同时防止校验后的条目被替换成符号链接。
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            descriptor = open_regular(path)
         except FileNotFoundError:
             return None
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            os.close(descriptor)
-            raise ValueError("记忆条目必须是普通文件")
         with os.fdopen(descriptor, encoding="utf-8") as stream:
             raw = json.load(stream)
         fields = {
@@ -263,17 +262,15 @@ class MemoryStore:
             if stop.is_set():
                 raise asyncio.CancelledError
             root = self._root(scope, create=True)
-            descriptor = os.open(root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            descriptor = open_regular(root / ".lock", writable=True, create=True)
             with os.fdopen(descriptor, "a+") as lock:
-                if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
-                    raise ValueError("记忆锁必须是普通文件")
                 while True:
                     if stop.is_set():
                         raise asyncio.CancelledError
                     try:
-                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        portalocker.lock(lock, portalocker.LOCK_EX | portalocker.LOCK_NB)
                         break
-                    except BlockingIOError:
+                    except portalocker.exceptions.AlreadyLocked:
                         stop.wait(0.01)
                 if stop.is_set():
                     raise asyncio.CancelledError
@@ -309,13 +306,9 @@ class MemoryStore:
                         os.fsync(stream.fileno())
                     temporary.replace(path)
                 published = True
-                directory_fd = os.open(root, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+                sync_directory(root)
                 return saved
-        except OSError as exc:
+        except (OSError, portalocker.exceptions.LockException) as exc:
             message = (
                 "记忆提交后确认失败，结果不确定，请先读取确认，不得盲目重试"
                 if published

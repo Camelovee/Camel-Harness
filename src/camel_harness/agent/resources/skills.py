@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from ..platform_io import is_link
+
 _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _MAX_FRONTMATTER_LINES = 100
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ class Skills:
             if not root.is_dir():
                 continue
             for path in sorted(root.glob("*/SKILL.md")):
-                if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+                if is_link(path) or is_link(path.parent) or not path.is_file():
                     continue
                 try:
                     metadata = self._frontmatter(path)

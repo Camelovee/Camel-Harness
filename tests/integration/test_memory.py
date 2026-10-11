@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import multiprocessing
 import os
@@ -9,6 +8,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 
+import portalocker
 import pytest
 
 from camel_harness.agent.config import MemorySettings
@@ -303,7 +303,7 @@ async def test_queued_cancel_does_not_execute(memories, tmp_path):
     initial = await save(memories)
     lock_path = tmp_path / "project" / ".camel" / "memory" / ".lock"
     with lock_path.open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        portalocker.lock(lock, portalocker.LOCK_EX)
         task = asyncio.create_task(save(memories, content="不应写入", revision=initial.revision))
         await asyncio.sleep(0.03)
         task.cancel()

@@ -17,6 +17,8 @@ dependencies = [
   "PyYAML>=6,<7",
   "jsonschema>=4.26,<5",
   "mcp>=1.0,<2",
+  "portalocker>=4.2,<5",
+  "pywin32>=308; sys_platform == 'win32'",
   "typer>=0.25,<1",
   "uvicorn[standard]>=0.30,<1",
 ]

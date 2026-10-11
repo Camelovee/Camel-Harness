@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,19 @@ async def wait_file(path):
 
 
 def assert_exited(path):
+    if sys.platform == "win32":
+        win32api = import_module("win32api")
+        pywintypes = import_module("pywintypes")
+        try:
+            handle = win32api.OpenProcess(0x1000, False, int(path.read_text()))
+        except pywintypes.error as exc:
+            assert exc.winerror == 87
+            return
+        try:
+            assert import_module("win32process").GetExitCodeProcess(handle) != 259
+        finally:
+            handle.Close()
+        return
     with pytest.raises(ProcessLookupError):
         os.kill(int(path.read_text()), 0)
 

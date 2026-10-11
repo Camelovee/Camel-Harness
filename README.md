@@ -12,33 +12,60 @@
 
 ## 界面预览
 
-实际 WebUI 截图，使用临时工作区与空白配置，未调用模型。
-
-![Camel Harness 工作区首页](docs/images/webui-overview.jpg)
-
-<details>
-<summary>默认模型设置</summary>
+实际 WebUI 默认模型设置截图，使用临时工作区与空白配置，未调用模型。
 
 ![Camel Harness 默认模型设置](docs/images/webui-settings.jpg)
-
-</details>
 
 ## 快速启动
 
 需要 Python 3.11+、Node.js 24 和 [uv](https://docs.astral.sh/uv/)。
 
+Windows 可在 PowerShell 中执行以下命令，无需安装 `fcntl` 或使用 WSL；`uv sync` 会安装 Windows 所需依赖。更新项目后请重新运行依赖安装。Windows 的 `run_shell` 使用 `cmd.exe` 语法，不是 PowerShell。
+
+先获取项目，后续命令均在仓库根目录执行：
+
 ```bash
 git clone https://github.com/Camelovee/Camel-Harness.git
 cd Camel-Harness
+```
+
+### 后端启动
+
+在第一个终端安装 Python 依赖并启动 FastAPI：
+
+```bash
 uv sync --locked --extra dev --python 3.11
+uv run camel-harness-web
+```
+
+后端地址为 `http://127.0.0.1:8000`，API 文档为 `http://127.0.0.1:8000/docs`。后端可独立启动，无需先构建前端。
+
+### 前端启动
+
+在第二个终端进入仓库根目录，安装前端依赖并启动 Vite：
+
+```bash
+npm ci --prefix webui
+npm run dev --prefix webui -- --host 127.0.0.1
+```
+
+访问 `http://127.0.0.1:5173`；前端通过 Vite 将 `/api` 请求代理到后端 `8000` 端口，需要保持两个终端运行。在“设置 → 配置文件默认模型”中填写模型和密钥，保存后重启后端。
+
+### 构建后由后端托管前端
+
+不使用 Vite 开发服务时，先安装并构建前端，再启动后端；已运行的后端需重启才能加载构建产物：
+
+```bash
 npm ci --prefix webui
 npm run build --prefix webui
 uv run camel-harness-web
 ```
 
-访问 `http://127.0.0.1:8000`，在“设置 → 配置文件默认模型”中填写模型和密钥，保存后重启后端。
+此时访问 `http://127.0.0.1:8000` 即可使用 WebUI，无需额外启动前端服务。
 
-CLI 使用同一份配置：
+### CLI 启动
+
+安装 Python 依赖后，也可直接使用 CLI，无需启动后端或前端；CLI 与 WebUI 使用同一份配置：
 
 ```bash
 uv run camel-harness "分析当前项目" --workspace ./
@@ -50,6 +77,8 @@ uv run camel-harness  # 交互模式
 ## 配置与数据
 
 配置位于 `~/.camel/config.json`，缺失时自动创建，不读取环境变量或 `.env`。
+
+Windows 对应 `%USERPROFILE%\.camel\config.json`；会话和用户记忆也位于该用户目录下。Unix 使用 `0700/0600` 权限，Windows 文件访问权限依赖用户目录继承的 ACL，不把 POSIX 权限位视为 Windows 隐私保证。
 
 ```json
 {
@@ -73,6 +102,10 @@ OpenAI 使用 `provider: "openai"` 和 `openai_api_key`；兼容端点可设置�
 默认会话目录为 `~/.camel/sessions/<id>/`，子会话递归放在父目录的 `subagents/` 下，大工具结果放在所属会话的 `tool-results/` 下。相对 `session_dir` 按用户主目录解析，不是当前项目目录。
 
 项目规则使用工作区 `AGENTS.md`；MCP 使用工作区 `.mcp.json`。Skill 来源优先级为内置 > 项目 `.camel/skills` > 用户 `~/.camel/skills`，发现只读名称与描述，正文和支持文件通过 `load_skill` 按需读取。
+
+MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制为本机 `.mcp.json`，按 [RepoAtlas 演示](docs/repoatlas-mcp-demo.md) 替换路径占位符。已有配置不要覆盖；`.mcp.json` 不纳入 Git，未配置时不影响核心工具。
+
+复制项目到 Windows 后，若 `.mcp.json` 使用其他电脑的绝对路径，需按当前电脑修改 `command` 和 `args`；JSON 中 Windows 路径的反斜杠应写为 `\\`，也可使用正斜杠。
 
 ## 开发与验证
 

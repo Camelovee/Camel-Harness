@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import logging
 import os
@@ -12,8 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import ParamSpec, TextIO, TypeVar
 
+import portalocker
+
 from camel_harness.llm import Message
 
+from ..platform_io import is_link
 from .codec import event_from_dict, event_to_dict
 from .events import (
     ContextSnapshot,
@@ -233,9 +235,11 @@ class JsonlSessionStorage:
                 yield path
 
     def _has_symlink(self, path: Path) -> bool:
+        if is_link(self._root):
+            return True
         current = path
         while current != self._root:
-            if current.is_symlink():
+            if is_link(current):
                 return True
             current = current.parent
         return False
@@ -267,7 +271,7 @@ class JsonlSessionStorage:
     @staticmethod
     def _delete_sync(path: Path) -> None:
         results = path.parent / "tool-results"
-        if results.is_dir() and not results.is_symlink():
+        if results.is_dir() and not is_link(results):
             for result in results.glob("*.txt"):
                 if result.is_file() or result.is_symlink():
                     result.unlink()
@@ -290,7 +294,7 @@ class JsonlSessionStorage:
         if not path.exists():
             raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            portalocker.lock(stream.fileno(), portalocker.LOCK_EX)
             try:
                 snapshot = project_context(
                     JsonlSessionStorage._iter_events(stream, path), leaf_id, use_latest=use_latest
@@ -300,7 +304,9 @@ class JsonlSessionStorage:
                 _write_event(stream, event)
                 return event.id
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                # Windows 字节区间锁从文件头释放；不依赖迭代中的 TextIO.tell()。
+                stream.seek(0)
+                portalocker.unlock(stream.fileno())
 
     @staticmethod
     def _append_compaction_sync(
@@ -313,7 +319,7 @@ class JsonlSessionStorage:
         if not path.exists():
             raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            portalocker.lock(stream.fileno(), portalocker.LOCK_EX)
             try:
                 stream.seek(0)
                 events = list(JsonlSessionStorage._iter_events(stream, path))
@@ -327,7 +333,8 @@ class JsonlSessionStorage:
                 _write_event(stream, event)
                 return updated
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                stream.seek(0)
+                portalocker.unlock(stream.fileno())
 
     @staticmethod
     def _update_metadata_sync(
@@ -341,7 +348,7 @@ class JsonlSessionStorage:
         if not path.exists():
             raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            portalocker.lock(stream.fileno(), portalocker.LOCK_EX)
             try:
                 events = list(JsonlSessionStorage._iter_events(stream, path))
                 current = project_metadata(events)
@@ -363,29 +370,32 @@ class JsonlSessionStorage:
                 )
                 return updated
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                stream.seek(0)
+                portalocker.unlock(stream.fileno())
 
     @staticmethod
     def _read_events_sync(path: Path) -> list[SessionEvent]:
         if not path.exists():
             return []
         with path.open("r", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            portalocker.lock(stream.fileno(), portalocker.LOCK_SH)
             try:
                 return list(JsonlSessionStorage._iter_events(stream, path))
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                stream.seek(0)
+                portalocker.unlock(stream.fileno())
 
     @staticmethod
     def _read_metadata_sync(path: Path) -> SessionMetadata | None:
         if not path.exists():
             return None
         with path.open("r", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            portalocker.lock(stream.fileno(), portalocker.LOCK_SH)
             try:
                 return project_metadata(JsonlSessionStorage._iter_events(stream, path))
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                stream.seek(0)
+                portalocker.unlock(stream.fileno())
 
     @staticmethod
     def _list_metadata_sync(paths: list[Path]) -> list[SessionMetadata]:
