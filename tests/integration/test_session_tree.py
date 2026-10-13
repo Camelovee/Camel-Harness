@@ -189,6 +189,7 @@ async def test_agent_uses_selected_branch_not_sibling_history(tmp_path) -> None:
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     await agent.run("走新方案")
     assert adapter.requests[0].messages == (UserMessage("共同问题"), UserMessage("走新方案"))

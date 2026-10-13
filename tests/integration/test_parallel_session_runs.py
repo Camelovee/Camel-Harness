@@ -62,6 +62,7 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
             registry,
             ToolExecutor(registry),
             ContextManager(CompactionEngine(llm)),
+            system_prompt="测试提示",
         )
 
     runs = RunService(build, sessions, store)
@@ -125,6 +126,7 @@ async def test_session_mutations_wait_for_startup_and_recheck_active_run(tmp_pat
             registry,
             ToolExecutor(registry),
             ContextManager(CompactionEngine(llm)),
+            system_prompt="测试提示",
         )
 
     runs = RunService(build, sessions, store)

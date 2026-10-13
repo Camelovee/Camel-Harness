@@ -116,6 +116,10 @@ class SessionManager:
         """返回关联文件所属的会话目录，包含子会话的真实位置。"""
         return self._repository.directory(session_id)
 
+    async def tool_result_paths(self, session_id: str) -> frozenset[Path]:
+        """读取指定会话当前分支已登记的工具结果路径。"""
+        return await self.bind(session_id).tool_result_paths()
+
     async def create(
         self,
         session_id: str,

@@ -1,10 +1,10 @@
 import pytest
 
 from camel_harness.agent.config import AgentSettings
-from camel_harness.agent.runtime import build_agent
+from camel_harness.agent.runtime import AgentExtensions, build_agent
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.tools import ApprovalHandler
+from camel_harness.agent.tools import ApprovalHandler, ToolProvider
 
 
 class DenyApproval(ApprovalHandler):
@@ -27,7 +27,9 @@ async def test_factory_rejects_workspace_different_from_session(tmp_path):
 
 
 @pytest.mark.parametrize("fail", [False, True])
-async def test_factory_owns_llm_and_mcp_cleanup_on_success_and_failure(tmp_path, monkeypatch, fail):
+async def test_factory_owns_extension_and_llm_cleanup_on_success_and_failure(
+    tmp_path, monkeypatch, fail
+):
     from camel_harness.llm import LlmAdapter
 
     closed: list[str] = []
@@ -44,42 +46,43 @@ async def test_factory_owns_llm_and_mcp_cleanup_on_success_and_failure(tmp_path,
         async def close(self):
             closed.append("llm")
 
-    class Mcp:
-        errors = ()
-
-        def __init__(self, *args):
-            pass
-
-        async def start(self):
+    class ExtensionProvider(ToolProvider):
+        async def discover(self):
             if fail:
                 raise RuntimeError("初始化失败")
-
-        async def discover(self):
             return ()
 
-        async def close(self):
-            closed.append("mcp")
+    async def close_extension():
+        closed.append("extension")
 
     monkeypatch.setattr("camel_harness.agent.runtime._build_llm_adapter", lambda _: Adapter())
-    monkeypatch.setattr("camel_harness.agent.runtime.McpManager", Mcp)
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("resources", tmp_path, "资源测试")
+    extensions = AgentExtensions(
+        tool_providers=(ExtensionProvider(),),
+        on_close=(close_extension,),
+    )
     if fail:
         with pytest.raises(RuntimeError, match="初始化失败"):
-            await build_agent(AgentSettings(), "resources", tmp_path, DenyApproval(), sessions)
+            await build_agent(
+                AgentSettings(), "resources", tmp_path, DenyApproval(), sessions, extensions
+            )
     else:
-        agent = await build_agent(AgentSettings(), "resources", tmp_path, DenyApproval(), sessions)
+        agent = await build_agent(
+            AgentSettings(), "resources", tmp_path, DenyApproval(), sessions, extensions
+        )
         await agent.close()
         await agent.close()
-    assert closed == ["mcp", "llm"]
+    assert closed == ["extension", "llm"]
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-async def test_factory_wires_memory_and_disabled_mode(tmp_path, monkeypatch, enabled):
+async def test_factory_wires_injected_memory_and_disabled_mode(tmp_path, monkeypatch, enabled):
     from pathlib import Path
 
     from camel_harness.agent.config import MemorySettings
     from camel_harness.agent.resources import MemoryEntry, MemoryStore
+    from camel_harness.agent.tools.memory_tools import MemoryToolProvider
     from camel_harness.llm import LlmAdapter, LlmStopReason, MessageCompleted, TextDelta
 
     home = tmp_path / "home"
@@ -103,31 +106,23 @@ async def test_factory_wires_memory_and_disabled_mode(tmp_path, monkeypatch, ena
             yield TextDelta("完成")
             yield MessageCompleted(LlmStopReason.STOP)
 
-    class Mcp:
-        errors = ()
-
-        def __init__(self, *args):
-            pass
-
-        async def start(self):
-            pass
-
-        async def discover(self):
-            return ()
-
         async def close(self):
             pass
 
     monkeypatch.setattr("camel_harness.agent.runtime._build_llm_adapter", lambda _: Adapter())
-    monkeypatch.setattr("camel_harness.agent.runtime.McpManager", Mcp)
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("memory", tmp_path, "记忆组合")
+    extensions = AgentExtensions(
+        tool_providers=(MemoryToolProvider(memories),) if enabled else (),
+        memories=memories if enabled else None,
+    )
     agent = await build_agent(
         AgentSettings(memory=MemorySettings(enabled=enabled)),
         "memory",
         tmp_path,
         DenyApproval(),
         sessions,
+        extensions,
     )
     try:
         await agent.run("中文注释")

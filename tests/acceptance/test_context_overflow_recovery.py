@@ -138,11 +138,12 @@ async def _build(
     agent = Agent(
         session,
         workspace,
-        AgentOptions("fake-model", max_turns=max_turns, max_duration_seconds=max_duration),
+        AgentOptions("fake-model", max_duration_seconds=max_duration),
         llm,
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm, CompactionSettings(enabled=enabled)), ProjectRules()),
+        system_prompt="基础提示",
     )
     return agent, session
 
@@ -164,7 +165,7 @@ async def test_overflow_compacts_short_history_and_retries_in_same_turn(tmp_path
     events = []
     agent.subscribe(events.append)
 
-    await agent.run("继续任务", system_prompt="基础提示", thinking=False)
+    await agent.run("继续任务", max_turns=1, thinking=False)
 
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert len(adapter.requests) == 2
@@ -212,7 +213,7 @@ async def test_overflow_after_tool_keeps_call_and_result_without_reexecuting(tmp
     agent, session = await _build(tmp_path, adapter, max_turns=2)
     events = []
     agent.subscribe(events.append)
-    await agent.run("写入一次", permission_mode=PermissionMode.ACCEPT_EDITS)
+    await agent.run("写入一次", max_turns=2, permission_mode=PermissionMode.ACCEPT_EDITS)
 
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert (tmp_path / "marker.txt").read_text("utf-8") == "执行一次\n"
@@ -235,7 +236,7 @@ async def test_recovery_limit_applies_to_entire_run_including_later_turns(tmp_pa
     agent, session = await _build(tmp_path, adapter, max_turns=2)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务", permission_mode=PermissionMode.ACCEPT_EDITS)
+    await agent.run("任务", max_turns=2, permission_mode=PermissionMode.ACCEPT_EDITS)
 
     _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
     assert "恢复次数已用尽" in events[-1].error
@@ -264,7 +265,7 @@ async def test_started_or_unclassified_failure_never_compacts_or_saves_partial_m
     agent, session = await _build(tmp_path, adapter)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务")
+    await agent.run("任务", max_turns=1)
 
     _assert_terminal(events, "failed", StopReason.PROVIDER_FAILED)
     assert len(adapter.requests) == (2 if recover_first else 1)
@@ -282,7 +283,7 @@ async def test_disabled_or_uncompressible_context_does_not_resend_request(
     agent, session = await _build(tmp_path, adapter, enabled=enabled, history_count=history_count)
     events = []
     agent.subscribe(events.append)
-    await agent.run("无法压缩的请求")
+    await agent.run("无法压缩的请求", max_turns=1)
 
     _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
     assert len(adapter.requests) == 1
@@ -297,7 +298,7 @@ async def test_failed_summary_never_commits_or_retries_main_request(tmp_path, su
     agent, session = await _build(tmp_path, adapter)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务")
+    await agent.run("任务", max_turns=1)
 
     _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
     assert len(adapter.requests) == 1
@@ -321,7 +322,7 @@ async def test_failed_recovery_commit_preserves_session_error_and_known_usage(
         raise OSError("压缩落盘失败")
 
     monkeypatch.setattr(session, "compact", fail)
-    await agent.run("任务")
+    await agent.run("任务", max_turns=1)
     _assert_terminal(events, "failed", StopReason.SESSION_FAILED)
     assert events[-1].error == "压缩落盘失败"
     assert events[-1].total_tokens == 20
@@ -338,7 +339,7 @@ async def test_cancel_during_recovery_stops_provider_and_accounts_usage(tmp_path
     agent, session = await _build(tmp_path, adapter)
     events = []
     agent.subscribe(events.append)
-    task = asyncio.create_task(agent.run("任务"))
+    task = asyncio.create_task(agent.run("任务", max_turns=1))
     await asyncio.wait_for(adapter.blocked.wait(), timeout=1)
     assert await agent.abort()
     await asyncio.wait_for(task, timeout=1)
@@ -360,7 +361,7 @@ async def test_recovery_obeys_run_timeout(tmp_path):
     agent, session = await _build(tmp_path, adapter, max_duration=0.1)
     events = []
     agent.subscribe(events.append)
-    await asyncio.wait_for(agent.run("任务"), timeout=1)
+    await asyncio.wait_for(agent.run("任务", max_turns=1), timeout=1)
 
     _assert_terminal(events, "failed", StopReason.TIMEOUT)
     assert adapter.cancelled.is_set()
@@ -380,7 +381,7 @@ async def test_steering_waits_until_recovered_turn_finishes(tmp_path):
             await agent.steer("后续任务")
 
     agent.subscribe(observe)
-    await agent.run("原始任务")
+    await agent.run("原始任务", max_turns=2)
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert adapter.requests[1].messages[-1] == UserMessage("原始任务")
     assert adapter.requests[2].messages[-1] == UserMessage("后续任务")
@@ -392,7 +393,7 @@ async def test_recovery_does_not_bypass_turn_limit_after_tools(tmp_path):
     agent, _ = await _build(tmp_path, adapter, max_turns=1)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务", permission_mode=PermissionMode.ACCEPT_EDITS)
+    await agent.run("任务", max_turns=1, permission_mode=PermissionMode.ACCEPT_EDITS)
     _assert_terminal(events, "failed", StopReason.MAX_TURNS)
     assert len(adapter.requests) == 2
     assert len(adapter.summaries) == 1
@@ -404,10 +405,10 @@ async def test_new_run_gets_fresh_recovery_allowance(tmp_path):
     agent, session = await _build(tmp_path, adapter)
     events = []
     agent.subscribe(events.append)
-    await agent.run("第一个任务" * 100)
+    await agent.run("第一个任务" * 100, max_turns=1)
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     events.clear()
-    await agent.run("第二个任务")
+    await agent.run("第二个任务", max_turns=1)
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert len(adapter.requests) == 4
     assert len(adapter.summaries) == 2
@@ -433,7 +434,7 @@ async def test_recovery_uses_selected_branch_and_does_not_merge_siblings(tmp_pat
     await session.branch(branch_point)
     events = []
     agent.subscribe(events.append)
-    await agent.run("当前分支任务")
+    await agent.run("当前分支任务", max_turns=1)
 
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert sibling not in await session.messages()
@@ -454,7 +455,7 @@ async def test_stale_recovery_plan_is_rejected_without_retrying_provider(tmp_pat
     monkeypatch.setattr(session, "compact", conflict)
     events = []
     agent.subscribe(events.append)
-    await agent.run("原始任务")
+    await agent.run("原始任务", max_turns=1)
     _assert_terminal(events, "failed", StopReason.SESSION_FAILED)
     assert "并发修改" in events[-1].error
     assert len(adapter.requests) == len(adapter.summaries) == 1

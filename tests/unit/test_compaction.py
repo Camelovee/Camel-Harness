@@ -582,6 +582,7 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm, settings)),
+        system_prompt="测试提示",
     )
     events: list = []
     agent.subscribe(events.append)

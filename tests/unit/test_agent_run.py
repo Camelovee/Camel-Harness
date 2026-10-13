@@ -20,7 +20,6 @@ def test_agent_run_enforces_turn_limit() -> None:
     (
         ("model", ""),
         ("max_output_tokens", 0),
-        ("max_turns", 0),
         ("max_duration_seconds", 0),
     ),
 )

@@ -72,6 +72,7 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
         registry,
         ToolExecutor(registry, normalize_result=storage.normalize),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     events = []
     agent.subscribe(events.append)

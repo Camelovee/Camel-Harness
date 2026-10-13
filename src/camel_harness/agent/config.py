@@ -56,6 +56,8 @@ class AgentSettings(BaseModel):
     compaction: CompactionSettings = Field(default_factory=CompactionSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     max_duration_seconds: float = Field(default=900, gt=0)
+    max_steering_messages: int = Field(default=32, gt=0)
+    max_steering_chars: int = Field(default=100_000, gt=0)
     session_dir: Path = Field(default_factory=lambda: Path.home() / ".camel" / "sessions")
     mcp_config: str = ".mcp.json"
     anthropic_api_key: str | None = Field(default=None, repr=False)

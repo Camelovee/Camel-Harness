@@ -68,6 +68,7 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
             normalize_result=FileToolResultStorage(sessions.directory, 5).normalize,
         ),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     events: list = []
     agent.subscribe(events.append)

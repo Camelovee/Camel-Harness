@@ -1,51 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
-
-from .registry import ToolProvider
-from .types import (
-    PermissionMode,
+from ..tools.registry import ToolProvider
+from ..tools.types import (
     Tool,
     ToolCall,
     ToolContext,
     ToolResult,
     ToolRisk,
 )
-
-
-class SubagentType(StrEnum):
-    """内置子 Agent 的最小任务预设。"""
-
-    EXPLORE = "explore"
-    PLAN = "plan"
-    GENERAL = "general"
-
-
-@dataclass(frozen=True, slots=True)
-class SubagentRequest:
-    """父 Agent 发起的一次隔离委派。"""
-
-    task: str
-    agent_type: SubagentType
-    workspace: Path
-    permission_mode: PermissionMode
-    parent_session_id: str
-    parent_tool_call_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class SubagentResult:
-    """被委派 Agent 回传给父 Agent 的最终文本。"""
-
-    session_id: str
-    content: str
-    succeeded: bool
-
-
-SubagentRunner = Callable[[SubagentRequest], Awaitable[SubagentResult]]
+from .runner import SubagentRequest, SubagentRunner, SubagentType
 
 
 class DelegateTaskTool(Tool):

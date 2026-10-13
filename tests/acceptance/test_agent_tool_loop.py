@@ -6,9 +6,13 @@ import pytest
 from camel_backend.approval import WebApproval
 from camel_harness import Agent, AgentOptions, StopReason
 from camel_harness.agent.context import CompactionEngine, ContextManager
-from camel_harness.agent.runtime import LocalSubagentRunner
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.agent.subagent import (
+    LocalSubagentRunner,
+    SubagentRequest,
+    SubagentType,
+)
 from camel_harness.agent.tools import (
     PermissionMode,
     PermissionService,
@@ -16,7 +20,6 @@ from camel_harness.agent.tools import (
     ToolRegistry,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
-from camel_harness.agent.tools.subagent import SubagentRequest, SubagentType
 from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
@@ -129,6 +132,7 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     events: list = []
     agent.subscribe(events.append)
@@ -158,6 +162,7 @@ async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_pa
         registry,
         ToolExecutor(registry, normalize_result=failed_storage),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     events: list = []
     agent.subscribe(events.append)
@@ -186,6 +191,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         registry,
         ToolExecutor(registry),
         context,
+        system_prompt="测试提示",
     )
 
     events: list = []
@@ -305,6 +311,7 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
         registry,
         ToolExecutor(registry, permission),
         context,
+        system_prompt="测试提示",
     )
 
     async def collect() -> list:
@@ -363,6 +370,7 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path,
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
 
     events: list = []
@@ -435,6 +443,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
     )
     events = []
     agent.subscribe(events.append)
@@ -447,7 +456,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
     await agent.run(
         "写文件",
         permission_mode=PermissionMode.ACCEPT_EDITS,
-        max_turns=1 if scenario == "turn_limit" else None,
+        max_turns=1 if scenario == "turn_limit" else 50,
     )
     assert not (tmp_path / "should-not-exist.txt").exists()
     if scenario == "success":

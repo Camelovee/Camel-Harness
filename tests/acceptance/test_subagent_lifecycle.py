@@ -4,11 +4,14 @@ import pytest
 
 from camel_harness.agent import AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
-from camel_harness.agent.runtime import LocalSubagentRunner
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
+from camel_harness.agent.subagent import (
+    LocalSubagentRunner,
+    SubagentRequest,
+    SubagentType,
+)
 from camel_harness.agent.tools import PermissionMode, PermissionService, ToolRegistry
-from camel_harness.agent.tools.subagent import SubagentRequest, SubagentType
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,

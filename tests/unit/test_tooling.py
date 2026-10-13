@@ -2,6 +2,11 @@ from pathlib import Path
 
 import pytest
 
+from camel_harness.agent.subagent import (
+    SubagentRequest,
+    SubagentResult,
+    SubagentToolProvider,
+)
 from camel_harness.agent.tools import (
     PermissionMode,
     PermissionService,
@@ -13,11 +18,6 @@ from camel_harness.agent.tools import (
     ToolResult,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
-from camel_harness.agent.tools.subagent import (
-    SubagentRequest,
-    SubagentResult,
-    SubagentToolProvider,
-)
 
 
 class ExampleTool(Tool):

@@ -152,6 +152,7 @@ async def run_suite() -> dict[str, Any]:
                         memory_settings=MemorySettings(enabled=enabled),
                     ),
                     on_close=llm.close,
+                    system_prompt="测试提示",
                 )
                 endings = []
                 agent.subscribe(

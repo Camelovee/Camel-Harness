@@ -10,23 +10,25 @@ from camel_harness.llm import UserMessage
 
 @dataclass(frozen=True, slots=True)
 class AgentOptions:
-    """创建和运行 ReAct Agent 所需的稳定选项。"""
+    """创建 Agent 时的稳定选项；per-run 输入由 run() 参数承担。"""
 
     model: str
     max_output_tokens: int = 4096
-    max_turns: int = 50
     max_duration_seconds: float = 900
-    thinking: bool = True
+    max_steering_messages: int = 32
+    max_steering_chars: int = 100_000
 
     def __post_init__(self) -> None:
         if not self.model.strip():
             raise ValueError("Agent Model 不能为空")
         if self.max_output_tokens <= 0:
             raise ValueError("Agent 最大输出 token 必须大于 0")
-        if self.max_turns <= 0:
-            raise ValueError("Agent 最大 Turn 数必须大于 0")
         if self.max_duration_seconds <= 0:
             raise ValueError("Agent 最大运行时间必须大于 0")
+        if self.max_steering_messages <= 0:
+            raise ValueError("Agent 运行中输入队列上限必须大于 0")
+        if self.max_steering_chars <= 0:
+            raise ValueError("Agent 运行中输入长度上限必须大于 0")
 
 
 class RunStatus(StrEnum):

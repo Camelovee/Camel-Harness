@@ -94,8 +94,17 @@ async def build_test_agent(
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="基础提示",
     )
     return agent, sessions
+
+
+async def test_run_rejects_non_positive_max_turns(tmp_path) -> None:
+    agent, sessions = await build_test_agent(tmp_path, "session-turns", SteerableLlm())
+    with pytest.raises(ValueError, match="Turn"):
+        await agent.run("任务", max_turns=0)
+    assert not agent.is_running
+    assert await sessions.bind("session-turns").messages() == ()
 
 
 async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
@@ -451,7 +460,7 @@ async def test_steering_refreshes_dynamic_context_without_accumulating_sections(
         return f"动态上下文：{prompt}"
 
     monkeypatch.setattr(agent._context, "build_system_context", build_context)
-    task = asyncio.create_task(agent.run("先分析", system_prompt="基础提示"))
+    task = asyncio.create_task(agent.run("先分析"))
     await runtime.started.wait()
     await agent.steer("改为测试")
     runtime.release.set()

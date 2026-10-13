@@ -63,7 +63,8 @@ def test_related_small_contracts_stay_consolidated() -> None:
         "agent/tools/skill.py",
     }
     assert not [name for name in removed_fragments if (PACKAGE_ROOT / name).exists()]
-    assert (PACKAGE_ROOT / "agent/tools/subagent.py").is_file()
+    assert (PACKAGE_ROOT / "agent/subagent/tool.py").is_file()
+    assert (PACKAGE_ROOT / "agent/subagent/runner.py").is_file()
 
 
 def test_context_manager_is_separate_from_session_persistence() -> None:
@@ -113,9 +114,9 @@ def test_tool_contract_lives_in_agent_tools() -> None:
     assert "ToolDefinition" in protocol_names
 
 
-def test_subagent_composition_belongs_to_runtime() -> None:
-    """委派工具只声明协议，不反向组合完整 Agent。"""
-    tool_tree = ast.parse((PACKAGE_ROOT / "agent/tools/subagent.py").read_text("utf-8"))
+def test_subagent_package_separates_runner_from_tool() -> None:
+    """委派工具只声明协议，运行机器独立成模块，不反向组合完整 Agent。"""
+    tool_tree = ast.parse((PACKAGE_ROOT / "agent/subagent/tool.py").read_text("utf-8"))
     names = {node.id for node in ast.walk(tool_tree) if isinstance(node, ast.Name)}
     assert (
         not {"Agent", "SessionManager", "ContextManager", "ToolExecutor", "LocalSubagentRunner"}
@@ -123,10 +124,36 @@ def test_subagent_composition_belongs_to_runtime() -> None:
     )
     classes = {node.name for node in tool_tree.body if isinstance(node, ast.ClassDef)}
     assert "LocalSubagentRunner" not in classes
-    runtime_tree = ast.parse((PACKAGE_ROOT / "agent/runtime.py").read_text("utf-8"))
+    runner_tree = ast.parse((PACKAGE_ROOT / "agent/subagent/runner.py").read_text("utf-8"))
     assert any(
         isinstance(node, ast.ClassDef) and node.name == "LocalSubagentRunner"
-        for node in runtime_tree.body
+        for node in runner_tree.body
+    )
+    runner_modules = {
+        node.module
+        for node in ast.walk(runner_tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not any(module.endswith("subagent.tool") for module in runner_modules)
+
+
+def test_runtime_does_not_import_optional_providers() -> None:
+    """Skill、Memory、MCP 与子 Agent 工具由入口层注入，组装层不感知具体实现。"""
+
+    runtime_tree = ast.parse((PACKAGE_ROOT / "agent/runtime.py").read_text("utf-8"))
+    relative_modules = {
+        node.module
+        for node in ast.walk(runtime_tree)
+        if isinstance(node, ast.ImportFrom) and node.level > 0 and node.module
+    }
+    assert (
+        not {
+            "tools.mcp",
+            "tools.memory_tools",
+            "tools.skill_loader",
+            "subagent.tool",
+        }
+        & relative_modules
     )
 
 

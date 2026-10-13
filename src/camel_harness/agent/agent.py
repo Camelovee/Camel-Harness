@@ -61,7 +61,6 @@ from .tools import (
 )
 
 CloseHandler = Callable[[], Awaitable[None]]
-_MAX_STEERING_MESSAGES = 32
 
 
 class AgentBusyError(RuntimeError):
@@ -92,6 +91,8 @@ class Agent:
         tools: ToolRegistry,
         tool_executor: ToolExecutor,
         context: ContextManager,
+        *,
+        system_prompt: str,
         on_close: CloseHandler | None = None,
     ) -> None:
         self._session_id = session.session_id
@@ -102,6 +103,9 @@ class Agent:
         self._tool_executor = tool_executor
         self._session = session
         self._context = context
+        self._system_prompt = system_prompt.strip()
+        if not self._system_prompt:
+            raise ValueError("系统提示不能为空")
         self._on_close = on_close
         self._run_control: RunControl | None = None
         self._run_lock = asyncio.Lock()
@@ -132,10 +136,9 @@ class Agent:
         self,
         prompt: str,
         *,
-        system_prompt: str = "你是一个可靠的 Harness Agent。",
-        max_turns: int | None = None,
+        max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
-        thinking: bool | None = None,
+        thinking: bool = True,
     ) -> None:
         """运行一次 Agent，并在终态事件交付完成后返回。"""
 
@@ -144,7 +147,6 @@ class Agent:
             raise ValueError("用户消息不能为空")
         control = await self._start_run(
             prompt=prompt,
-            system_prompt=system_prompt,
             permission_mode=permission_mode,
             max_turns=max_turns,
             thinking=thinking,
@@ -154,16 +156,14 @@ class Agent:
     async def resume(
         self,
         *,
-        system_prompt: str = "你是一个可靠的 Harness Agent。",
-        max_turns: int | None = None,
+        max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
-        thinking: bool | None = None,
+        thinking: bool = True,
     ) -> None:
         """从 Session 最后一个完整且可继续的消息边界创建新 Run。"""
 
         control = await self._start_run(
             prompt=None,
-            system_prompt=system_prompt,
             permission_mode=permission_mode,
             max_turns=max_turns,
             thinking=thinking,
@@ -183,13 +183,13 @@ class Agent:
         value = content.strip()
         if not value:
             raise ValueError("运行中输入不能为空")
-        if len(value) > 100_000:
-            raise ValueError("运行中输入不能超过 100000 个字符")
+        if len(value) > self._options.max_steering_chars:
+            raise ValueError(f"运行中输入不能超过 {self._options.max_steering_chars} 个字符")
         async with self._run_lock:
             control = self._run_control
             if control is None or not control.accepting_input:
                 raise AgentNotRunningError("当前 Agent 不接受运行中输入")
-            if len(control.steering) >= _MAX_STEERING_MESSAGES:
+            if len(control.steering) >= self._options.max_steering_messages:
                 raise OverflowError("运行中输入队列已满")
             queued = QueuedInput(uuid4().hex, UserMessage(value))
             control.steering.append(queued)
@@ -229,18 +229,14 @@ class Agent:
         self,
         *,
         prompt: str | None,
-        system_prompt: str,
         permission_mode: PermissionMode,
-        max_turns: int | None,
-        thinking: bool | None,
+        max_turns: int,
+        thinking: bool,
     ) -> RunControl:
         """原子登记活动 Run，并把执行任务交给 Agent 持有。"""
 
-        options = replace(
-            self._options,
-            max_turns=self._options.max_turns if max_turns is None else max_turns,
-            thinking=self._options.thinking if thinking is None else thinking,
-        )
+        if max_turns <= 0:
+            raise ValueError("Agent 最大 Turn 数必须大于 0")
         async with self._run_lock:
             if self._closed or self._closing:
                 raise RuntimeError("Agent 已关闭")
@@ -256,7 +252,7 @@ class Agent:
             run = AgentRun(
                 session_id=self._session_id,
                 run_id=uuid4().hex,
-                max_turns=options.max_turns,
+                max_turns=max_turns,
             )
             control = RunControl(run, asyncio.Event())
             self._run_control = control
@@ -264,9 +260,8 @@ class Agent:
                 self._execute_run(
                     control,
                     prompt=prompt,
-                    system_prompt=system_prompt,
                     permission_mode=permission_mode,
-                    options=options,
+                    thinking=thinking,
                     initial_tool_results=initial_tool_results,
                 )
             )
@@ -312,9 +307,8 @@ class Agent:
         control: RunControl,
         *,
         prompt: str | None,
-        system_prompt: str,
         permission_mode: PermissionMode,
-        options: AgentOptions,
+        thinking: bool,
         initial_tool_results: tuple[ToolResultMessage, ...] = (),
     ) -> None:
         """驱动一个已经登记的 Run，并确保唯一终态和状态清理。"""
@@ -330,7 +324,7 @@ class Agent:
             )
             if control.abort_requested:
                 raise asyncio.CancelledError
-            async with asyncio.timeout(options.max_duration_seconds):
+            async with asyncio.timeout(self._options.max_duration_seconds):
                 for result in initial_tool_results:
                     await self._emit_complete_message(run, "resume-repair", result)
                 pending_user: UserMessage | None = None
@@ -347,9 +341,8 @@ class Agent:
                 while run.status is RunStatus.RUNNING:
                     turn_reason, has_tool_calls = await self._run_turn(
                         run=run,
-                        system_prompt=system_prompt,
                         permission_mode=permission_mode,
-                        options=options,
+                        thinking=thinking,
                         context_query=context_query,
                         user_message=pending_user,
                     )
@@ -475,9 +468,8 @@ class Agent:
         self,
         *,
         run: AgentRun,
-        system_prompt: str,
         permission_mode: PermissionMode,
-        options: AgentOptions,
+        thinking: bool,
         context_query: str,
         user_message: UserMessage | None,
     ) -> tuple[LlmStopReason, bool]:
@@ -497,17 +489,16 @@ class Agent:
         if user_message is not None:
             await self._emit_complete_message(run, turn_id, user_message)
         definitions = self._tools.llm_definitions()
-        base_system_prompt = system_prompt
         system_prompt, history = await self._prepare_context(
-            run, options.model, system_prompt, context_query, definitions
+            run, self._options.model, self._system_prompt, context_query, definitions
         )
         request = LlmRequest(
-            model=options.model,
+            model=self._options.model,
             messages=history,
             system_prompt=system_prompt,
             tools=definitions,
-            max_output_tokens=options.max_output_tokens,
-            thinking=options.thinking,
+            max_output_tokens=self._options.max_output_tokens,
+            thinking=thinking,
         )
         assistant_message_id = uuid4().hex
         await self._emit(
@@ -540,8 +531,8 @@ class Agent:
                 run.context_overflow_recovery_used = True
                 system_prompt, history = await self._prepare_context(
                     run,
-                    options.model,
-                    base_system_prompt,
+                    self._options.model,
+                    self._system_prompt,
                     context_query,
                     definitions,
                     trigger=CompactionTrigger.CONTEXT_OVERFLOW,

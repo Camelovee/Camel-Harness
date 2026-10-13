@@ -61,6 +61,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
         registry,
         ToolExecutor(registry),
         context,
+        system_prompt="system",
     )
     events: list = []
     first_delta = asyncio.Event()
@@ -125,15 +126,16 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     agent = Agent(
         sessions.bind("session-failed"),
         tmp_path,
-        AgentOptions("fake-model", max_turns=1),
+        AgentOptions("fake-model"),
         llm,
         registry,
         ToolExecutor(registry),
         context,
+        system_prompt="system",
     )
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.run("测试失败流", system_prompt="system")
+    await agent.run("测试失败流", max_turns=1)
     unsubscribe()
 
     first = next(event for event in events if event.type == "message_update")
@@ -170,6 +172,7 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
+        system_prompt="system",
     )
     events: list = []
     agent.subscribe(events.append)

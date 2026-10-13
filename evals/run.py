@@ -173,19 +173,24 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
         agent = Agent(
             sessions.bind(task["id"]),
             workspace,
-            AgentOptions(model, max_turns=4, max_duration_seconds=120, thinking=False),
+            AgentOptions(model, max_duration_seconds=120),
             llm,
             registry,
             ToolExecutor(registry, PermissionService(EvalApproval())),
             ContextManager(CompactionEngine(llm)),
+            system_prompt="测试提示",
         )
         endings: list[Any] = []
         agent.subscribe(lambda event: endings.append(event) if event.type == "agent_end" else None)
         resumed = False
         try:
-            await agent.run(task["prompt"], permission_mode=PermissionMode.DEFAULT)
+            await agent.run(
+                task["prompt"], max_turns=4, permission_mode=PermissionMode.DEFAULT, thinking=False
+            )
             if provider == "fake" and task.get("mode") == "resume":
-                await agent.resume(permission_mode=PermissionMode.DEFAULT)
+                await agent.resume(
+                    max_turns=4, permission_mode=PermissionMode.DEFAULT, thinking=False
+                )
                 resumed = True
             messages = await sessions.bind(task["id"]).messages()
             failures = _grade(task, workspace, messages, resumed)
