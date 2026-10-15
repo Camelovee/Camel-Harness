@@ -146,7 +146,8 @@ export default function App() {
           starting={agent.starting || (workspace.activeId === null && agent.creatingSession)}
           models={models}
           selectedModelId={selectedModel?.id ?? ""}
-          thinking={webSettings.settings?.thinking ?? false}
+          effort={agent.effort}
+          onEffortChange={agent.setEffort}
           choosingWorkspace={workspace.selectingWorkspace}
           onChooseWorkspace={() => {
             void workspace.pickWorkspace().then((selected) => {

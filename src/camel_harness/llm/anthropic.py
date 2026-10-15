@@ -92,16 +92,9 @@ class AnthropicLlmAdapter(LlmAdapter):
             kwargs["tools"] = tools
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature
-        if request.thinking:
-            if request.max_output_tokens <= 1024:
-                raise ValueError("启用思考模式时 max_output_tokens 必须大于 1024")
-            kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": min(
-                    request.max_output_tokens - 1,
-                    max(1024, request.max_output_tokens // 2),
-                ),
-            }
+        # 当前模型使用自适应思考与强度档位；budget_tokens 形态已被官方废弃。
+        kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
+        kwargs["output_config"] = {"effort": request.effort.value}
 
         tool_blocks: dict[int, dict[str, str]] = {}
         completion: dict[str, LlmStopReason] = {}

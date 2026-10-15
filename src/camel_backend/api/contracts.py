@@ -29,7 +29,7 @@ class RunBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=100_000)
     permission_mode: Literal["default", "accept_edits", "plan", "yolo"] = "default"
     max_turns: int = Field(default=20, ge=1, le=100)
-    thinking: bool = False
+    effort: Literal["low", "high", "max"] = "low"
     model_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
@@ -38,15 +38,14 @@ class ResumeBody(BaseModel):
 
     permission_mode: Literal["default", "accept_edits", "plan", "yolo"] = "default"
     max_turns: int = Field(default=20, ge=1, le=100)
-    thinking: bool = False
+    effort: Literal["low", "high", "max"] = "low"
     model_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class PreferencesBody(BaseModel):
-    """用户的 Web 默认模型与思考模式。"""
+    """用户的 Web 默认模型。"""
 
     default_model_id: str = Field(min_length=1, max_length=64)
-    thinking: bool
 
 
 class SteerBody(BaseModel):

@@ -95,8 +95,12 @@ class OpenAiLlmAdapter(LlmAdapter):
             kwargs["tools"] = tools
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature
-        if request.thinking:
-            kwargs["reasoning"] = {"effort": "medium", "summary": "auto"}
+        effort = {
+            "low": "low",
+            "high": "high",
+            "max": "xhigh",
+        }[request.effort.value]
+        kwargs["reasoning"] = {"effort": effort, "summary": "auto"}
 
         calls: dict[str, dict[str, str]] = {}
         completion_state = {"has_tool_call": False}

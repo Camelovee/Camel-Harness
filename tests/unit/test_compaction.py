@@ -27,6 +27,7 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
+    LlmThinkingEffort,
     LlmUsage,
     MessageCompleted,
     ReasoningBlock,
@@ -351,7 +352,7 @@ async def test_length_retry_has_independent_budget_and_counts_both_requests() ->
     )
     assert result is not None
     assert [request.max_output_tokens for request in adapter.requests] == [8192, 16384]
-    assert all(not request.thinking for request in adapter.requests)
+    assert all(request.effort is LlmThinkingEffort.LOW for request in adapter.requests)
     assert charged == [LlmUsage(100, 30), LlmUsage(100, 30)]
     assert result.usage == LlmUsage(200, 60)
     assert "上次摘要" in (adapter.requests[1].system_prompt or "")

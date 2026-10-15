@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from camel_harness.agent.tools import PermissionMode
+from camel_harness.llm import LlmThinkingEffort
 
 from ..contracts import ResumeBody, RunBody, SteerBody, SteerQueuedResponse
 from ..dependencies import HttpDependencies
@@ -23,7 +24,7 @@ def create_agent_router(dependencies: HttpDependencies) -> APIRouter:
                     model=model,
                     max_turns=body.max_turns,
                     permission_mode=PermissionMode(body.permission_mode),
-                    thinking=body.thinking,
+                    effort=LlmThinkingEffort(body.effort),
                 ),
             )
 
@@ -46,7 +47,7 @@ def create_agent_router(dependencies: HttpDependencies) -> APIRouter:
                     model=model,
                     max_turns=body.max_turns,
                     permission_mode=PermissionMode(body.permission_mode),
-                    thinking=body.thinking,
+                    effort=LlmThinkingEffort(body.effort),
                 ),
             )
 

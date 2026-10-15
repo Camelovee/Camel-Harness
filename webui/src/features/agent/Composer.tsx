@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
-import type { ModelProfile, PermissionMode } from "../../shared/model";
+import type { ModelProfile, PermissionMode, ThinkingEffort } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
 
 type Props = {
@@ -17,19 +17,20 @@ type Props = {
   starting: boolean;
   models: ModelProfile[];
   selectedModelId: string;
-  thinking: boolean;
+  effort: ThinkingEffort;
+  onEffortChange: (effort: ThinkingEffort) => void;
   onModelChange: (modelId: string) => void;
   choosingWorkspace: boolean;
   onChooseWorkspace: () => void;
   onSend: (
     prompt: string,
     permissionMode: PermissionMode,
-    thinking: boolean,
+    effort: ThinkingEffort,
     modelId: string,
   ) => Promise<boolean>;
   canResume: boolean;
   onAbort: () => Promise<void>;
-  onResume: (permissionMode: PermissionMode, thinking: boolean, modelId: string) => Promise<void>;
+  onResume: (permissionMode: PermissionMode, effort: ThinkingEffort, modelId: string) => Promise<void>;
 };
 
 export function Composer({
@@ -45,7 +46,8 @@ export function Composer({
   starting,
   models,
   selectedModelId,
-  thinking,
+  effort,
+  onEffortChange,
   onModelChange,
   choosingWorkspace,
   onChooseWorkspace,
@@ -69,7 +71,7 @@ export function Composer({
     const value = prompt.trim();
     if (!value || !active || !selectedModelId || switchingModel || starting) return;
     const submittedPrompt = prompt;
-    if (await onSend(value, permissionMode, thinking, selectedModelId)) {
+    if (await onSend(value, permissionMode, effort, selectedModelId)) {
       onPromptChange((current) => current === submittedPrompt ? "" : current);
     }
   }
@@ -123,6 +125,17 @@ export function Composer({
               ))}
             </select>
             <select
+              value={effort}
+              aria-label="思考强度"
+              title="思考强度：影响模型推理深度与耗时"
+              onChange={(event) => onEffortChange(event.target.value as ThinkingEffort)}
+              disabled={!active || running}
+            >
+              <option value="low">思考 · 低</option>
+              <option value="high">思考 · 中</option>
+              <option value="max">思考 · 高</option>
+            </select>
+            <select
               value={permissionMode}
               onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
               disabled={!active || running}
@@ -156,7 +169,7 @@ export function Composer({
             {!running && canResume && (
               <button
                 type="button"
-                onClick={() => void onResume(permissionMode, thinking, selectedModelId)}
+                onClick={() => void onResume(permissionMode, effort, selectedModelId)}
                 disabled={!selectedModelId || switchingModel}
                 title="从最后一个完整消息边界继续"
               >

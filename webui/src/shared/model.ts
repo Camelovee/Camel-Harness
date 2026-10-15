@@ -29,8 +29,9 @@ export type ModelProfile = {
 export type WebSettings = {
   models: ModelProfile[];
   default_model_id: string;
-  thinking: boolean;
 };
+
+export type ThinkingEffort = "low" | "high" | "max";
 
 export type ModelInput = {
   name: string;

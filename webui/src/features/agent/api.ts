@@ -4,6 +4,7 @@ import type {
   Approval,
   Message,
   PermissionMode,
+  ThinkingEffort,
   WireMessage,
 } from "../../shared/model";
 
@@ -67,7 +68,7 @@ export async function submitApproval(requestId: string, approved: boolean): Prom
 type RunRequest = {
   prompt: string;
   permissionMode: PermissionMode;
-  thinking: boolean;
+  effort: ThinkingEffort;
   modelId: string;
 };
 
@@ -88,7 +89,7 @@ export async function streamAgentRun(
     body: JSON.stringify({
       prompt: request.prompt,
       permission_mode: request.permissionMode,
-      thinking: request.thinking,
+      effort: request.effort,
       model_id: request.modelId,
     }),
     signal: options.signal,
@@ -106,7 +107,7 @@ export async function streamAgentResume(
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({
       permission_mode: request.permissionMode,
-      thinking: request.thinking,
+      effort: request.effort,
       model_id: request.modelId,
     }),
     signal: options.signal,

@@ -18,6 +18,14 @@ class ToolDefinition:
     input_schema: dict[str, Any]
 
 
+class LlmThinkingEffort(StrEnum):
+    """思考强度档位；由各适配器映射为厂商参数。"""
+
+    LOW = "low"
+    HIGH = "high"
+    MAX = "max"
+
+
 @dataclass(frozen=True, slots=True)
 class LlmModel:
     """一次 LLM 调用的完整目标：Provider、模型与凭据；凭据不进入 repr。"""
@@ -44,7 +52,7 @@ class LlmRequest:
     tools: tuple[ToolDefinition, ...] = ()
     max_output_tokens: int = 4096
     temperature: float | None = None
-    thinking: bool = False
+    effort: LlmThinkingEffort = LlmThinkingEffort.LOW
 
 
 class LlmStreamEventType(StrEnum):

@@ -33,8 +33,8 @@ export function useWebSettings(onError: (message: string) => void) {
   return {
     settings,
     saving,
-    savePreferences: (modelId: string, thinking: boolean) =>
-      apply(() => savePreferences(modelId, thinking)),
+    savePreferences: (modelId: string) =>
+      apply(() => savePreferences(modelId)),
     saveModel: (modelId: string | null, body: ModelInput) =>
       apply(() => modelId ? updateModel(modelId, body) : addModel(body)),
     deleteModel: (modelId: string) => apply(() => deleteModel(modelId)),

@@ -10,7 +10,7 @@ type Props = {
   settings: WebSettings | null;
   saving: boolean;
   onClose: () => void;
-  onSavePreferences: (modelId: string, thinking: boolean) => Promise<boolean>;
+  onSavePreferences: (modelId: string) => Promise<boolean>;
   onSaveModel: (modelId: string | null, body: ModelInput) => Promise<boolean>;
   onDeleteModel: (modelId: string) => Promise<boolean>;
 };

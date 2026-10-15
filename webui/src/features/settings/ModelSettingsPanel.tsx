@@ -7,7 +7,7 @@ type Draft = ModelInput & { id: string | null };
 type Props = {
   settings: WebSettings;
   saving: boolean;
-  onSavePreferences: (modelId: string, thinking: boolean) => Promise<boolean>;
+  onSavePreferences: (modelId: string) => Promise<boolean>;
   onSaveModel: (modelId: string | null, body: ModelInput) => Promise<boolean>;
   onDeleteModel: (modelId: string) => Promise<boolean>;
 };
@@ -75,7 +75,7 @@ export function ModelSettingsPanel({
         <select
           value={settings.default_model_id}
           disabled={saving || settings.models.length === 0}
-          onChange={(event) => void onSavePreferences(event.target.value, settings.thinking)}
+          onChange={(event) => void onSavePreferences(event.target.value)}
         >
           {settings.models.length === 0 && <option value="">请先在下方添加模型</option>}
           {settings.models.map((profile) => (
@@ -85,21 +85,6 @@ export function ModelSettingsPanel({
           ))}
         </select>
       </label>
-      <div className="settings-toggle-row">
-        <div>
-          <strong>思考模式</strong>
-          <small>请求支持的模型返回思考过程，可能增加耗时和费用。</small>
-        </div>
-        <button
-          type="button"
-          className={`settings-switch ${settings.thinking ? "active" : ""}`}
-          role="switch"
-          aria-checked={settings.thinking}
-          aria-label="思考模式"
-          disabled={saving}
-          onClick={() => void onSavePreferences(settings.default_model_id, !settings.thinking)}
-        ><span /></button>
-      </div>
 
       <div className="settings-section-heading settings-models-heading">
         <div>

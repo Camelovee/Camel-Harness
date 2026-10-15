@@ -108,7 +108,6 @@ class AgentSettings(BaseModel):
     mcp_config: str = ".mcp.json"
     models: list[ModelProfile] = Field(default_factory=list)
     default_model_id: str = ""
-    thinking: bool = False
 
     @classmethod
     def load(cls, path: Path | None = None) -> AgentSettings:

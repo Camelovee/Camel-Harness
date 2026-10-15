@@ -234,7 +234,7 @@ def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
         "tools",
         "max_output_tokens",
         "temperature",
-        "thinking",
+        "effort",
     }
     assert fields("LlmModel") == {"provider", "model", "api_key", "base_url"}
     expected_events = {

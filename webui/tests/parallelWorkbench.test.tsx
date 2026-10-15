@@ -18,7 +18,7 @@ beforeEach(() => {
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
     if (url === "/api/settings") return json({
       models: [{ id: "model", name: "测试模型", model: "fake", provider: "anthropic", configured: true }],
-      default_model_id: "model", thinking: false,
+      default_model_id: "model",
     });
     if (url === "/api/workspaces") return json({ workspaces: [{
       workspace: "/workspace", updated_at: "", sessions: ["a", "b"].map((id) => ({

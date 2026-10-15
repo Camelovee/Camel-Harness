@@ -21,6 +21,7 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
+    LlmThinkingEffort,
     LlmUsage,
     MessageCompleted,
     StreamFailed,
@@ -168,7 +169,7 @@ async def test_overflow_compacts_short_history_and_retries_in_same_turn(tmp_path
     events = []
     agent.subscribe(events.append)
 
-    await agent.run("继续任务", max_turns=1, thinking=False, model=_MODEL)
+    await agent.run("继续任务", max_turns=1, effort=LlmThinkingEffort.HIGH, model=_MODEL)
 
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert len(adapter.requests) == 2
@@ -181,7 +182,7 @@ async def test_overflow_compacts_short_history_and_retries_in_same_turn(tmp_path
     assert retry.model == first.model
     assert retry.tools == first.tools
     assert retry.max_output_tokens == first.max_output_tokens
-    assert retry.thinking == first.thinking is False
+    assert retry.effort == first.effort is LlmThinkingEffort.HIGH
     assert retry.system_prompt == first.system_prompt
     assert retry.system_prompt.count("基础提示") == 1
     assert retry.system_prompt.count("项目规则只出现一次") == 1

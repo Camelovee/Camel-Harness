@@ -13,6 +13,7 @@ from camel_harness.llm import (
     LlmModel,
     LlmRequest,
     LlmStopReason,
+    LlmThinkingEffort,
     LlmUsage,
     Message,
     MessageCompleted,
@@ -217,7 +218,7 @@ class CompactionEngine:
                 messages=(UserMessage(transcript),),
                 system_prompt=prompt,
                 max_output_tokens=output_budget,
-                thinking=False,
+                effort=LlmThinkingEffort.LOW,
             )
             text, reason = await self._generate(request, account)
             if reason is LlmStopReason.STOP:

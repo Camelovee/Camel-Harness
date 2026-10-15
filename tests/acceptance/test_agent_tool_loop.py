@@ -29,6 +29,7 @@ from camel_harness.llm import (
     LlmStopReason,
     LlmStreamEvent,
     LlmStreamEventType,
+    LlmThinkingEffort,
     MessageCompleted,
     TextDelta,
     ToolCallCompleted,
@@ -199,7 +200,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.run("读取文件", max_turns=3, thinking=True, model=_MODEL)
+    await agent.run("读取文件", max_turns=3, effort=LlmThinkingEffort.HIGH, model=_MODEL)
     unsubscribe()
 
     assert runtime.calls == 2
@@ -240,7 +241,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         if isinstance(message, ToolResultMessage)
     ]
     assert [message.call_id for message in tool_messages] == ["call-1", "call-2"]
-    assert all(request.thinking for request in runtime.requests)
+    assert all(request.effort is LlmThinkingEffort.HIGH for request in runtime.requests)
 
 
 @pytest.mark.parametrize("content", ["内容", "内容" * 15_000], ids=["small", "large"])

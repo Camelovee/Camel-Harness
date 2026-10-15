@@ -18,7 +18,6 @@ const settings: WebSettings = {
     },
   ],
   default_model_id: "m1",
-  thinking: false,
 };
 
 beforeEach(() => {

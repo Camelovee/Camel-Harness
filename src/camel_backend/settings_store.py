@@ -54,7 +54,6 @@ class SettingsStore:
                     for profile in settings.models
                 ],
                 "default_model_id": settings.default_model_id,
-                "thinking": settings.thinking,
             }
 
     async def add_model(self, body: ModelInput) -> None:
@@ -104,7 +103,7 @@ class SettingsStore:
                 )
             state.save(self._path)
 
-    async def update_preferences(self, default_model_id: str, thinking: bool) -> None:
+    async def update_preferences(self, default_model_id: str) -> None:
         async with self._lock:
             state = self._load()
             if default_model_id:
@@ -114,5 +113,4 @@ class SettingsStore:
                 if not profile.api_key:
                     raise ValueError("默认模型缺少 API Key")
             state.default_model_id = default_model_id
-            state.thinking = thinking
             state.save(self._path)

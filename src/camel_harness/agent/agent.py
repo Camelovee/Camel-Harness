@@ -15,6 +15,7 @@ from camel_harness.llm import (
     LlmRequest,
     LlmStopReason,
     LlmStreamEventType,
+    LlmThinkingEffort,
     Message,
     StreamFailed,
     ToolDefinition,
@@ -140,7 +141,7 @@ class Agent:
         model: LlmModel,
         max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
-        thinking: bool = True,
+        effort: LlmThinkingEffort = LlmThinkingEffort.LOW,
     ) -> None:
         """运行一次 Agent，并在终态事件交付完成后返回。"""
 
@@ -152,7 +153,7 @@ class Agent:
             model=model,
             permission_mode=permission_mode,
             max_turns=max_turns,
-            thinking=thinking,
+            effort=effort,
         )
         await self._wait_for_control(control)
 
@@ -162,7 +163,7 @@ class Agent:
         model: LlmModel,
         max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
-        thinking: bool = True,
+        effort: LlmThinkingEffort = LlmThinkingEffort.LOW,
     ) -> None:
         """从 Session 最后一个完整且可继续的消息边界创建新 Run。"""
 
@@ -171,7 +172,7 @@ class Agent:
             model=model,
             permission_mode=permission_mode,
             max_turns=max_turns,
-            thinking=thinking,
+            effort=effort,
         )
         await self._wait_for_control(control)
 
@@ -237,7 +238,7 @@ class Agent:
         model: LlmModel,
         permission_mode: PermissionMode,
         max_turns: int,
-        thinking: bool,
+        effort: LlmThinkingEffort,
     ) -> RunControl:
         """原子登记活动 Run，并把执行任务交给 Agent 持有。"""
 
@@ -270,7 +271,7 @@ class Agent:
                     prompt=prompt,
                     model=model,
                     permission_mode=permission_mode,
-                    thinking=thinking,
+                    effort=effort,
                     initial_tool_results=initial_tool_results,
                 )
             )
@@ -318,7 +319,7 @@ class Agent:
         prompt: str | None,
         model: LlmModel,
         permission_mode: PermissionMode,
-        thinking: bool,
+        effort: LlmThinkingEffort,
         initial_tool_results: tuple[ToolResultMessage, ...] = (),
     ) -> None:
         """驱动一个已经登记的 Run，并确保唯一终态和状态清理。"""
@@ -353,7 +354,7 @@ class Agent:
                         run=run,
                         model=model,
                         permission_mode=permission_mode,
-                        thinking=thinking,
+                        effort=effort,
                         context_query=context_query,
                         user_message=pending_user,
                     )
@@ -481,7 +482,7 @@ class Agent:
         run: AgentRun,
         model: LlmModel,
         permission_mode: PermissionMode,
-        thinking: bool,
+        effort: LlmThinkingEffort,
         context_query: str,
         user_message: UserMessage | None,
     ) -> tuple[LlmStopReason, bool]:
@@ -510,7 +511,7 @@ class Agent:
             system_prompt=system_prompt,
             tools=definitions,
             max_output_tokens=self._options.max_output_tokens,
-            thinking=thinking,
+            effort=effort,
         )
         assistant_message_id = uuid4().hex
         await self._emit(

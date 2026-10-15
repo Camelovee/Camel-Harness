@@ -5,10 +5,10 @@ export function fetchSettings(): Promise<WebSettings> {
   return apiJson<WebSettings>("/settings");
 }
 
-export function savePreferences(defaultModelId: string, thinking: boolean): Promise<WebSettings> {
+export function savePreferences(defaultModelId: string): Promise<WebSettings> {
   return apiJson<WebSettings>("/settings/preferences", {
     method: "PUT",
-    body: JSON.stringify({ default_model_id: defaultModelId, thinking }),
+    body: JSON.stringify({ default_model_id: defaultModelId }),
   });
 }
 

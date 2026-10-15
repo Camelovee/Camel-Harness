@@ -210,14 +210,12 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
                 model=_model(provider, model),
                 max_turns=4,
                 permission_mode=PermissionMode.DEFAULT,
-                thinking=False,
             )
             if provider == "fake" and task.get("mode") == "resume":
                 await agent.resume(
                     model=_model(provider, model),
                     max_turns=4,
                     permission_mode=PermissionMode.DEFAULT,
-                    thinking=False,
                 )
                 resumed = True
             messages = await sessions.bind(task["id"]).messages()

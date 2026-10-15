@@ -54,10 +54,9 @@ async def test_settings_persist_models_to_config_without_exposing_keys(tmp_path:
 
     await store.update_model(model_id, custom_model(api_key=None))
     assert (await store.resolve(model_id)).api_key == "custom-openai-key"
-    await store.update_preferences(model_id, True)
+    await store.update_preferences(model_id)
 
     reloaded = SettingsStore(config)
-    assert (await reloaded.snapshot())["thinking"] is True
     assert (await reloaded.snapshot())["default_model_id"] == model_id
 
     await reloaded.update_model(

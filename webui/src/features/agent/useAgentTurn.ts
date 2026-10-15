@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SetStateAction } from "react";
 
-import type { AgentEvent, Approval, Message, PermissionMode, Session, SessionIndicator, TokenUsage } from "../../shared/model";
+import type { AgentEvent, Approval, Message, PermissionMode, Session, SessionIndicator, ThinkingEffort, TokenUsage } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import {
   abortAgentRun, fetchConversation, fetchPendingApprovals, steerAgentRun,
@@ -32,6 +32,7 @@ type ConversationState = {
   unread: boolean;
   prompt: string;
   permissionMode: PermissionMode;
+  effort: ThinkingEffort;
 };
 
 type ConversationRuntime = {
@@ -48,7 +49,7 @@ function emptyState(): ConversationState {
     messages: [], running: false, starting: false, loaded: false,
     streamAssistantId: null, usage: { input: null, output: null, runTotal: null },
     approvals: [], resolvingApprovalId: null, status: "准备就绪", error: null,
-    endStatus: null, unread: false, prompt: "", permissionMode: "default",
+    endStatus: null, unread: false, prompt: "", permissionMode: "default", effort: "low",
   };
 }
 
@@ -142,7 +143,7 @@ export function useAgentTurn(options: Options) {
 
   const startRun = useCallback(async (
     id: string,
-    request: { prompt: string; permissionMode: PermissionMode; thinking: boolean; modelId: string },
+    request: { prompt: string; permissionMode: PermissionMode; effort: ThinkingEffort; modelId: string },
     resume = false,
   ): Promise<boolean> => {
     const runtime = getRuntime(id);
@@ -218,7 +219,7 @@ export function useAgentTurn(options: Options) {
     return connected;
   }, [getRuntime, loadHistory, refreshWorkspaces, update]);
 
-  const sendPrompt = useCallback(async (prompt: string, permissionMode: PermissionMode, thinking: boolean, modelId: string) => {
+  const sendPrompt = useCallback(async (prompt: string, permissionMode: PermissionMode, effort: ThinkingEffort, modelId: string) => {
     const value = prompt.trim();
     if (!value || !modelId) return false;
     if (activeId) {
@@ -234,7 +235,7 @@ export function useAgentTurn(options: Options) {
           return false;
         }
       }
-      return startRun(activeId, { prompt: value, permissionMode, thinking, modelId });
+      return startRun(activeId, { prompt: value, permissionMode, effort, modelId });
     }
     if (creating.current) return false;
     creating.current = true;
@@ -247,7 +248,7 @@ export function useAgentTurn(options: Options) {
       await refreshWorkspaces();
       if (!alive.current) return false;
       if (selection.current.id === null && selection.current.version === selectionVersion) activateSession(session);
-      return await startRun(session.session_id, { prompt: value, permissionMode, thinking, modelId });
+      return await startRun(session.session_id, { prompt: value, permissionMode, effort, modelId });
     } catch (reason) {
       update(DRAFT, (state) => ({ ...state, error: errorText(reason, "创建会话失败") }));
       return false;
@@ -267,8 +268,8 @@ export function useAgentTurn(options: Options) {
     }
   }, [activeId, getRuntime, update]);
 
-  const resumeRun = useCallback(async (permissionMode: PermissionMode, thinking: boolean, modelId: string) => {
-    if (activeId && modelId) await startRun(activeId, { prompt: "", permissionMode, thinking, modelId }, true);
+  const resumeRun = useCallback(async (permissionMode: PermissionMode, effort: ThinkingEffort, modelId: string) => {
+    if (activeId && modelId) await startRun(activeId, { prompt: "", permissionMode, effort, modelId }, true);
   }, [activeId, startRun]);
 
   const resolveApproval = useCallback(async (requestId: string, approved: boolean) => {
@@ -305,6 +306,7 @@ export function useAgentTurn(options: Options) {
     sendPrompt, abortRun, resumeRun, resolveApproval,
     setPrompt: (action: SetStateAction<string>) => update(key, (state) => ({ ...state, prompt: apply(state.prompt, action) })),
     setPermissionMode: (permissionMode: PermissionMode) => update(key, (state) => ({ ...state, permissionMode })),
+    setEffort: (effort: ThinkingEffort) => update(key, (state) => ({ ...state, effort })),
     clearError: () => update(key, (state) => ({ ...state, error: null })),
   };
 }
