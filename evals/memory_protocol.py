@@ -23,6 +23,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -30,6 +31,8 @@ from camel_harness.llm import (
     TextBlock,
     TextDelta,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 @dataclass(frozen=True)
@@ -142,7 +145,7 @@ async def run_suite() -> dict[str, Any]:
                 agent = Agent(
                     sessions.bind(session_id),
                     workspace,
-                    AgentOptions("memory-fixture"),
+                    AgentOptions(),
                     llm,
                     registry,
                     ToolExecutor(registry),
@@ -151,7 +154,6 @@ async def run_suite() -> dict[str, Any]:
                         memories=memories,
                         memory_settings=MemorySettings(enabled=enabled),
                     ),
-                    on_close=llm.close,
                     system_prompt="测试提示",
                 )
                 endings = []
@@ -161,7 +163,7 @@ async def run_suite() -> dict[str, Any]:
                     )
                 )
                 try:
-                    await agent.run(case.query)
+                    await agent.run(case.query, model=_MODEL)
                     messages = await sessions.bind(session_id).messages()
                     answer = "".join(
                         block.text

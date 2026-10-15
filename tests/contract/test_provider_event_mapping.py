@@ -5,6 +5,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -22,6 +23,8 @@ from camel_harness.llm import (
 )
 from camel_harness.llm.anthropic import AnthropicLlmAdapter
 from camel_harness.llm.openai import OpenAiLlmAdapter
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class _FakeAdapter(LlmAdapter):
@@ -42,12 +45,13 @@ def test_vendor_adapters_share_llm_adapter_base() -> None:
 
 async def test_llm_service_delegates_request_to_adapter() -> None:
     service = LlmClient(_FakeAdapter())
-    request = LlmRequest("fake-model", (UserMessage("hi"),))
+    request = LlmRequest(_MODEL, (UserMessage("hi"),))
 
     events = [event async for event in service.stream(request)]
 
     assert events[0].type == LlmStreamEventType.MESSAGE_COMPLETED
-    assert service.provider_id == "fake"
+    assert service.supports("fake")
+    assert not service.supports("openai")
 
 
 def test_anthropic_maps_text_and_tool_call() -> None:

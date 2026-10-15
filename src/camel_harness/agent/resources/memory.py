@@ -65,7 +65,9 @@ class MemoryStore:
         }
         self._roots = {scope: root.expanduser().absolute() for scope, root in self._roots.items()}
         if self._roots["project"] == self._roots["user"]:
-            raise ValueError("项目和用户记忆目录不能相同，请选择独立项目工作区或关闭记忆")
+            # 工作区即主目录（如 WebUI 默认工作区）时两层物理重合，
+            # 项目层级回落到用户层级，同名覆盖语义在同目录下自然成立。
+            self._roots["project"] = self._roots["user"]
 
     async def list(
         self, scope: MemoryScope | None = None, *, tolerant: bool = False

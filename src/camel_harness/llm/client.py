@@ -87,31 +87,34 @@ class AssistantMessageAccumulator:
 
 
 class LlmClient:
-    """LLM 公开门面，仅在首个事件前按策略重试瞬时失败。"""
+    """按请求 Provider 路由到无状态适配器，仅在首个事件前按策略重试瞬时失败。"""
 
-    def __init__(self, adapter: LlmAdapter, max_attempts: int = 3) -> None:
+    def __init__(self, adapters: LlmAdapter | dict[str, LlmAdapter], max_attempts: int = 3) -> None:
         if max_attempts < 1:
             raise ValueError("LLM 最大尝试次数必须大于 0")
-        self._adapter = adapter
+        if isinstance(adapters, LlmAdapter):
+            adapters = {adapters.provider_id: adapters}
+        if not adapters:
+            raise ValueError("至少需要一个 Provider 适配器")
+        self._adapters = dict(adapters)
         self._max_attempts = max_attempts
 
-    @property
-    def provider_id(self) -> str:
-        """返回当前 Client 绑定的 Provider。"""
+    def supports(self, provider: str) -> bool:
+        """返回是否配置了指定 Provider 的适配器。"""
 
-        return self._adapter.provider_id
-
-    async def close(self) -> None:
-        """只有组合层拥有 Client；子 Agent 借用时不得关闭共享连接。"""
-        await self._adapter.close()
+        return provider in self._adapters
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """执行规范请求；一旦发出事件便不再重试，避免消费者收到重复增量。"""
 
+        adapter = self._adapters.get(request.model.provider)
+        if adapter is None:
+            yield StreamFailed(f"未配置的 Provider：{request.model.provider}", retryable=False)
+            return
         for attempt in range(1, self._max_attempts + 1):
             emitted = False
             failure: StreamFailed | None = None
-            stream = self._adapter.stream(request)
+            stream = adapter.stream(request)
             try:
                 async for event in stream:
                     if isinstance(event, StreamFailed):

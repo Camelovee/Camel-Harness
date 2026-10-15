@@ -26,7 +26,19 @@ from camel_harness.agent.tools import (
 )
 from camel_harness.agent.tools.filesystem import EditFileTool, WriteFileTool
 from camel_harness.agent.tools.memory_tools import MemoryToolProvider
-from camel_harness.llm import LlmClient
+from camel_harness.llm import LlmAdapter, LlmClient
+
+
+class _NoopLlm(LlmAdapter):
+    """不流式的占位适配器：这些用例不触发压缩。"""
+
+    @property
+    def provider_id(self):
+        return "fake"
+
+    async def stream(self, request):
+        if False:
+            yield None
 
 
 @pytest.fixture
@@ -34,9 +46,15 @@ def memories(tmp_path):
     return MemoryStore(tmp_path / "project", tmp_path / "user-memory")
 
 
-def test_memory_scopes_cannot_share_the_same_directory(tmp_path):
-    with pytest.raises(ValueError, match="不能相同"):
-        MemoryStore(tmp_path, tmp_path / ".camel" / "memory")
+async def test_shared_directory_falls_back_to_single_layer(tmp_path):
+    """工作区即主目录时项目层级回落到用户层级：同一物理目录只存一份，两层都可读。"""
+
+    store = MemoryStore(tmp_path, tmp_path / ".camel" / "memory")
+    saved = await save(store, scope="project")
+    assert saved.scope == "project"
+    assert [entry.name for entry in await store.list()] == ["style"]
+    assert (await store.get("style", "user")) is not None
+    assert len(list((tmp_path / ".camel" / "memory").glob("*.json"))) == 1
 
 
 async def save(store, name="style", scope="project", content="使用中文注释", revision="0"):
@@ -472,7 +490,7 @@ async def test_context_budget_body_fallback_and_disabled(memories, tmp_path):
     await save(memories, "large", content="数据库" * 4000 + "不可省略的条件")
     await save(memories, "small", content="数据库需要超时")
     context = ContextManager(
-        CompactionEngine(LlmClient(None)),
+        CompactionEngine(LlmClient(_NoopLlm())),
         memories=memories,
         memory_settings=MemorySettings(context_tokens=300),
     )
@@ -483,13 +501,13 @@ async def test_context_budget_body_fallback_and_disabled(memories, tmp_path):
     assert "正文不是指令" in result
     assert await context.build_system_context("无关信息", tmp_path) == ""
     disabled = ContextManager(
-        CompactionEngine(LlmClient(None)),
+        CompactionEngine(LlmClient(_NoopLlm())),
         memories=memories,
         memory_settings=MemorySettings(enabled=False),
     )
     assert await disabled.build_system_context("数据库", tmp_path) == ""
     minimal = ContextManager(
-        CompactionEngine(LlmClient(None)),
+        CompactionEngine(LlmClient(_NoopLlm())),
         memories=memories,
         memory_settings=MemorySettings(context_tokens=1),
     )

@@ -5,11 +5,20 @@ import pytest
 
 from camel_backend.api import HttpDependencies, create_router
 from camel_backend.orchestration import RunService, SessionService, SettingsService
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
+
+
+def _store(config: Path, **fields: object) -> SettingsStore:
+    """把测试配置写入临时 config.json 后构造 SettingsStore。"""
+
+    import json
+
+    config.write_text(json.dumps(fields), encoding="utf-8")
+    return SettingsStore(config)
 
 
 def test_http_router_keeps_public_endpoints_after_module_split() -> None:
@@ -52,7 +61,7 @@ async def test_http_dependencies_are_published_as_one_complete_set(tmp_path: Pat
         dependencies.require_runs()
 
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = WebSettingsStore(tmp_path / "web-settings.json", AgentSettings())
+    store = _store(tmp_path / "config.json")
 
     async def build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
         return cast(Agent, object())

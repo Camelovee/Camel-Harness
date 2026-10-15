@@ -5,6 +5,9 @@ from camel_harness.agent.runtime import AgentExtensions, build_agent
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import ApprovalHandler, ToolProvider
+from camel_harness.llm import LlmModel
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class DenyApproval(ApprovalHandler):
@@ -27,10 +30,8 @@ async def test_factory_rejects_workspace_different_from_session(tmp_path):
 
 
 @pytest.mark.parametrize("fail", [False, True])
-async def test_factory_owns_extension_and_llm_cleanup_on_success_and_failure(
-    tmp_path, monkeypatch, fail
-):
-    from camel_harness.llm import LlmAdapter
+async def test_factory_owns_extension_cleanup_on_success_and_failure(tmp_path, monkeypatch, fail):
+    from camel_harness.llm import LlmAdapter, LlmClient
 
     closed: list[str] = []
 
@@ -43,9 +44,6 @@ async def test_factory_owns_extension_and_llm_cleanup_on_success_and_failure(
             if False:
                 yield
 
-        async def close(self):
-            closed.append("llm")
-
     class ExtensionProvider(ToolProvider):
         async def discover(self):
             if fail:
@@ -55,7 +53,9 @@ async def test_factory_owns_extension_and_llm_cleanup_on_success_and_failure(
     async def close_extension():
         closed.append("extension")
 
-    monkeypatch.setattr("camel_harness.agent.runtime._build_llm_adapter", lambda _: Adapter())
+    monkeypatch.setattr(
+        "camel_harness.agent.runtime._build_llm_client", lambda: LlmClient(Adapter())
+    )
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("resources", tmp_path, "资源测试")
     extensions = AgentExtensions(
@@ -73,7 +73,7 @@ async def test_factory_owns_extension_and_llm_cleanup_on_success_and_failure(
         )
         await agent.close()
         await agent.close()
-    assert closed == ["extension", "llm"]
+    assert closed == ["extension"]
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -83,7 +83,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(tmp_path, monkeyp
     from camel_harness.agent.config import MemorySettings
     from camel_harness.agent.resources import MemoryEntry, MemoryStore
     from camel_harness.agent.tools.memory_tools import MemoryToolProvider
-    from camel_harness.llm import LlmAdapter, LlmStopReason, MessageCompleted, TextDelta
+    from camel_harness.llm import LlmAdapter, LlmClient, LlmStopReason, MessageCompleted, TextDelta
 
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
@@ -109,7 +109,9 @@ async def test_factory_wires_injected_memory_and_disabled_mode(tmp_path, monkeyp
         async def close(self):
             pass
 
-    monkeypatch.setattr("camel_harness.agent.runtime._build_llm_adapter", lambda _: Adapter())
+    monkeypatch.setattr(
+        "camel_harness.agent.runtime._build_llm_client", lambda: LlmClient(Adapter())
+    )
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("memory", tmp_path, "记忆组合")
     extensions = AgentExtensions(
@@ -125,7 +127,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(tmp_path, monkeyp
         extensions,
     )
     try:
-        await agent.run("中文注释")
+        await agent.run("中文注释", model=_MODEL)
     finally:
         await agent.close()
     assert len(requests) == 1

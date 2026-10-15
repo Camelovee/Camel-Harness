@@ -11,6 +11,7 @@ from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -21,6 +22,8 @@ from camel_harness.llm import (
     UsageUpdated,
     UserMessage,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class SteerableLlm(LlmAdapter):
@@ -89,7 +92,7 @@ async def build_test_agent(
     agent = Agent(
         sessions.bind(session_id),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -102,7 +105,7 @@ async def build_test_agent(
 async def test_run_rejects_non_positive_max_turns(tmp_path) -> None:
     agent, sessions = await build_test_agent(tmp_path, "session-turns", SteerableLlm())
     with pytest.raises(ValueError, match="Turn"):
-        await agent.run("任务", max_turns=0)
+        await agent.run("任务", max_turns=0, model=_MODEL)
     assert not agent.is_running
     assert await sessions.bind("session-turns").messages() == ()
 
@@ -113,7 +116,7 @@ async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    task = asyncio.create_task(agent.run("先分析"))
+    task = asyncio.create_task(agent.run("先分析", model=_MODEL))
     await runtime.started.wait()
     queued = await agent.steer("改为只给结论")
     runtime.release.set()
@@ -135,7 +138,7 @@ async def test_abort_emits_cancelled_end_without_persisting_partial_assistant(tm
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    task = asyncio.create_task(agent.run("开始任务"))
+    task = asyncio.create_task(agent.run("开始任务", model=_MODEL))
     await runtime.blocked.wait()
     await asyncio.sleep(0)
     assert await agent.abort()
@@ -155,7 +158,7 @@ async def test_cancelling_waiter_does_not_take_ownership_of_run(tmp_path) -> Non
     agent, _ = await build_test_agent(tmp_path, "session-waiter-cancel", runtime)
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    waiter = asyncio.create_task(agent.run("继续运行"))
+    waiter = asyncio.create_task(agent.run("继续运行", model=_MODEL))
     await runtime.blocked.wait()
 
     waiter.cancel()
@@ -178,7 +181,7 @@ async def test_resume_continues_from_persisted_user_message(tmp_path) -> None:
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.resume()
+    await agent.resume(model=_MODEL)
     unsubscribe()
 
     assert events[0].type == "agent_start"
@@ -193,11 +196,11 @@ async def test_resume_continues_from_persisted_user_message(tmp_path) -> None:
 async def test_agent_rejects_a_second_active_run(tmp_path) -> None:
     runtime = BlockingLlm()
     agent, _ = await build_test_agent(tmp_path, "session-busy", runtime)
-    first = asyncio.create_task(agent.run("第一个任务"))
+    first = asyncio.create_task(agent.run("第一个任务", model=_MODEL))
     await runtime.blocked.wait()
 
     with pytest.raises(AgentBusyError):
-        await agent.run("第二个任务")
+        await agent.run("第二个任务", model=_MODEL)
 
     await agent.abort()
     await first
@@ -208,7 +211,7 @@ async def test_busy_resume_does_not_read_session(tmp_path, monkeypatch) -> None:
 
     runtime = BlockingLlm()
     agent, _ = await build_test_agent(tmp_path, "busy-resume", runtime)
-    first = asyncio.create_task(agent.run("当前任务"))
+    first = asyncio.create_task(agent.run("当前任务", model=_MODEL))
     await runtime.blocked.wait()
     original = agent._session.messages
 
@@ -218,7 +221,7 @@ async def test_busy_resume_does_not_read_session(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(agent._session, "messages", unexpected_read)
     try:
         with pytest.raises(AgentBusyError):
-            await agent.resume()
+            await agent.resume(model=_MODEL)
     finally:
         monkeypatch.setattr(agent._session, "messages", original)
         await agent.abort()
@@ -240,9 +243,9 @@ async def test_resume_snapshot_and_run_registration_share_start_lock(tmp_path, m
         return await original()
 
     monkeypatch.setattr(agent._session, "messages", delayed_read)
-    resumed = asyncio.create_task(agent.resume())
+    resumed = asyncio.create_task(agent.resume(model=_MODEL))
     await entered.wait()
-    competing = asyncio.create_task(agent.run("竞争任务"))
+    competing = asyncio.create_task(agent.run("竞争任务", model=_MODEL))
     await asyncio.sleep(0)
     assert not competing.done()
     release.set()
@@ -270,7 +273,7 @@ async def test_message_end_is_delivered_after_persistence_with_contiguous_sequen
         events.append(event)
 
     agent.subscribe(observe)
-    await agent.run("完成任务")
+    await agent.run("完成任务", model=_MODEL)
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
     assert [event.message.role for event in events if event.type == "message_end"] == [
         "user",
@@ -291,7 +294,7 @@ async def test_failed_message_save_does_not_emit_message_end(tmp_path, monkeypat
         raise OSError("会话写入失败")
 
     monkeypatch.setattr(agent._session, "append_message", failed_save)
-    await agent.run("任务")
+    await agent.run("任务", model=_MODEL)
     assert not runtime.requests
     assert not any(event.type == "message_end" for event in events)
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
@@ -313,7 +316,7 @@ async def test_subscriber_failure_does_not_break_persistence_or_duplicate_termin
 
     agent.subscribe(broken)
     agent.subscribe(events.append)
-    await agent.run("完成")
+    await agent.run("完成", model=_MODEL)
     assert calls == 1
     assert len(await sessions.bind("observer-failure").messages()) == 2
     assert len([event for event in events if event.type == "agent_end"]) == 1
@@ -331,7 +334,7 @@ async def test_terminal_observer_failure_does_not_emit_a_second_terminal(tmp_pat
 
     agent.subscribe(broken)
     agent.subscribe(events.append)
-    await agent.run("完成")
+    await agent.run("完成", model=_MODEL)
     await agent.wait_for_idle()
     assert [event.type for event in events].count("agent_end") == 1
     assert events[-1].status == "completed"
@@ -348,7 +351,7 @@ async def test_repair_failure_still_reports_terminal_and_cleans_run(tmp_path, mo
         raise OSError("日志不可写")
 
     monkeypatch.setattr(agent, "_repair_dangling_tool_calls", broken_repair)
-    task = asyncio.create_task(agent.run("开始"))
+    task = asyncio.create_task(agent.run("开始", model=_MODEL))
     await runtime.blocked.wait()
     assert await agent.abort()
     assert await agent.abort()
@@ -369,7 +372,7 @@ async def test_large_usage_does_not_stop_completed_response(tmp_path) -> None:
     agent, sessions = await build_test_agent(tmp_path, "large-usage", LargeUsageLlm())
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("完成")
+    await agent.run("完成", model=_MODEL)
     assert events[-1].status == "completed"
     assert events[-1].total_tokens == 600_000
     assert len(await sessions.bind("large-usage").messages()) == 2
@@ -388,7 +391,7 @@ async def test_slow_subscriber_is_removed_without_hanging_run(tmp_path, monkeypa
 
     agent.subscribe(blocked)
     agent.subscribe(events.append)
-    await asyncio.wait_for(agent.run("完成"), 1)
+    await asyncio.wait_for(agent.run("完成", model=_MODEL), 1)
     assert calls == 1
     assert events[-1].status == "completed"
 
@@ -405,7 +408,7 @@ async def test_subscriber_self_cancellation_does_not_cancel_run(tmp_path) -> Non
 
     agent.subscribe(cancelled_listener)
     agent.subscribe(events.append)
-    await agent.run("完成")
+    await agent.run("完成", model=_MODEL)
     assert calls == 1
     assert events[-1].status == "completed"
     assert len(await sessions.bind("observer-cancel").messages()) == 2
@@ -424,7 +427,7 @@ async def test_sync_and_async_subscribers_preserve_order_and_unsubscribe_is_idem
     unsubscribe()
     agent.subscribe(lambda event: delivered.append((event.sequence, "sync")))
     agent.subscribe(async_listener)
-    await agent.run("完成")
+    await agent.run("完成", model=_MODEL)
     assert delivered
     assert [kind for _, kind in delivered] == ["sync", "async"] * (len(delivered) // 2)
     assert all(
@@ -442,7 +445,7 @@ async def test_failed_response_keeps_known_usage_but_not_partial_message(tmp_pat
     agent, sessions = await build_test_agent(tmp_path, "failed-usage", FailedUsageLlm())
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("开始")
+    await agent.run("开始", model=_MODEL)
     assert events[-1].status == "failed"
     assert events[-1].total_tokens == 150
     assert [message.role for message in await sessions.bind("failed-usage").messages()] == ["user"]
@@ -460,7 +463,7 @@ async def test_steering_refreshes_dynamic_context_without_accumulating_sections(
         return f"动态上下文：{prompt}"
 
     monkeypatch.setattr(agent._context, "build_system_context", build_context)
-    task = asyncio.create_task(agent.run("先分析"))
+    task = asyncio.create_task(agent.run("先分析", model=_MODEL))
     await runtime.started.wait()
     await agent.steer("改为测试")
     runtime.release.set()
@@ -479,7 +482,7 @@ async def test_resource_failure_is_not_classified_as_provider_failure(tmp_path, 
         raise OSError("规则无法读取")
 
     monkeypatch.setattr(agent._context, "build_system_context", failed_context)
-    await agent.run("开始")
+    await agent.run("开始", model=_MODEL)
     assert events[-1].stop_reason == "resource_failed"
     assert events[-1].error == "规则无法读取"
 
@@ -499,7 +502,7 @@ async def test_new_prompt_does_not_read_raw_history_for_resource_query(tmp_path,
     monkeypatch.setattr(agent._context, "build_system_context", build_context)
     events = []
     agent.subscribe(events.append)
-    await agent.run("当前任务")
+    await agent.run("当前任务", model=_MODEL)
     assert events[-1].status == "completed"
     assert queries == ["当前任务"]
     assert len(await sessions.bind("new-query").messages()) == 2
@@ -515,7 +518,7 @@ async def test_resume_uses_context_manager_to_select_last_user_query(tmp_path, m
         return ""
 
     monkeypatch.setattr(agent._context, "build_system_context", build_context)
-    await agent.resume()
+    await agent.resume(model=_MODEL)
     assert queries == ["继续实现测试"]
 
 

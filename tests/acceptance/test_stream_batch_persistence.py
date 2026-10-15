@@ -12,6 +12,7 @@ from camel_harness.agent.tools import (
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -19,6 +20,8 @@ from camel_harness.llm import (
     MessageCompleted,
     TextDelta,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class TwoChunkLlm(LlmAdapter):
@@ -56,7 +59,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
     agent = Agent(
         sessions.bind("session-1"),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -80,7 +83,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
             await release.wait()
 
     unsubscribe = agent.subscribe(observe)
-    run_task = asyncio.create_task(agent.run("测试批量存储"))
+    run_task = asyncio.create_task(agent.run("测试批量存储", model=_MODEL))
     await first_delta.wait()
     first = events[-1]
 
@@ -126,7 +129,7 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     agent = Agent(
         sessions.bind("session-failed"),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -135,7 +138,7 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     )
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.run("测试失败流", max_turns=1)
+    await agent.run("测试失败流", max_turns=1, model=_MODEL)
     unsubscribe()
 
     first = next(event for event in events if event.type == "message_update")
@@ -167,7 +170,7 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
     agent = Agent(
         session,
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -176,7 +179,7 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
     )
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("测试保存错误")
+    await agent.run("测试保存错误", model=_MODEL)
     assert [event.message.role for event in events if event.type == "message_end"] == ["user"]
     assert [message.role for message in await session.messages()] == ["user"]
     assert events[-1].type == "agent_end"

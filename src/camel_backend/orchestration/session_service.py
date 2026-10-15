@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import AgentBusyError
 from camel_harness.agent.session import SessionManager, SessionMetadata
 
@@ -14,7 +14,7 @@ class SessionService:
         self,
         sessions: SessionManager,
         runs: RunService,
-        settings: WebSettingsStore,
+        settings: SettingsStore,
     ) -> None:
         self._sessions = sessions
         self._runs = runs

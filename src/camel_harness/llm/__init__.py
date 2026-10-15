@@ -18,6 +18,7 @@ from .openai import OpenAiLlmAdapter, create_openai_adapter
 from .protocol import (
     LlmAdapter,
     LlmErrorCode,
+    LlmModel,
     LlmRequest,
     LlmStreamEvent,
     LlmStreamEventType,
@@ -50,6 +51,7 @@ __all__ = [
     "LlmAdapter",
     "LlmErrorCode",
     "LlmClient",
+    "LlmModel",
     "LlmRequest",
     "LlmStreamEvent",
     "LlmStreamEventType",

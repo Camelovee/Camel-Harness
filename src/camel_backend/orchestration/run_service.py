@@ -5,11 +5,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import Agent, AgentBusyError, AgentNotRunningError
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.state import SteerResult
+from camel_harness.llm import LlmModel
 
 AgentBuilder = Callable[[str, Path, AgentSettings], Awaitable[Agent]]
 
@@ -21,30 +22,32 @@ class RunService:
         self,
         build_agent: AgentBuilder,
         sessions: SessionManager,
-        settings: WebSettingsStore,
+        settings: SettingsStore,
     ) -> None:
         self._build_agent = build_agent
         self._sessions = sessions
         self._settings = settings
         self._agents: dict[str, Agent] = {}
-        self._agent_settings: dict[str, AgentSettings] = {}
         self._lock = asyncio.Lock()
 
     async def require_agent(self, session_id: str, model_id: str | None = None) -> Agent:
         """返回绑定指定 Session 的唯一 Agent，必要时惰性创建。"""
         async with self._lock:
-            return await self._require_agent_locked(session_id, model_id)
+            agent, _ = await self._require_agent_locked(session_id, model_id)
+            return agent
 
     @asynccontextmanager
-    async def acquire(self, session_id: str, model_id: str | None = None) -> AsyncIterator[Agent]:
-        """返回可启动 Run 的 Agent；互斥保持到首事件交付，防止并发请求替换待启动实例。"""
+    async def acquire(
+        self, session_id: str, model_id: str | None = None
+    ) -> AsyncIterator[tuple[Agent, LlmModel]]:
+        """返回可启动 Run 的 Agent 与解析后的模型目标；互斥保持到首事件交付。"""
         async with self._lock:
-            agent = await self._require_agent_locked(session_id, model_id)
+            agent, model = await self._require_agent_locked(session_id, model_id)
             if agent.is_running:
                 raise AgentBusyError("会话已有正在运行的 Agent")
             if model_id:
                 await self._sessions.update(session_id, model_id=model_id)
-            yield agent
+            yield agent, model
 
     async def steer(self, session_id: str, content: str) -> SteerResult:
         """向活动 Run 追加输入；不存在活动 Run 时拒绝。"""
@@ -78,7 +81,6 @@ class RunService:
         if agent.is_running:
             return False
         self._agents.pop(session_id)
-        self._agent_settings.pop(session_id, None)
         await agent.close()
         return True
 
@@ -87,22 +89,21 @@ class RunService:
         async with self._lock:
             agents = tuple(self._agents.values())
             self._agents.clear()
-            self._agent_settings.clear()
         await asyncio.gather(*(agent.close() for agent in agents))
 
-    async def _require_agent_locked(self, session_id: str, model_id: str | None) -> Agent:
+    async def _require_agent_locked(
+        self, session_id: str, model_id: str | None
+    ) -> tuple[Agent, LlmModel]:
         metadata = await self._sessions.get(session_id)
         if metadata is None:
             raise KeyError(f"会话不存在：{session_id}")
-        _, settings = await self._settings.resolve(model_id or metadata.model_id)
+        model = await self._settings.resolve(model_id or metadata.model_id)
         current = self._agents.get(session_id)
-        if current is not None and self._agent_settings[session_id] == settings:
-            return current
-        if current is not None and current.is_running:
-            raise AgentBusyError("会话已有正在运行的 Agent，结束后才能切换模型")
-        agent = await self._build_agent(session_id, Path(metadata.workspace), settings)
-        self._agents[session_id] = agent
-        self._agent_settings[session_id] = settings
         if current is not None:
-            await current.close()
-        return agent
+            return current, model
+        # 模型是 per-run 输入，Agent 只随非模型配置构建一次，不随切换重建。
+        agent = await self._build_agent(
+            session_id, Path(metadata.workspace), await self._settings.base_settings()
+        )
+        self._agents[session_id] = agent
+        return agent, model

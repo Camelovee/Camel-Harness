@@ -6,21 +6,18 @@ from typing import cast
 import pytest
 
 from camel_backend.orchestration import RunService, SessionService
-from camel_backend.web_settings import ModelInput, WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import Agent, AgentBusyError
-from camel_harness.agent.config import AgentSettings
+from camel_harness.agent.config import AgentSettings, ModelInput
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
-def environment(tmp_path: Path) -> AgentSettings:
-    return AgentSettings.model_construct(
-        provider="anthropic",
-        model="claude-test",
-        anthropic_api_key="env-anthropic-key",
-        openai_api_key=None,
-        session_dir=tmp_path / "sessions",
-    )
+def _store(config: Path, **fields: object) -> SettingsStore:
+    """把测试配置写入临时 config.json 后构造 SettingsStore。"""
+
+    config.write_text(json.dumps(fields), encoding="utf-8")
+    return SettingsStore(config)
 
 
 def custom_model(api_key: str | None = "custom-openai-key") -> ModelInput:
@@ -33,64 +30,57 @@ def custom_model(api_key: str | None = "custom-openai-key") -> ModelInput:
     )
 
 
-async def test_web_models_use_json_credentials_when_key_is_empty(tmp_path: Path) -> None:
+async def test_settings_persist_models_to_config_without_exposing_keys(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
-    config.write_text(
-        json.dumps(
-            {
-                "provider": "openai",
-                "model": "json-model",
-                "openai_api_key": "json-secret",
-                "openai_base_url": "https://example.test/v1",
-            }
-        ),
-        encoding="utf-8",
-    )
-    store = WebSettingsStore(tmp_path / "web-settings.json", AgentSettings.load(config))
-    snapshot = await store.snapshot()
-    assert snapshot["models"][0]["name"] == "配置文件默认模型"  # type: ignore[index]
-    assert "json-secret" not in json.dumps(snapshot)
-    assert (await store.resolve(None))[1].openai_api_key == "json-secret"
-    await store.add_model(custom_model(api_key=None))
-    profile = (await store.snapshot())["models"][1]  # type: ignore[index]
-    resolved = (await store.resolve(profile["id"]))[1]  # type: ignore[index]
-    assert resolved.openai_api_key == "json-secret"
-
-
-async def test_web_settings_persist_models_without_exposing_keys(tmp_path: Path) -> None:
-    path = tmp_path / "web-settings.json"
-    store = WebSettingsStore(path, environment(tmp_path))
+    store = _store(config)
 
     await store.add_model(custom_model())
     snapshot = await store.snapshot()
-    profile = snapshot["models"][1]  # type: ignore[index]
-    model_id = profile["id"]  # type: ignore[index]
+    profile = snapshot["models"][0]  # type: ignore[index]
+    model_id = str(profile["id"])  # type: ignore[index]
     assert profile["configured"] is True  # type: ignore[index]
     assert profile["has_api_key"] is True  # type: ignore[index]
     assert "custom-openai-key" not in json.dumps(snapshot)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # 首个带密钥的模型自动成为默认
+    assert snapshot["default_model_id"] == model_id
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
 
-    selected_id, resolved = await store.resolve(str(model_id))
-    assert selected_id == model_id
+    resolved = await store.resolve(model_id)
     assert resolved.provider == "openai"
     assert resolved.model == "gpt-test"
-    assert resolved.openai_api_key == "custom-openai-key"
-    assert resolved.openai_base_url == "https://example.test/v1"
+    assert resolved.api_key == "custom-openai-key"
+    assert resolved.base_url == "https://example.test/v1"
+    assert (await store.resolve(None)).model == "gpt-test"
 
-    await store.update_model(str(model_id), custom_model(api_key=None))
-    assert (await store.resolve(str(model_id)))[1].openai_api_key == "custom-openai-key"
-    await store.update_preferences(str(model_id), True)
+    await store.update_model(model_id, custom_model(api_key=None))
+    assert (await store.resolve(model_id)).api_key == "custom-openai-key"
+    await store.update_preferences(model_id, True)
 
-    reloaded = WebSettingsStore(path, environment(tmp_path))
+    reloaded = SettingsStore(config)
     assert (await reloaded.snapshot())["thinking"] is True
     assert (await reloaded.snapshot())["default_model_id"] == model_id
-    assert (await reloaded.resolve(None))[1].model == "gpt-test"
 
     await reloaded.update_model(
-        str(model_id), custom_model(api_key=None).model_copy(update={"clear_api_key": True})
+        model_id, custom_model(api_key=None).model_copy(update={"clear_api_key": True})
     )
     with pytest.raises(ValueError, match="缺少 API Key"):
-        await reloaded.resolve(str(model_id))
+        await reloaded.resolve(model_id)
+
+
+async def test_delete_model_rebinds_default_to_next_configured(tmp_path: Path) -> None:
+    store = _store(tmp_path / "config.json")
+    await store.add_model(custom_model())
+    first = str((await store.snapshot())["models"][0]["id"])  # type: ignore[index]
+    await store.add_model(
+        ModelInput(name="备用", provider="anthropic", model="claude-test", api_key="k2")
+    )
+    second = str((await store.snapshot())["models"][1]["id"])  # type: ignore[index]
+    assert (await store.snapshot())["default_model_id"] == first
+
+    await store.delete_model(first)
+    assert (await store.snapshot())["default_model_id"] == second
+    with pytest.raises(KeyError):
+        await store.delete_model(first)
 
 
 class FakeAgent:
@@ -102,39 +92,43 @@ class FakeAgent:
         self.closed = True
 
 
-async def test_session_agent_rebuilds_for_another_model_only_when_idle(tmp_path: Path) -> None:
-    settings = environment(tmp_path)
-    store = WebSettingsStore(tmp_path / "web-settings.json", settings)
+async def test_model_switch_reuses_agent_and_resolves_per_run(tmp_path: Path) -> None:
+    """模型是 per-run 输入：切换不重建 Agent，两次解析产出不同 LlmModel。"""
+
+    store = _store(tmp_path / "config.json")
+    await store.add_model(custom_model())
+    first_id = str((await store.snapshot())["models"][0]["id"])  # type: ignore[index]
+    await store.add_model(
+        ModelInput(name="备用", provider="anthropic", model="claude-test", api_key="k2")
+    )
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("test-session", tmp_path / "workspace", "测试")
     agents: list[FakeAgent] = []
-    built_models: list[str] = []
 
-    async def build_agent(_: str, __: Path, selected: AgentSettings) -> Agent:
-        built_models.append(selected.model)
+    async def build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
         agent = FakeAgent()
         agents.append(agent)
         return cast(Agent, agent)
 
     runs = RunService(build_agent, sessions, store)
     first = await runs.require_agent("test-session")
-    assert await runs.require_agent("test-session") is first
 
-    await store.add_model(custom_model())
-    profile = (await store.snapshot())["models"][1]  # type: ignore[index]
-    second = await runs.require_agent("test-session", str(profile["id"]))  # type: ignore[index]
-    assert second is not first
-    assert agents[0].closed
-    assert built_models == ["claude-test", "gpt-test"]
+    async with runs.acquire("test-session", first_id) as (agent, model):
+        assert agent is first
+        assert model.model == "gpt-test"
+    async with runs.acquire("test-session", None) as (agent, model):
+        assert agent is first
+        assert model.model == "gpt-test"
+    assert len(agents) == 1
+    assert not agents[0].closed
 
-    agents[1].is_running = True
+    agents[0].is_running = True
     session_service = SessionService(sessions, runs, store)
-    with pytest.raises(AgentBusyError, match="切换模型"):
-        await runs.require_agent("test-session", "environment")
     with pytest.raises(AgentBusyError, match="切换会话模型"):
-        await session_service.update("test-session", model_id="environment")
-    agents[1].is_running = False
+        await session_service.update("test-session", model_id=first_id)
+    agents[0].is_running = False
     await runs.close()
+    assert agents[0].closed
 
 
 async def test_session_remembers_selected_model(tmp_path: Path) -> None:

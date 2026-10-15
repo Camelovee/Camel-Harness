@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
@@ -34,26 +34,44 @@ from .protocol import (
 )
 
 
-def create_anthropic_adapter(api_key: str, base_url: str | None = None) -> AnthropicLlmAdapter:
-    """在 LLM 边界内创建 Anthropic 官方 SDK 适配器。"""
+def create_anthropic_adapter() -> AnthropicLlmAdapter:
+    """创建 Anthropic 官方 SDK 适配器；凭据随请求进入，适配器无状态。"""
 
-    return AnthropicLlmAdapter(AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=0))
+    return AnthropicLlmAdapter()
+
+
+def _default_client(api_key: str, base_url: str | None) -> AsyncAnthropic:
+    return AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=0)
 
 
 class AnthropicLlmAdapter(LlmAdapter):
     """使用 Anthropic 官方异步 SDK 的流式 Provider 适配器。"""
 
-    def __init__(self, client: AsyncAnthropic) -> None:
-        self._client = client
+    def __init__(
+        self,
+        client_factory: Callable[[str, str | None], AsyncAnthropic] = _default_client,
+    ) -> None:
+        self._client_factory = client_factory
 
     @property
     def provider_id(self) -> str:
         return "anthropic"
 
-    async def close(self) -> None:
-        await self._client.close()
-
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        target = request.model
+        if not target.api_key:
+            yield StreamFailed("Anthropic 请求缺少 API Key", retryable=False)
+            return
+        client = self._client_factory(target.api_key, target.base_url)
+        try:
+            async for event in self._stream_with_client(client, request):
+                yield event
+        finally:
+            await client.close()
+
+    async def _stream_with_client(
+        self, client: AsyncAnthropic, request: LlmRequest
+    ) -> AsyncIterator[LlmStreamEvent]:
         messages = self._convert_messages(request.messages)
         tools = [
             {
@@ -64,7 +82,7 @@ class AnthropicLlmAdapter(LlmAdapter):
             for tool in request.tools
         ]
         kwargs: dict[str, Any] = {
-            "model": request.model,
+            "model": request.model.model,
             "max_tokens": request.max_output_tokens,
             "messages": messages,
         }
@@ -89,7 +107,7 @@ class AnthropicLlmAdapter(LlmAdapter):
         completion: dict[str, LlmStopReason] = {}
         usage_state: dict[str, int] = {}
         try:
-            async with self._client.messages.stream(**kwargs) as sdk_stream:
+            async with client.messages.stream(**kwargs) as sdk_stream:
                 async for event in sdk_stream:
                     for mapped_event in self._map_event(
                         event, tool_blocks, completion, usage_state

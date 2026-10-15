@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from uuid import uuid4
 
-from camel_harness.llm import AssistantMessage, LlmClient, TextBlock
+from camel_harness.llm import AssistantMessage, LlmClient, LlmModel, TextBlock
 
 from ..agent import Agent
 from ..context import ContextManager
@@ -45,6 +45,7 @@ class SubagentRequest:
     permission_mode: PermissionMode
     parent_session_id: str
     parent_tool_call_id: str
+    model: LlmModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +148,7 @@ class LocalSubagentRunner:
         try:
             await agent.run(
                 request.task,
+                model=request.model,
                 max_turns=8,
                 permission_mode=mode,
             )

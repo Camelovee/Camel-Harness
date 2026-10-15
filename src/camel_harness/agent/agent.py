@@ -11,6 +11,7 @@ from camel_harness.llm import (
     AssistantMessageAccumulator,
     LlmClient,
     LlmErrorCode,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEventType,
@@ -136,6 +137,7 @@ class Agent:
         self,
         prompt: str,
         *,
+        model: LlmModel,
         max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         thinking: bool = True,
@@ -147,6 +149,7 @@ class Agent:
             raise ValueError("用户消息不能为空")
         control = await self._start_run(
             prompt=prompt,
+            model=model,
             permission_mode=permission_mode,
             max_turns=max_turns,
             thinking=thinking,
@@ -156,6 +159,7 @@ class Agent:
     async def resume(
         self,
         *,
+        model: LlmModel,
         max_turns: int = 50,
         permission_mode: PermissionMode = PermissionMode.DEFAULT,
         thinking: bool = True,
@@ -164,6 +168,7 @@ class Agent:
 
         control = await self._start_run(
             prompt=None,
+            model=model,
             permission_mode=permission_mode,
             max_turns=max_turns,
             thinking=thinking,
@@ -229,6 +234,7 @@ class Agent:
         self,
         *,
         prompt: str | None,
+        model: LlmModel,
         permission_mode: PermissionMode,
         max_turns: int,
         thinking: bool,
@@ -237,6 +243,8 @@ class Agent:
 
         if max_turns <= 0:
             raise ValueError("Agent 最大 Turn 数必须大于 0")
+        if not self._llm.supports(model.provider):
+            raise ValueError(f"未配置的 Provider：{model.provider}")
         async with self._run_lock:
             if self._closed or self._closing:
                 raise RuntimeError("Agent 已关闭")
@@ -260,6 +268,7 @@ class Agent:
                 self._execute_run(
                     control,
                     prompt=prompt,
+                    model=model,
                     permission_mode=permission_mode,
                     thinking=thinking,
                     initial_tool_results=initial_tool_results,
@@ -307,6 +316,7 @@ class Agent:
         control: RunControl,
         *,
         prompt: str | None,
+        model: LlmModel,
         permission_mode: PermissionMode,
         thinking: bool,
         initial_tool_results: tuple[ToolResultMessage, ...] = (),
@@ -341,6 +351,7 @@ class Agent:
                 while run.status is RunStatus.RUNNING:
                     turn_reason, has_tool_calls = await self._run_turn(
                         run=run,
+                        model=model,
                         permission_mode=permission_mode,
                         thinking=thinking,
                         context_query=context_query,
@@ -468,6 +479,7 @@ class Agent:
         self,
         *,
         run: AgentRun,
+        model: LlmModel,
         permission_mode: PermissionMode,
         thinking: bool,
         context_query: str,
@@ -490,10 +502,10 @@ class Agent:
             await self._emit_complete_message(run, turn_id, user_message)
         definitions = self._tools.llm_definitions()
         system_prompt, history = await self._prepare_context(
-            run, self._options.model, self._system_prompt, context_query, definitions
+            run, model, self._system_prompt, context_query, definitions
         )
         request = LlmRequest(
-            model=self._options.model,
+            model=model,
             messages=history,
             system_prompt=system_prompt,
             tools=definitions,
@@ -531,7 +543,7 @@ class Agent:
                 run.context_overflow_recovery_used = True
                 system_prompt, history = await self._prepare_context(
                     run,
-                    self._options.model,
+                    model,
                     self._system_prompt,
                     context_query,
                     definitions,
@@ -552,6 +564,7 @@ class Agent:
                 turn_id=turn_id,
                 calls=calls,
                 permission_mode=permission_mode,
+                model=model,
             )
         await self._emit(
             TurnEndEvent(
@@ -574,7 +587,7 @@ class Agent:
     ) -> tuple[AssistantMessage, list[ToolCall]]:
         """实时发送模型增量，仅在完整结束后组装规范消息。"""
 
-        accumulator = AssistantMessageAccumulator(self._llm.provider_id, request.model)
+        accumulator = AssistantMessageAccumulator(request.model.provider, request.model.model)
         started = False
         try:
             async for llm_event in self._llm.stream(request):
@@ -616,7 +629,7 @@ class Agent:
     async def _prepare_context(
         self,
         run: AgentRun,
-        model: str,
+        model: LlmModel,
         system_prompt: str,
         query: str,
         tools: tuple[ToolDefinition, ...],
@@ -706,6 +719,7 @@ class Agent:
         turn_id: str,
         calls: list[ToolCall],
         permission_mode: PermissionMode,
+        model: LlmModel,
     ) -> tuple[ToolResultMessage, ...]:
         """串行执行当前 Turn 的工具调用并实时投影审批事件。"""
 
@@ -748,7 +762,7 @@ class Agent:
             try:
                 result = await self._tool_executor.execute(
                     call,
-                    ToolContext(run.session_id, self._workspace, permission_mode),
+                    ToolContext(run.session_id, self._workspace, permission_mode, model=model),
                     on_approval=on_approval,
                 )
             except Exception:

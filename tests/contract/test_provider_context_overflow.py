@@ -11,6 +11,7 @@ from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
     LlmErrorCode,
+    LlmModel,
     LlmRequest,
     LlmUsage,
     StreamFailed,
@@ -24,10 +25,19 @@ from camel_harness.llm.openai import OpenAiLlmAdapter
 def _adapter(provider: str, handler: Callable[[httpx.Request], httpx.Response]) -> LlmAdapter:
     """官方 SDK 通过本地 HTTP Transport 返回错误，不访问外部模型。"""
 
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    def client_factory(api_key: str, base_url: str | None):
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        if provider == "anthropic":
+            return AsyncAnthropic(api_key=api_key, http_client=http, max_retries=0)
+        return AsyncOpenAI(api_key=api_key, http_client=http, max_retries=0)
+
     if provider == "anthropic":
-        return AnthropicLlmAdapter(AsyncAnthropic(api_key="test", http_client=http, max_retries=0))
-    return OpenAiLlmAdapter(AsyncOpenAI(api_key="test", http_client=http, max_retries=0))
+        return AnthropicLlmAdapter(client_factory)
+    return OpenAiLlmAdapter(client_factory)
+
+
+def _model(provider: str) -> LlmModel:
+    return LlmModel(provider, "fake", api_key="test")
 
 
 @pytest.mark.parametrize(
@@ -56,13 +66,12 @@ async def test_sdk_context_overflow_is_classified_without_retrying_same_input(pr
         return httpx.Response(400, json={"error": detail})
 
     adapter = _adapter(provider, reject)
-    try:
-        events = [
-            event
-            async for event in LlmClient(adapter).stream(LlmRequest("fake", (UserMessage("任务"),)))
-        ]
-    finally:
-        await adapter.close()
+    events = [
+        event
+        async for event in LlmClient(adapter).stream(
+            LlmRequest(_model(provider), (UserMessage("任务"),))
+        )
+    ]
 
     assert len(requests) == 1
     assert len(events) == 1
@@ -91,10 +100,7 @@ async def test_sdk_context_overflow_is_classified_without_retrying_same_input(pr
 )
 async def test_unrelated_sdk_errors_cannot_trigger_compaction(provider, status, detail):
     adapter = _adapter(provider, lambda request: httpx.Response(status, json={"error": detail}))
-    try:
-        events = [event async for event in LlmClient(adapter).stream(LlmRequest("fake", ()))]
-    finally:
-        await adapter.close()
+    events = [event async for event in LlmClient(adapter).stream(LlmRequest(_model(provider), ()))]
     assert len(events) == 1
     assert isinstance(events[0], StreamFailed)
     assert events[0].code is None
@@ -123,10 +129,7 @@ async def test_sse_failure_is_not_lost_by_sdk_mapping(provider, event_type):
             200, headers={"content-type": "text/event-stream"}, content=content
         ),
     )
-    try:
-        events = [event async for event in adapter.stream(LlmRequest("fake", ()))]
-    finally:
-        await adapter.close()
+    events = [event async for event in adapter.stream(LlmRequest(_model(provider), ()))]
     assert len(events) == 1
     assert isinstance(events[0], StreamFailed)
     assert events[0].code is LlmErrorCode.CONTEXT_OVERFLOW

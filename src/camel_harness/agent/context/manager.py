@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from camel_harness.llm import LlmUsage, Message, ToolDefinition, UserMessage
+from camel_harness.llm import LlmModel, LlmUsage, Message, ToolDefinition, UserMessage
 
 from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
@@ -58,7 +58,7 @@ class ContextManager:
     async def prepare(
         self,
         snapshot: ContextSnapshot,
-        model: str,
+        model: LlmModel,
         *,
         query: str,
         workspace: Path,
@@ -147,7 +147,7 @@ class ContextManager:
     async def compact_if_needed(
         self,
         snapshot: ContextSnapshot,
-        model: str,
+        model: LlmModel,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
         on_usage: Callable[[LlmUsage], None] | None = None,

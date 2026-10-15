@@ -10,6 +10,7 @@ from camel_harness.agent.config import CompactionSettings
 from camel_harness.agent.session import ContextSnapshot
 from camel_harness.llm import (
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmUsage,
@@ -72,7 +73,7 @@ class CompactionEngine:
     async def compact_if_needed(
         self,
         snapshot: ContextSnapshot,
-        model: str,
+        model: LlmModel,
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
         on_usage: Callable[[LlmUsage], None] | None = None,
@@ -120,7 +121,7 @@ class CompactionEngine:
     async def _compact(
         self,
         snapshot: ContextSnapshot,
-        model: str,
+        model: LlmModel,
         on_usage: Callable[[LlmUsage], None] | None,
         context_overhead_tokens: int,
         *,
@@ -174,7 +175,7 @@ class CompactionEngine:
 
     async def _summarize(
         self,
-        model: str,
+        model: LlmModel,
         messages: tuple[Message, ...],
         on_usage: Callable[[LlmUsage], None] | None,
     ) -> tuple[str, LlmUsage | None]:

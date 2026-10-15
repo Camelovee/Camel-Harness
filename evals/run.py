@@ -30,6 +30,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -42,6 +43,8 @@ from camel_harness.llm import (
     create_anthropic_adapter,
     create_openai_adapter,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 TASKS_PATH = Path(__file__).with_name("tasks.json")
 
@@ -110,14 +113,32 @@ def _workspace_path(workspace: Path, value: str) -> Path:
 def _adapter(provider: str, task: dict[str, Any]) -> LlmAdapter:
     if provider == "fake":
         return ScriptedAdapter(task)
-    settings = AgentSettings.load()
-    key_name = "anthropic_api_key" if provider == "anthropic" else "openai_api_key"
-    key = settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
-    if not key:
-        raise ValueError(f"真实 Provider 评测需要在 ~/.camel/config.json 配置 {key_name}")
     if provider == "anthropic":
-        return create_anthropic_adapter(api_key=key, base_url=settings.anthropic_base_url)
-    return create_openai_adapter(api_key=key, base_url=settings.openai_base_url)
+        return create_anthropic_adapter()
+    return create_openai_adapter()
+
+
+def _model(provider: str, model: str) -> LlmModel:
+    """真实 Provider 从 config.json 的 models 解析凭据；假 Provider 使用本地脚本适配器。"""
+
+    if provider == "fake":
+        return _MODEL
+    settings = AgentSettings.load()
+    profile = next(
+        (
+            item
+            for item in settings.models
+            if item.provider == provider and item.model == model and item.api_key
+        ),
+        None,
+    )
+    if profile is None:
+        raise ValueError(
+            f"真实 Provider 评测需要在 ~/.camel/config.json 的 models 中配置 {provider}/{model}"
+        )
+    return LlmModel(
+        profile.provider, profile.model, api_key=profile.api_key or "", base_url=profile.base_url
+    )
 
 
 def _grade(
@@ -173,7 +194,7 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
         agent = Agent(
             sessions.bind(task["id"]),
             workspace,
-            AgentOptions(model, max_duration_seconds=120),
+            AgentOptions(max_duration_seconds=120),
             llm,
             registry,
             ToolExecutor(registry, PermissionService(EvalApproval())),
@@ -185,11 +206,18 @@ async def run_task(task: dict[str, Any], provider: str, model: str) -> dict[str,
         resumed = False
         try:
             await agent.run(
-                task["prompt"], max_turns=4, permission_mode=PermissionMode.DEFAULT, thinking=False
+                task["prompt"],
+                model=_model(provider, model),
+                max_turns=4,
+                permission_mode=PermissionMode.DEFAULT,
+                thinking=False,
             )
             if provider == "fake" and task.get("mode") == "resume":
                 await agent.resume(
-                    max_turns=4, permission_mode=PermissionMode.DEFAULT, thinking=False
+                    model=_model(provider, model),
+                    max_turns=4,
+                    permission_mode=PermissionMode.DEFAULT,
+                    thinking=False,
                 )
                 resumed = True
             messages = await sessions.bind(task["id"]).messages()

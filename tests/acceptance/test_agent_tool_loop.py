@@ -24,6 +24,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -34,6 +35,8 @@ from camel_harness.llm import (
     ToolResultMessage,
     ToolUseBlock,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class FakeLlm(LlmAdapter):
@@ -127,7 +130,7 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
     agent = Agent(
         sessions.bind("repeated"),
         tmp_path,
-        AgentOptions("fake"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -136,7 +139,7 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
     )
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("重复检查")
+    await agent.run("重复检查", model=_MODEL)
     results = [event.result for event in events if event.type == "tool_execution_end"]
     assert len(results) == 4
     assert all(not result.is_error for result in results)
@@ -157,7 +160,7 @@ async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_pa
     agent = Agent(
         sessions.bind("tool-storage-failure"),
         tmp_path,
-        AgentOptions("fake"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry, normalize_result=failed_storage),
@@ -166,7 +169,7 @@ async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_pa
     )
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("读取")
+    await agent.run("读取", model=_MODEL)
     assert events[-1].stop_reason == "tool_failed"
     assert events[-1].error == "工具结果归档失败"
     messages = await sessions.bind("tool-storage-failure").messages()
@@ -186,7 +189,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     agent = Agent(
         sessions.bind("session-1"),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -196,7 +199,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.run("读取文件", max_turns=3, thinking=True)
+    await agent.run("读取文件", max_turns=3, thinking=True, model=_MODEL)
     unsubscribe()
 
     assert runtime.calls == 2
@@ -262,7 +265,7 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
         registry,
         PermissionService(),
         ContextManager(CompactionEngine(llm)),
-        AgentOptions("fake-model"),
+        AgentOptions(),
     )
 
     result = await runner.run(
@@ -273,6 +276,7 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
             PermissionMode.DEFAULT,
             "parent",
             "delegate-call",
+            _MODEL,
         )
     )
 
@@ -306,7 +310,7 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     agent = Agent(
         sessions.bind("session-approval"),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry, permission),
@@ -322,6 +326,7 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
                 "写入文件",
                 max_turns=3,
                 permission_mode=PermissionMode.DEFAULT,
+                model=_MODEL,
             )
             return events
         finally:
@@ -365,7 +370,7 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path,
     agent = Agent(
         sessions.bind("session-length"),
         tmp_path,
-        AgentOptions("fake-model"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -375,7 +380,7 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path,
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
-    await agent.run("写文件")
+    await agent.run("写文件", model=_MODEL)
     unsubscribe()
     messages = await sessions.bind("session-length").messages()
 
@@ -438,7 +443,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
     agent = Agent(
         sessions.bind("recover"),
         tmp_path,
-        AgentOptions("fake"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -457,6 +462,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
         "写文件",
         permission_mode=PermissionMode.ACCEPT_EDITS,
         max_turns=1 if scenario == "turn_limit" else 50,
+        model=_MODEL,
     )
     assert not (tmp_path / "should-not-exist.txt").exists()
     if scenario == "success":
@@ -475,3 +481,99 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
             }[scenario]
         )
     assert sum(event.type == "agent_end" for event in events) == 1
+
+
+class _RoutingSpyLlm(LlmAdapter):
+    """记录每个 Provider 收到的请求与模型名。"""
+
+    def __init__(self, provider: str, *, delegate: bool = False) -> None:
+        self._provider = provider
+        self._delegate = delegate
+        self.calls = 0
+        self.requests: list[LlmRequest] = []
+
+    @property
+    def provider_id(self) -> str:
+        return self._provider
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.calls += 1
+        self.requests.append(request)
+        if self._delegate and self.calls == 1:
+            yield ToolCallCompleted(
+                ToolUseBlock(
+                    "delegate-1", "delegate_task", {"task": "子任务", "agent_type": "explore"}
+                )
+            )
+            yield MessageCompleted(LlmStopReason.TOOL_USE, model=None)
+            return
+        yield TextDelta("完成")
+        yield MessageCompleted(LlmStopReason.STOP, model=None)
+
+
+async def test_run_model_selects_adapter_per_run(tmp_path) -> None:
+    """同一个 Agent 的两次 Run 可以分别路由到不同 Provider。"""
+
+    first, second = _RoutingSpyLlm("one"), _RoutingSpyLlm("two")
+    llm = LlmClient({"one": first, "two": second})
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("routing", tmp_path, "按 Run 选模型")
+    registry = ToolRegistry()
+    agent = Agent(
+        sessions.bind("routing"),
+        tmp_path,
+        AgentOptions(),
+        llm,
+        registry,
+        ToolExecutor(registry),
+        ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
+    )
+
+    await agent.run("第一次", model=LlmModel("one", "m-a"))
+    await agent.run("第二次", model=LlmModel("two", "m-b"))
+
+    assert [request.model.model for request in first.requests] == ["m-a"]
+    assert [request.model.model for request in second.requests] == ["m-b"]
+
+
+async def test_subagent_follows_parent_run_model(tmp_path) -> None:
+    """委派工具的子 Agent 使用父 Run 的模型选择，不回退到其他 Provider。"""
+
+    parent_llm = _RoutingSpyLlm("one", delegate=True)
+    other = _RoutingSpyLlm("two")
+    llm = LlmClient({"one": parent_llm, "two": other})
+    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await sessions.create("parent", tmp_path, "委派模型跟随")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    runner = LocalSubagentRunner(
+        llm,
+        sessions,
+        registry,
+        PermissionService(),
+        ContextManager(CompactionEngine(llm)),
+        AgentOptions(),
+    )
+    from camel_harness.agent.subagent import SubagentToolProvider
+
+    await registry.register_provider(SubagentToolProvider(runner.run))
+    agent = Agent(
+        sessions.bind("parent"),
+        tmp_path,
+        AgentOptions(),
+        llm,
+        registry,
+        ToolExecutor(registry),
+        ContextManager(CompactionEngine(llm)),
+        system_prompt="测试提示",
+    )
+
+    await agent.run(
+        "委派任务", model=LlmModel("one", "main-model"), permission_mode=PermissionMode.YOLO
+    )
+
+    assert other.requests == []
+    # 父 Run 两次请求（委派 + 收尾）加子 Agent 一次，全部落在所选 Provider 与模型上
+    assert len(parent_llm.requests) == 3
+    assert all(request.model.model == "main-model" for request in parent_llm.requests)

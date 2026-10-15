@@ -19,10 +19,26 @@ class ToolDefinition:
 
 
 @dataclass(frozen=True, slots=True)
-class LlmRequest:
-    """不包含 Agent 运行坐标的单次模型请求。"""
+class LlmModel:
+    """一次 LLM 调用的完整目标：Provider、模型与凭据；凭据不进入 repr。"""
 
+    provider: str
     model: str
+    api_key: str = field(default="", repr=False)
+    base_url: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.provider.strip():
+            raise ValueError("Provider 不能为空")
+        if not self.model.strip():
+            raise ValueError("模型不能为空")
+
+
+@dataclass(frozen=True, slots=True)
+class LlmRequest:
+    """不包含 Agent 运行坐标的单次模型请求；凭据随请求进入，适配器无状态。"""
+
+    model: LlmModel
     messages: tuple[Message, ...]
     system_prompt: str | None = None
     tools: tuple[ToolDefinition, ...] = ()
@@ -152,11 +168,7 @@ LlmStreamEvent: TypeAlias = (
 
 
 class LlmAdapter(ABC):
-    """厂商无关的 LLM 流式协议。"""
-
-    async def close(self) -> None:
-        """释放适配器拥有的连接；无外部资源的测试实现无需覆盖。"""
-        return None
+    """厂商无关的 LLM 流式协议；适配器无状态，凭据随请求进入。"""
 
     @property
     @abstractmethod

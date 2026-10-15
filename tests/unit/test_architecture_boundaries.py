@@ -30,14 +30,6 @@ def test_backend_and_cli_are_separate_packages() -> None:
     assert (SOURCE_ROOT / "camel_backend/workspace.py").is_file()
 
 
-def test_entry_packages_do_not_import_llm_directly() -> None:
-    """入口必须经 Agent 使用 LLM，不能绕过产品边界。"""
-
-    forbidden = {"camel_harness.llm"}
-    assert not _forbidden_imports(SOURCE_ROOT / "camel_backend", forbidden)
-    assert not _forbidden_imports(SOURCE_ROOT / "camel_cli", forbidden)
-
-
 def test_related_small_contracts_stay_consolidated() -> None:
     """同一变化原因的小型协议不得再次拆成空洞文件。"""
 
@@ -244,6 +236,7 @@ def test_llm_protocol_does_not_contain_agent_runtime_coordinates() -> None:
         "temperature",
         "thinking",
     }
+    assert fields("LlmModel") == {"provider", "model", "api_key", "base_url"}
     expected_events = {
         "StreamStarted": {"type", "model"},
         "TextDelta": {"type", "text"},

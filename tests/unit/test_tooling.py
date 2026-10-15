@@ -18,6 +18,9 @@ from camel_harness.agent.tools import (
     ToolResult,
 )
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
+from camel_harness.llm import LlmModel
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class ExampleTool(Tool):
@@ -107,10 +110,11 @@ async def test_subagent_provider_exposes_only_delegate_tool() -> None:
 
     result = await tools[0].execute(
         ToolCall("call-1", "delegate_task", {"task": "检查代码", "agent_type": "explore"}),
-        ToolContext("parent-session", Path("/tmp")),
+        ToolContext("parent-session", Path("/tmp"), model=_MODEL),
     )
     assert requests[0].parent_session_id == "parent-session"
     assert requests[0].parent_tool_call_id == "call-1"
+    assert requests[0].model is _MODEL
     assert result.metadata["subagent_session_id"] == "sub-session"
 
 

@@ -1,14 +1,20 @@
 {
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-6",
-  "anthropic_api_key": null,
-  "anthropic_base_url": null,
-  "openai_api_key": null,
-  "openai_base_url": null,
   "max_output_tokens": 4096,
   "max_duration_seconds": 900,
   "max_steering_messages": 32,
   "max_steering_chars": 100000,
+  "models": [
+    {
+      "id": "main",
+      "name": "主模型",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "base_url": null,
+      "api_key": null
+    }
+  ],
+  "default_model_id": "main",
+  "thinking": false,
   "memory": {
     "enabled": true,
     "max_entries": 5,

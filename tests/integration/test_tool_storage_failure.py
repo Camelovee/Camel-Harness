@@ -23,12 +23,15 @@ from camel_harness.agent.tools.file_result_storage import (
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmStopReason,
     MessageCompleted,
     ToolCallCompleted,
     ToolResultMessage,
     ToolUseBlock,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
@@ -67,7 +70,7 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
     agent = Agent(
         sessions.bind("failure"),
         tmp_path,
-        AgentOptions("fake"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry, normalize_result=storage.normalize),
@@ -76,7 +79,7 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
     )
     events = []
     agent.subscribe(events.append)
-    await agent.run("执行命令", permission_mode=PermissionMode.YOLO)
+    await agent.run("执行命令", permission_mode=PermissionMode.YOLO, model=_MODEL)
     assert (tmp_path / "marker").read_text() == "x"
     assert adapter.calls == 1
     assert events[-1].status == "failed"

@@ -11,7 +11,11 @@ import typer
 from camel_cli.approval import ConsoleApproval
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.resources import MemoryStore, Skills
-from camel_harness.agent.runtime import AgentExtensions, build_agent, build_session_manager
+from camel_harness.agent.runtime import (
+    AgentExtensions,
+    build_agent,
+    build_session_manager,
+)
 from camel_harness.agent.subagent import SubagentToolProvider
 from camel_harness.agent.tools import ToolProvider
 from camel_harness.agent.tools.mcp import McpManager
@@ -50,8 +54,7 @@ def main(
     ] = None,
     session_id: Annotated[str | None, typer.Option("--session", help="复用已有会话 ID")] = None,
     workspace: Annotated[Path | None, typer.Option("--workspace", help="Agent 工作区")] = None,
-    provider: Annotated[str | None, typer.Option("--provider", help="anthropic 或 openai")] = None,
-    model: Annotated[str | None, typer.Option("--model", help="模型名称")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="模型配置的名称或 ID")] = None,
     permission_mode: Annotated[
         str,
         typer.Option(
@@ -69,13 +72,6 @@ def main(
     """运行一次流式 Harness Agent。"""
 
     settings = AgentSettings.load()
-    overrides: dict[str, str] = {}
-    if provider:
-        overrides["provider"] = provider
-    if model:
-        overrides["model"] = model
-    if overrides:
-        settings = AgentSettings.model_validate({**settings.model_dump(), **overrides})
     resolved_workspace = (workspace or Path.cwd()).resolve()
 
     async def execute() -> None:
@@ -94,6 +90,16 @@ def main(
                 raise typer.BadParameter("当前工作区没有可选择的历史会话")
             resolved_session_id = workspace_sessions[0].session_id
         resolved_session_id = resolved_session_id or uuid4().hex
+        if model is not None:
+            profile = next(
+                (item for item in settings.models if item.id == model or item.name == model),
+                None,
+            )
+            if profile is None:
+                raise typer.BadParameter(f"模型配置不存在：{model}（按名称或 ID 匹配）")
+            target = settings.resolve_model(profile.id)
+        else:
+            target = settings.resolve_model(None)
         metadata = await sessions.get(resolved_session_id)
         agent_workspace = Path(metadata.workspace) if metadata is not None else resolved_workspace
         await sessions.ensure(resolved_session_id, agent_workspace, "新会话")
@@ -109,12 +115,14 @@ def main(
             if prompt is None:
                 await run_repl(
                     agent,
+                    target,
                     permission_mode,
                 )
             else:
                 await run_once(
                     agent,
                     prompt,
+                    target,
                     permission_mode,
                 )
         finally:

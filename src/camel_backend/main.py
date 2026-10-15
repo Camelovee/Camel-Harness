@@ -15,7 +15,7 @@ from camel_backend.api import (
 )
 from camel_backend.approval import WebApproval
 from camel_backend.orchestration import RunService, SessionService, SettingsService
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_backend.workspace import NativeWorkspacePicker
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
@@ -62,9 +62,7 @@ def create_app(workspace: Path | None = None) -> FastAPI:
         settings = AgentSettings.load()
         approval = WebApproval()
         sessions = build_session_manager(settings)
-        web_settings = WebSettingsStore(
-            settings.resolved_session_dir().parent / "web-settings.json", settings
-        )
+        store = SettingsStore()
         workspace_picker = NativeWorkspacePicker()
 
         async def create_session_agent(
@@ -79,13 +77,13 @@ def create_app(workspace: Path | None = None) -> FastAPI:
                 extensions=await _local_extensions(model_settings, agent_workspace),
             )
 
-        runs = RunService(create_session_agent, sessions, web_settings)
+        runs = RunService(create_session_agent, sessions, store)
         dependencies.bind(
             runs=runs,
             sessions=sessions,
-            session_service=SessionService(sessions, runs, web_settings),
-            settings_service=SettingsService(web_settings, sessions, runs),
-            settings=web_settings,
+            session_service=SessionService(sessions, runs, store),
+            settings_service=SettingsService(store, sessions, runs),
+            settings=store,
             approvals=approval,
             select_workspace=workspace_picker.select,
         )

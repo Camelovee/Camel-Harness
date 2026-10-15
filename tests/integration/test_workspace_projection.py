@@ -8,15 +8,24 @@ from camel_backend.api.routes.sessions import create_sessions_router
 from camel_backend.api.routes.workspaces import _group_sessions, create_workspaces_router
 from camel_backend.main import create_app
 from camel_backend.orchestration import RunService, SessionService, SettingsService
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
-def _services(tmp_path: Path, sessions: SessionManager) -> tuple[RunService, WebSettingsStore]:
-    store = WebSettingsStore(tmp_path / "web-settings.json", AgentSettings())
+def _store(config: Path, **fields: object) -> SettingsStore:
+    """把测试配置写入临时 config.json 后构造 SettingsStore。"""
+
+    import json
+
+    config.write_text(json.dumps(fields), encoding="utf-8")
+    return SettingsStore(config)
+
+
+def _services(tmp_path: Path, sessions: SessionManager) -> tuple[RunService, SettingsStore]:
+    store = _store(tmp_path / "config.json")
     return RunService(_stub_build_agent, sessions, store), store
 
 

@@ -14,6 +14,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -26,6 +27,8 @@ from camel_harness.llm import (
     ToolUseBlock,
     UsageUpdated,
 )
+
+_MODEL = LlmModel("fake", "requested")
 
 
 class AuditedLlm(LlmAdapter):
@@ -60,7 +63,7 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
     agent = Agent(
         sessions.bind("session"),
         tmp_path,
-        AgentOptions("requested"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(
@@ -72,7 +75,7 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
     )
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("读取文件")
+    await agent.run("读取文件", model=_MODEL)
     assert events[-1].total_tokens == 240
     restarted = SessionManager(JsonlSessionStorage(root)).bind("session")
     messages = await restarted.messages()

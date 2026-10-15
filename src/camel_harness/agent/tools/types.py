@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from camel_harness.llm import ToolDefinition, ToolResultMessage
+from camel_harness.llm import LlmModel, ToolDefinition, ToolResultMessage
 
 
 class ToolRisk(StrEnum):
@@ -60,11 +60,12 @@ class ToolResult:
 
 @dataclass(frozen=True, slots=True)
 class ToolContext:
-    """一次工具执行所需的稳定运行上下文。"""
+    """一次工具执行所需的稳定运行上下文；model 为所属 Run 的模型选择。"""
 
     session_id: str
     workspace: Path
     permission_mode: PermissionMode = PermissionMode.DEFAULT
+    model: LlmModel | None = None
 
 
 class Tool(ABC):

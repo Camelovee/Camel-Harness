@@ -6,6 +6,7 @@ import typer
 
 from camel_harness.agent import Agent, AgentEvent
 from camel_harness.agent.tools import PermissionMode
+from camel_harness.llm import LlmModel
 
 from .approval import console_input
 
@@ -13,6 +14,7 @@ from .approval import console_input
 async def run_once(
     agent: Agent,
     prompt: str,
+    model: LlmModel,
     permission_mode: str = "default",
 ) -> None:
     """订阅规范事件并投影为终端输出。"""
@@ -21,6 +23,7 @@ async def run_once(
     try:
         await agent.run(
             prompt,
+            model=model,
             permission_mode=PermissionMode(permission_mode),
         )
     finally:
@@ -28,12 +31,12 @@ async def run_once(
         typer.echo()
 
 
-async def resume_once(agent: Agent, permission_mode: str = "default") -> None:
+async def resume_once(agent: Agent, model: LlmModel, permission_mode: str = "default") -> None:
     """从当前 Agent 绑定的 Session 尾部继续并投影流式事件。"""
 
     unsubscribe = agent.subscribe(_render_event)
     try:
-        await agent.resume(permission_mode=PermissionMode(permission_mode))
+        await agent.resume(model=model, permission_mode=PermissionMode(permission_mode))
     finally:
         unsubscribe()
         typer.echo()
@@ -55,6 +58,7 @@ def _render_event(event: AgentEvent) -> None:
 
 async def run_repl(
     agent: Agent,
+    model: LlmModel,
     permission_mode: str = "default",
 ) -> None:
     """运行可切换权限模式并复用同一 Session 的交互循环。"""
@@ -127,6 +131,6 @@ async def run_repl(
                 typer.echo(str(exc))
             continue
         if prompt == "/resume":
-            active_task = asyncio.create_task(resume_once(agent, mode))
+            active_task = asyncio.create_task(resume_once(agent, model, mode))
         else:
-            active_task = asyncio.create_task(run_once(agent, prompt, mode))
+            active_task = asyncio.create_task(run_once(agent, prompt, model, mode))

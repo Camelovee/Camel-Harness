@@ -15,6 +15,7 @@ from camel_harness.agent.tools import PermissionMode, PermissionService, ToolReg
 from camel_harness.llm import (
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmStopReason,
     MessageCompleted,
     StreamFailed,
@@ -23,6 +24,8 @@ from camel_harness.llm import (
     ToolResultMessage,
     ToolUseBlock,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 class ChildLlm(LlmAdapter):
@@ -59,10 +62,16 @@ async def make_runner(tmp_path, adapter):
         ToolRegistry(),
         PermissionService(),
         ContextManager(CompactionEngine(llm)),
-        AgentOptions("fake"),
+        AgentOptions(),
     )
     request = SubagentRequest(
-        "子任务", SubagentType.EXPLORE, tmp_path, PermissionMode.DEFAULT, "parent", "delegate"
+        "子任务",
+        SubagentType.EXPLORE,
+        tmp_path,
+        PermissionMode.DEFAULT,
+        "parent",
+        "delegate",
+        _MODEL,
     )
     return runner, request, sessions
 
@@ -95,19 +104,15 @@ async def test_parent_cancellation_closes_child_owned_task(tmp_path):
     ]
 
 
-async def test_child_reads_its_own_archived_result_without_closing_shared_llm(tmp_path):
+async def test_child_reads_its_own_archived_result(tmp_path):
     from camel_harness.agent.tools.builtin import BuiltinToolProvider
 
     class ReadingLlm(LlmAdapter):
         requests = 0
-        closed = False
 
         @property
         def provider_id(self):
             return "fake"
-
-        async def close(self):
-            self.closed = True
 
         async def stream(self, request):
             self.requests += 1
@@ -142,7 +147,7 @@ async def test_child_reads_its_own_archived_result_without_closing_shared_llm(tm
         registry,
         PermissionService(),
         ContextManager(CompactionEngine(llm)),
-        AgentOptions("fake"),
+        AgentOptions(),
     )
     result = await runner.run(
         SubagentRequest(
@@ -152,11 +157,11 @@ async def test_child_reads_its_own_archived_result_without_closing_shared_llm(tm
             PermissionMode.DEFAULT,
             "parent",
             "delegate",
+            _MODEL,
         )
     )
     assert result.succeeded and result.content == "已读取子会话引用"
     assert adapter.requests == 3
-    assert not adapter.closed
     messages = await sessions.bind(result.session_id).messages()
     references = [
         message.details["content_ref"]["path"]
@@ -184,14 +189,10 @@ async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_
 
     class MemoryLlm(LlmAdapter):
         requests = 0
-        closed = False
 
         @property
         def provider_id(self):
             return "fake"
-
-        async def close(self):
-            self.closed = True
 
         async def stream(self, request):
             self.requests += 1
@@ -244,7 +245,7 @@ async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_
         registry,
         PermissionService(),
         ContextManager(CompactionEngine(llm), memories=memories),
-        AgentOptions("fake"),
+        AgentOptions(),
     )
     result = await runner.run(
         SubagentRequest(
@@ -254,8 +255,9 @@ async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_
             PermissionMode.YOLO,
             "parent",
             "delegate",
+            _MODEL,
         )
     )
     assert result.succeeded and result.content == "仅完成只读记忆查询"
-    assert adapter.requests == 3 and not adapter.closed
+    assert adapter.requests == 3
     assert await memories.get("unauthorized", "user") is None

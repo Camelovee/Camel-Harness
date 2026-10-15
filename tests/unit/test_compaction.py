@@ -23,6 +23,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -36,7 +37,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-_MODEL = "fake-model"
+_MODEL = LlmModel("fake", "fake-model")
 
 
 async def test_context_prepare_owns_prompt_and_plan_but_does_not_change_snapshot(
@@ -344,7 +345,7 @@ async def test_length_retry_has_independent_budget_and_counts_both_requests() ->
     charged: list[LlmUsage] = []
     result = await engine.compact_if_needed(
         _log(),
-        "fake",
+        _MODEL,
         trigger=CompactionTrigger.CONTEXT_OVERFLOW,
         on_usage=charged.append,
     )
@@ -577,7 +578,7 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     agent = Agent(
         session,
         tmp_path,
-        AgentOptions(_MODEL),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
@@ -586,7 +587,7 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     )
     events: list = []
     agent.subscribe(events.append)
-    await agent.run("继续")
+    await agent.run("继续", model=_MODEL)
     entries = await session.entries()
     assert entries[: len(previous)] == previous
     assert len(entries) == len(previous) + 1

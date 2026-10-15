@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -33,26 +33,44 @@ from .protocol import (
 )
 
 
-def create_openai_adapter(api_key: str, base_url: str | None = None) -> OpenAiLlmAdapter:
-    """在 LLM 边界内创建 OpenAI 官方 SDK 适配器。"""
+def create_openai_adapter() -> OpenAiLlmAdapter:
+    """创建 OpenAI 官方 SDK 适配器；凭据随请求进入，适配器无状态。"""
 
-    return OpenAiLlmAdapter(AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0))
+    return OpenAiLlmAdapter()
+
+
+def _default_client(api_key: str, base_url: str | None) -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
 
 
 class OpenAiLlmAdapter(LlmAdapter):
     """使用 OpenAI 官方异步 SDK Responses API 的流式适配器。"""
 
-    def __init__(self, client: AsyncOpenAI) -> None:
-        self._client = client
+    def __init__(
+        self,
+        client_factory: Callable[[str, str | None], AsyncOpenAI] = _default_client,
+    ) -> None:
+        self._client_factory = client_factory
 
     @property
     def provider_id(self) -> str:
         return "openai"
 
-    async def close(self) -> None:
-        await self._client.close()
-
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        target = request.model
+        if not target.api_key:
+            yield StreamFailed("OpenAI 请求缺少 API Key", retryable=False)
+            return
+        client = self._client_factory(target.api_key, target.base_url)
+        try:
+            async for event in self._stream_with_client(client, request):
+                yield event
+        finally:
+            await client.close()
+
+    async def _stream_with_client(
+        self, client: AsyncOpenAI, request: LlmRequest
+    ) -> AsyncIterator[LlmStreamEvent]:
         input_items = self._convert_messages(request.messages)
         tools = [
             {
@@ -65,7 +83,7 @@ class OpenAiLlmAdapter(LlmAdapter):
             for tool in request.tools
         ]
         kwargs: dict[str, Any] = {
-            "model": request.model,
+            "model": request.model.model,
             "input": input_items,
             "max_output_tokens": request.max_output_tokens,
             "stream": True,
@@ -83,7 +101,7 @@ class OpenAiLlmAdapter(LlmAdapter):
         calls: dict[str, dict[str, str]] = {}
         completion_state = {"has_tool_call": False}
         try:
-            sdk_stream = await self._client.responses.create(**kwargs)
+            sdk_stream = await client.responses.create(**kwargs)
             try:
                 async for event in sdk_stream:
                     for mapped_event in self._map_event(event, calls, completion_state):

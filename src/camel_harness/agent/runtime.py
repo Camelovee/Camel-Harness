@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from camel_harness.llm import (
-    LlmAdapter,
     LlmClient,
     create_anthropic_adapter,
     create_openai_adapter,
@@ -65,12 +64,12 @@ async def build_agent(
         raise KeyError(f"会话不存在：{session_id}")
     if Path(metadata.workspace).resolve() != workspace.resolve():
         raise ValueError("Agent 工作区必须与会话工作区一致")
-    llm = LlmClient(_build_llm_adapter(settings))
+    llm = _build_llm_client()
 
     async def close_resources() -> None:
-        """组合层拥有连接，任一资源关闭失败仍尝试关闭其余资源。"""
+        """组合层拥有扩展资源，任一资源关闭失败仍尝试关闭其余资源。"""
         error: Exception | None = None
-        for closer in (*extensions.on_close, llm.close):
+        for closer in extensions.on_close:
             try:
                 await closer()
             except Exception as exc:
@@ -97,7 +96,6 @@ async def build_agent(
             result_storage.normalize,
         )
         options = AgentOptions(
-            model=settings.model,
             max_output_tokens=settings.max_output_tokens,
             max_duration_seconds=settings.max_duration_seconds,
             max_steering_messages=settings.max_steering_messages,
@@ -143,19 +141,12 @@ async def build_agent(
         raise
 
 
-def _build_llm_adapter(settings: AgentSettings) -> LlmAdapter:
-    """使用官方 SDK 创建当前配置的 Provider。"""
+def _build_llm_client() -> LlmClient:
+    """创建路由全部内置 Provider 的无状态 LLM Client；凭据随每次请求进入。"""
 
-    if settings.provider == "anthropic":
-        if not settings.anthropic_api_key:
-            raise ValueError("请在 ~/.camel/config.json 中配置 anthropic_api_key")
-        return create_anthropic_adapter(
-            api_key=settings.anthropic_api_key,
-            base_url=settings.anthropic_base_url,
-        )
-    if not settings.openai_api_key:
-        raise ValueError("请在 ~/.camel/config.json 中配置 openai_api_key")
-    return create_openai_adapter(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
+    return LlmClient(
+        {
+            "anthropic": create_anthropic_adapter(),
+            "openai": create_openai_adapter(),
+        }
     )

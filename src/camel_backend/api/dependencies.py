@@ -4,7 +4,7 @@ from pathlib import Path
 
 from camel_backend.approval import WebApproval
 from camel_backend.orchestration import RunService, SessionService, SettingsService
-from camel_backend.web_settings import WebSettingsStore
+from camel_backend.settings_store import SettingsStore
 from camel_harness.agent.session import SessionManager
 
 WorkspacePicker = Callable[[], Awaitable[Path | None]]
@@ -19,7 +19,7 @@ class HttpDependencies:
     _sessions: SessionManager | None = field(default=None, init=False, repr=False)
     _session_service: SessionService | None = field(default=None, init=False, repr=False)
     _settings_service: SettingsService | None = field(default=None, init=False, repr=False)
-    _settings: WebSettingsStore | None = field(default=None, init=False, repr=False)
+    _settings: SettingsStore | None = field(default=None, init=False, repr=False)
     _approvals: WebApproval | None = field(default=None, init=False, repr=False)
     _select_workspace: WorkspacePicker | None = field(default=None, init=False, repr=False)
 
@@ -30,7 +30,7 @@ class HttpDependencies:
         sessions: SessionManager,
         session_service: SessionService,
         settings_service: SettingsService,
-        settings: WebSettingsStore,
+        settings: SettingsStore,
         approvals: WebApproval | None = None,
         select_workspace: WorkspacePicker | None = None,
     ) -> None:
@@ -86,7 +86,7 @@ class HttpDependencies:
             raise RuntimeError("Camel Harness Web 运行时尚未完成初始化")
         return self._settings_service
 
-    def require_settings(self) -> WebSettingsStore:
+    def require_settings(self) -> SettingsStore:
         """返回 Web 本机模型配置。"""
 
         if self._settings is None:

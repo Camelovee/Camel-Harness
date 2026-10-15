@@ -33,6 +33,8 @@ class DelegateTaskTool(Tool):
         self._runner = runner
 
     async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
+        if context.model is None:
+            return ToolResult(call.call_id, call.name, "委派缺少模型上下文", is_error=True)
         result = await self._runner(
             SubagentRequest(
                 task=str(call.arguments["task"]),
@@ -41,6 +43,7 @@ class DelegateTaskTool(Tool):
                 permission_mode=context.permission_mode,
                 parent_session_id=context.session_id,
                 parent_tool_call_id=call.call_id,
+                model=context.model,
             )
         )
         return ToolResult(

@@ -12,6 +12,7 @@ from camel_harness.llm import (
     AssistantMessage,
     LlmAdapter,
     LlmClient,
+    LlmModel,
     LlmRequest,
     LlmStopReason,
     LlmStreamEvent,
@@ -21,6 +22,8 @@ from camel_harness.llm import (
     TextDelta,
     UserMessage,
 )
+
+_MODEL = LlmModel("fake", "fake-model")
 
 
 async def test_branch_append_preserves_siblings_and_restores_last_written_leaf(tmp_path) -> None:
@@ -184,14 +187,14 @@ async def test_agent_uses_selected_branch_not_sibling_history(tmp_path) -> None:
     agent = Agent(
         session,
         tmp_path,
-        AgentOptions("fake"),
+        AgentOptions(),
         llm,
         registry,
         ToolExecutor(registry),
         ContextManager(CompactionEngine(llm)),
         system_prompt="测试提示",
     )
-    await agent.run("走新方案")
+    await agent.run("走新方案", model=_MODEL)
     assert adapter.requests[0].messages == (UserMessage("共同问题"), UserMessage("走新方案"))
     entries = await session.entries()
     assert entries[-2].parent_id == root

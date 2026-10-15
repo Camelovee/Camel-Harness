@@ -24,7 +24,6 @@ export type ModelProfile = {
   base_url: string | null;
   configured: boolean;
   has_api_key: boolean;
-  read_only: boolean;
 };
 
 export type WebSettings = {

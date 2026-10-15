@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from camel_harness.llm import LlmClient, LlmRequest, LlmStreamEventType, UserMessage
 
-from .run import _adapter, load_tasks, run_suite
+from .run import _adapter, _model, load_tasks, run_suite
 
 
 async def _cancel_stream(provider: str, model: str) -> bool:
@@ -23,7 +23,7 @@ async def _cancel_stream(provider: str, model: str) -> bool:
     async def consume() -> None:
         nonlocal completed
         request = LlmRequest(
-            model=model,
+            model=_model(provider, model),
             messages=(UserMessage("请逐项列出从 1 到 100 的数字，每行一个数字。"),),
             max_output_tokens=1024,
         )
