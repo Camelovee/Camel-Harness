@@ -12,5 +12,6 @@
 - WebUI 设置对话框改左右结构（模型 / Skills / MCP 预留），Composer 支持模型、思考强度与权限模式选择；CLI `--model` 按名称或 ID 匹配配置。
 - 新增锁定依赖的 CI、离线评测、真实 Provider 可选烟测与任务报告。
 - 提供旧平铺 JSONL 的预览式复制迁移脚本；项目采用 MIT 许可证。
+- 修复 Windows 旧版 pywin32 未导出 `FILE_FLAG_OPEN_REPARSE_POINT` 导致安全文件打开崩溃：按文档常量值 `0x00200000` 补齐。
 
 架构与计划见 [项目架构](docs/项目架构.md) 与 [路书](docs/路书.md)。

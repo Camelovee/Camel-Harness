@@ -52,6 +52,8 @@ def _open_windows(path: Path, *, writable: bool, create: bool) -> int:
     pywintypes = import_module("pywintypes")
     msvcrt = import_module("msvcrt")
     access = win32con.GENERIC_READ | (win32con.GENERIC_WRITE if writable else 0)
+    # 旧版 pywin32 未导出该绑定；0x00200000 是文档稳定的 Win32 常量。
+    open_reparse_point = getattr(win32con, "FILE_FLAG_OPEN_REPARSE_POINT", 0x00200000)
     try:
         handle = win32file.CreateFile(
             str(path),
@@ -59,7 +61,7 @@ def _open_windows(path: Path, *, writable: bool, create: bool) -> int:
             win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
             None,
             win32con.OPEN_ALWAYS if create else win32con.OPEN_EXISTING,
-            win32con.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS,
+            open_reparse_point | win32con.FILE_FLAG_BACKUP_SEMANTICS,
             None,
         )
     except pywintypes.error as exc:

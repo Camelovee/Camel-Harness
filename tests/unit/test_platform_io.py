@@ -43,7 +43,10 @@ def test_windows_directory_sync_does_not_open_directory(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("attributes", [0, 0x400, 0x10])
-def test_windows_safe_open_checks_handle_and_transfers_ownership(monkeypatch, tmp_path, attributes):
+@pytest.mark.parametrize("legacy_pywin32", [False, True])
+def test_windows_safe_open_checks_handle_and_transfers_ownership(
+    monkeypatch, tmp_path, attributes, legacy_pywin32
+):
     class Handle:
         closed = False
         detached = False
@@ -72,6 +75,9 @@ def test_windows_safe_open_checks_handle_and_transfers_ownership(monkeypatch, tm
         FILE_ATTRIBUTE_REPARSE_POINT=0x400,
         FILE_ATTRIBUTE_DIRECTORY=0x10,
     )
+    if legacy_pywin32:
+        # 旧版 pywin32 未导出 FILE_FLAG_OPEN_REPARSE_POINT 绑定。
+        delattr(constants, "FILE_FLAG_OPEN_REPARSE_POINT")
     modules = {
         "win32con": constants,
         "win32file": SimpleNamespace(
@@ -91,7 +97,7 @@ def test_windows_safe_open_checks_handle_and_transfers_ownership(monkeypatch, tm
         assert handle.detached and not handle.closed
     assert calls[0][2] == 7
     assert calls[0][4] == constants.OPEN_ALWAYS
-    assert calls[0][5] & constants.FILE_FLAG_OPEN_REPARSE_POINT
+    assert calls[0][5] & 0x200000  # FILE_FLAG_OPEN_REPARSE_POINT，旧版 pywin32 缺绑定时按文档值补齐
 
 
 def test_windows_safe_open_preserves_missing_file_semantics(monkeypatch, tmp_path):
