@@ -100,7 +100,7 @@ OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `ba
 
 项目规则使用工作区 `AGENTS.md`；MCP 使用工作区 `.mcp.json`。Skill 来源优先级为内置 > 项目 `.camel/skills` > 用户 `~/.camel/skills`，发现只读名称与描述，正文和支持文件通过 `load_skill` 按需读取。
 
-MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制为本机 `.mcp.json`，按 [RepoAtlas 演示](docs/repoatlas-mcp-demo.md) 替换路径占位符。已有配置不要覆盖；`.mcp.json` 不纳入 Git，未配置时不影响核心工具。
+MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制为本机 `.mcp.json`，按本机安装目录修改 `command` 和 `args` 中的路径占位符。已有配置不要覆盖；`.mcp.json` 不纳入 Git，未配置时不影响核心工具。
 
 复制项目到 Windows 后，若 `.mcp.json` 使用其他电脑的绝对路径，需按当前电脑修改 `command` 和 `args`；JSON 中 Windows 路径的反斜杠应写为 `\\`，也可使用正斜杠。
 
@@ -118,6 +118,15 @@ npm run test --prefix webui -- --run
 npm run build --prefix webui
 git diff --check
 ```
+
+## 项目文档
+
+- [项目架构](docs/项目架构.md)：当前 WebUI、Backend 与 Harness 的职责、依赖和运行流程。
+- [路书](docs/路书.md)：已实现能力、待验证事项及按需扩展范围。
+- 方案设计：[上下文管理](docs/方案设计/上下文管理设计.md)、[工具安全](docs/方案设计/工具安全设计.md)、[会话](docs/方案设计/会话系统设计.md)、[上下文压缩](docs/方案设计/上下文压缩设计.md)、[记忆](docs/方案设计/记忆系统设计.md)。
+- [会话性能基准](docs/会话性能基准.md)：本机全量重放测量方式及环境限制。
+
+个人简历模板和面试准备位于本机 `docs/学习/`，整个目录已由 Git 忽略，不随仓库发布。
 
 ## 边界
 

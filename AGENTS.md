@@ -9,6 +9,30 @@
 - 保持实现简洁，避免过度抽象、重复职责和无需求的目录层级。
 - 不保留废弃导入路径、空壳模块和无明确需求的兼容代码。
 
+### 代码质量规范（Code quality standards）
+
+- 所有 Python 代码必须包含类型注解，函数和方法必须声明参数类型与返回类型（包括 `-> None`）。
+- 使用含义明确、能说明用途的变量名。
+- 遵循当前修改模块已有的代码模式与约定。
+- 对复杂函数，在职责可以清晰拆分时提取为更小、职责集中的函数，避免为凑行数机械拆分。
+- 函数 docstring 以单行摘要开头；需要补充上下文时另起段落，参数和返回值说明使用 `Args`、`Returns` 段落。描述内容默认使用中文。
+
+```python
+def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
+    """筛选未知用户标识。
+
+    保留输入顺序和重复项。
+
+    Args:
+        users: 待筛选的用户标识列表。
+        known_users: 已知或有效用户标识的集合。
+
+    Returns:
+        不在 known_users 集合中的用户标识列表。
+    """
+    return [user for user in users if user not in known_users]
+```
+
 ## 基本项目约束
 
 - Python 分为 `camel_harness`、`camel_backend` 两个根包；WebUI 通过 Backend 使用 Harness。
@@ -32,10 +56,10 @@
 ## Git 提交
 
 - 使用中文提交描述，格式为 `<type>(<scope>): <subject>`。
-- 保留用户已有改动，不擅自覆盖、删除或提交与当前任务无关的内容。
-- 不要私自提交，用户让你提交再提交
+- 开发、修复功能时在分支中进行，每完成一个任务就在分支中提交。
+- main分支的合并和提交远程git仓库需要用户命令，不擅自提交。
 
 ## MCP 集成
 
-- RepoAtlas 是可选 MCP 集成（`mcp__repoatlas__*` 工具），用于代码库检索 / Wiki / 问答。公开配置见 `.mcp.example.json`，本机配置保存在不纳入 Git 的 `.mcp.json`；复现步骤见 `docs/repoatlas-mcp-demo.md`。
+- RepoAtlas 是可选 MCP 集成（`mcp__repoatlas__*` 工具），用于代码库检索 / Wiki / 问答。公开配置见 `.mcp.example.json`，本机配置保存在不纳入 Git 的 `.mcp.json`；按本机安装位置调整配置路径。
 - `McpManager` 强制 MCP server 的 `cwd = workspace`；通过 `--project <RepoAtlas路径>` 指定本机项目目录，必要时使用 `uv` 的绝对路径，不依赖 `cwd` 字段。
