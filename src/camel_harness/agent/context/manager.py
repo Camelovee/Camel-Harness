@@ -9,7 +9,7 @@ from camel_harness.llm import LlmModel, LlmUsage, Message, ToolDefinition, UserM
 
 from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
-from ..session import ContextSnapshot
+from ..session.events import ContextSnapshot
 from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
 
 

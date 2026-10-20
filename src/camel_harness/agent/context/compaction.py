@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from camel_harness.agent.config import CompactionSettings
-from camel_harness.agent.session import ContextSnapshot
+from camel_harness.agent.session.events import ContextSnapshot
 from camel_harness.llm import (
     LlmClient,
     LlmModel,

@@ -13,6 +13,15 @@ from camel_harness.agent.tools.file_result_storage import FileToolResultStorage
 from camel_harness.agent.tools.shell import RunShellTool
 
 
+async def test_shell_blocks_dangerous_command(tmp_path) -> None:
+    result = await RunShellTool().execute(
+        ToolCall("shell", "run_shell", {"command": "rm -rf build"}),
+        ToolContext("session", tmp_path, PermissionMode.YOLO),
+    )
+    assert result.is_error
+    assert "危险" in result.content
+
+
 async def test_shell_large_output_reference_contains_all_output(tmp_path, python_command):
     sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await sessions.create("shell", tmp_path, "大输出")

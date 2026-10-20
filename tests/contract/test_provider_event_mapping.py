@@ -1,14 +1,8 @@
-from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
 from camel_harness.llm import (
     AssistantMessage,
-    LlmAdapter,
-    LlmClient,
-    LlmModel,
-    LlmRequest,
     LlmStopReason,
-    LlmStreamEvent,
     LlmStreamEventType,
     LlmUsage,
     MessageCompleted,
@@ -19,39 +13,9 @@ from camel_harness.llm import (
     ToolResultMessage,
     ToolUseBlock,
     UsageUpdated,
-    UserMessage,
 )
 from camel_harness.llm.anthropic import AnthropicLlmAdapter
 from camel_harness.llm.openai import OpenAiLlmAdapter
-
-_MODEL = LlmModel("fake", "fake-model")
-
-
-class _FakeAdapter(LlmAdapter):
-    @property
-    def provider_id(self) -> str:
-        return "fake"
-
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        yield MessageCompleted(LlmStopReason.STOP, model=None)
-
-
-def test_vendor_adapters_share_llm_adapter_base() -> None:
-    """厂商实现统一遵守 LLM Adapter 契约。"""
-
-    assert issubclass(AnthropicLlmAdapter, LlmAdapter)
-    assert issubclass(OpenAiLlmAdapter, LlmAdapter)
-
-
-async def test_llm_service_delegates_request_to_adapter() -> None:
-    service = LlmClient(_FakeAdapter())
-    request = LlmRequest(_MODEL, (UserMessage("hi"),))
-
-    events = [event async for event in service.stream(request)]
-
-    assert events[0].type == LlmStreamEventType.MESSAGE_COMPLETED
-    assert service.supports("fake")
-    assert not service.supports("openai")
 
 
 def test_anthropic_maps_text_and_tool_call() -> None:

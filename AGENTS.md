@@ -11,8 +11,8 @@
 
 ## 基本项目约束
 
-- Python 分为 `camel_harness`、`camel_backend`、`camel_cli` 三个根包；Backend 与 CLI 互不依赖。
-- Harness 分为 `agent` 与 `llm`；依赖方向为 `Backend / CLI -> Agent -> LLM`，禁止反向依赖。
+- Python 分为 `camel_harness`、`camel_backend` 两个根包；WebUI 通过 Backend 使用 Harness。
+- Harness 分为 `agent` 与 `llm`；依赖方向为 `Backend -> Agent -> LLM`，禁止反向依赖。
 - Agent 负责运行编排，LLM 负责厂商适配；会话、上下文和工具各自承担独立职责，不混入入口层逻辑。
 - 一个 Agent 绑定一个会话和工作区，同一时间只运行一个任务；运行与事件观察分离。
 - WebUI 依赖方向为 `app -> features -> shared`，feature 之间禁止直接导入。

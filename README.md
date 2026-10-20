@@ -1,7 +1,7 @@
 # Camel Harness
 
 受 pi-agent 启发的轻量 Python Agent Runtime，用于在本地工作区读取、修改代码并执行任务。
-提供 CLI 与 WebUI。
+通过 WebUI 提供本地交互。
 
 ## 核心能力
 
@@ -64,17 +64,6 @@ uv run camel-harness-web
 
 此时访问 `http://127.0.0.1:8000` 即可使用 WebUI，无需额外启动前端服务。
 
-### CLI 启动
-
-安装 Python 依赖后，也可直接使用 CLI，无需启动后端或前端；CLI 与 WebUI 使用同一份配置：
-
-```bash
-uv run camel-harness "分析当前项目" --workspace ./
-uv run camel-harness  # 交互模式
-```
-
-交互模式支持 `/cancel` 和 `/resume`；`--session ID` 复用会话，`--latest-session` 选择当前工作区最近的会话。
-
 ## 配置与数据
 
 配置位于 `~/.camel/config.json`，缺失时自动创建，不读取环境变量或 `.env`。
@@ -105,7 +94,7 @@ OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `ba
 
 `config.json` 的 `memory` 默认值为 `{"enabled": true, "max_entries": 5, "context_tokens": 2000}`。每 Turn 只注入预算内的相关记忆，放不下正文时提示按需读取；设 `enabled=false` 可关闭注入和工具，不删除文件。修改配置后重启生效。
 
-记忆不是会话摘要或项目规则，不自动提取、不保存秘密。旧 `name/description/content/kind` 格式不兼容，原文件不会被自动迁移或覆盖；工作区即主目录时项目层级回落到用户层级（同一目录，同名覆盖语义不变）。Shell 不是沙箱，不能承诺阻止绕过。设计与验收见 [记忆系统设计](docs/方案设计/记忆系统设计.md)，离线对照运行 `uv run python -m evals.memory_protocol`。
+记忆不是会话摘要或项目规则，不自动提取、不保存秘密。旧 `name/description/content/kind` 格式不兼容，原文件不会被自动迁移或覆盖；工作区即主目录时项目层级回落到用户层级（同一目录，同名覆盖语义不变）。Shell 不是沙箱，不能承诺阻止绕过。设计与验收见 [记忆系统设计](docs/方案设计/记忆系统设计.md)。
 
 默认会话目录为 `~/.camel/sessions/<id>/`，子会话递归放在父目录的 `subagents/` 下，大工具结果放在所属会话的 `tool-results/` 下。相对 `session_dir` 按用户主目录解析，不是当前项目目录。
 
@@ -117,19 +106,18 @@ MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制
 
 ## 开发与验证
 
+回归覆盖与维护原则见 [测试说明](tests/README.md)。
+
 ```bash
-uv run ruff check src tests evals scripts
-uv run ruff format --check src tests evals scripts
+uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 uv run mypy src
 uv run pytest -q
 uv run lint-imports
-uv run python -m evals.run
 npm run test --prefix webui -- --run
 npm run build --prefix webui
 git diff --check
 ```
-
-离线评测使用固定模型事件，只验证协议；真实模型效果与失败样本见 [评测说明](evals/README.md)，不能将离线通过率当作真实任务成功率。
 
 ## 边界
 

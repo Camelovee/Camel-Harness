@@ -106,9 +106,6 @@ async def test_factory_wires_injected_memory_and_disabled_mode(tmp_path, monkeyp
             yield TextDelta("完成")
             yield MessageCompleted(LlmStopReason.STOP)
 
-        async def close(self):
-            pass
-
     monkeypatch.setattr(
         "camel_harness.agent.runtime._build_llm_client", lambda: LlmClient(Adapter())
     )

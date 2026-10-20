@@ -51,11 +51,13 @@ def test_json_settings_ignore_environment_and_dotenv(tmp_path: Path, monkeypatch
     assert "json-key" not in repr(settings.models[0])
 
 
-def test_missing_json_uses_defaults(tmp_path: Path) -> None:
+def test_missing_json_uses_defaults(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     path = tmp_path / ".camel" / "config.json"
     settings = AgentSettings.load(path)
     assert settings.models == []
     assert settings.default_model_id == ""
+    assert settings.resolved_session_dir() == tmp_path / ".camel" / "sessions"
     assert path.is_file()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700

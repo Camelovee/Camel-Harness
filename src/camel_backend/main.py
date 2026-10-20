@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import typer
 import uvicorn
 from fastapi import FastAPI
 
@@ -102,7 +101,7 @@ app = create_app()
 def main() -> None:
     """启动本地 FastAPI Web Server。"""
 
-    typer.echo(f"Camel Harness Web｜workspace={Path.home().resolve()}")
+    print(f"Camel Harness Web｜workspace={Path.home().resolve()}")
     uvicorn.run(
         "camel_backend.main:app",
         host="127.0.0.1",

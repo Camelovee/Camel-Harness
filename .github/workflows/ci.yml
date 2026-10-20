@@ -25,12 +25,11 @@ jobs:
         run: npm ci --prefix webui
       - name: Python 检查
         run: |
-          uv run --no-sync ruff check src tests evals scripts
-          uv run --no-sync ruff format --check src tests evals scripts
+          uv run --no-sync ruff check src tests scripts
+          uv run --no-sync ruff format --check src tests scripts
           uv run --no-sync mypy src
           uv run --no-sync pytest -q
           uv run --no-sync lint-imports
-          uv run --no-sync python -m evals.run
       - name: WebUI 测试与构建
         run: |
           npm test --prefix webui
@@ -74,9 +73,8 @@ jobs:
           tests/integration/test_memory.py::test_cross_process_compare_and_swap
           tests/integration/test_memory.py::test_queued_cancel_does_not_execute
           tests/integration/test_memory.py::test_inflight_cancel_waits_for_commit_and_holds_lock
-      - name: Windows CLI 与前端构建
+      - name: Windows 前端测试与构建
         run: |
-          uv run --no-sync camel-harness --help
           npm ci --prefix webui
           npm test --prefix webui
           npm run build --prefix webui

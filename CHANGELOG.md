@@ -1,5 +1,11 @@
 # 变更记录
 
+## 未发布
+
+- 移除项目评测任务集、运行脚本、历史基线与本机报告，并清理相关测试、CI 入口及文档引用。
+- 移除 CLI/REPL、终端审批和 `camel-harness` 命令，仅保留 `camel-harness-web` Web 入口；删除 Typer 直接依赖和 CLI 打包配置。
+- 精简只检查代码形状及重复行为的回归测试，Python 依赖边界统一交由 Import Linter 检查；配置路径与 Shell 测试归并到对应模块，保留取消、持久化、权限与资源清理等故障回归。
+
 ## 0.1.0 — 2026-10-15
 
 - Python Harness Agent：流式多 Turn ReAct、生命周期事件、steering、取消与恢复。

@@ -19,7 +19,6 @@ dependencies = [
   "mcp>=1.0,<2",
   "portalocker>=4.2,<5",
   "pywin32>=308; sys_platform == 'win32'",
-  "typer>=0.25,<1",
   "uvicorn[standard]>=0.30,<1",
 ]
 
@@ -34,11 +33,10 @@ dev = [
 ]
 
 [project.scripts]
-camel-harness = "camel_cli.main:app"
 camel-harness-web = "camel_backend.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/camel_harness", "src/camel_backend", "src/camel_cli"]
+packages = ["src/camel_harness", "src/camel_backend"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -57,7 +55,7 @@ python_version = "3.11"
 strict = true
 
 [tool.importlinter]
-root_packages = ["camel_harness", "camel_backend", "camel_cli"]
+root_packages = ["camel_harness", "camel_backend"]
 
 [[tool.importlinter.contracts]]
 name = "LLM 不得依赖 Agent 或入口层"
@@ -66,7 +64,6 @@ source_modules = ["camel_harness.llm"]
 forbidden_modules = [
   "camel_harness.agent",
   "camel_backend",
-  "camel_cli",
 ]
 
 [[tool.importlinter.contracts]]
@@ -75,7 +72,6 @@ type = "forbidden"
 source_modules = ["camel_harness.agent"]
 forbidden_modules = [
   "camel_backend",
-  "camel_cli",
 ]
 
 [[tool.importlinter.contracts]]
@@ -85,9 +81,23 @@ source_modules = ["camel_harness.agent.session"]
 forbidden_modules = ["camel_harness.agent.events", "camel_harness.agent.agent"]
 
 [[tool.importlinter.contracts]]
-name = "入口之间不得互相依赖"
-type = "independence"
-modules = [
-  "camel_backend",
-  "camel_cli",
+name = "运行时组合不直接依赖可选工具 Provider"
+type = "forbidden"
+source_modules = ["camel_harness.agent.runtime"]
+forbidden_modules = [
+  "camel_harness.agent.tools.mcp",
+  "camel_harness.agent.tools.memory_tools",
+  "camel_harness.agent.tools.skill_loader",
+  "camel_harness.agent.subagent.tool",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "上下文不得依赖会话存储实现或运行状态"
+type = "forbidden"
+source_modules = ["camel_harness.agent.context"]
+forbidden_modules = [
+  "camel_harness.agent.session.manager",
+  "camel_harness.agent.session.jsonl",
+  "camel_harness.agent.state",
 ]

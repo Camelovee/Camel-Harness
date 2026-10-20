@@ -19,7 +19,7 @@ class SettingsStore:
         self._lock = asyncio.Lock()
 
     def _load(self) -> AgentSettings:
-        """每次操作重读配置文件，手改或 CLI 写入不需要重启后端。"""
+        """每次操作重读配置文件，手动修改后不需要重启后端。"""
 
         return AgentSettings.load(self._path)
 
