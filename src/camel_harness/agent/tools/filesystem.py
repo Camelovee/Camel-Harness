@@ -102,21 +102,21 @@ class ReadFileTool(Tool):
     ) -> None:
         self._result_path_resolver = result_path_resolver
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        raw_path = str(call.arguments["path"])
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        raw_path = str(tool_call.arguments["path"])
         try:
-            path = resolve_in_workspace(context.workspace, raw_path)
+            path = resolve_in_workspace(tool_context.workspace, raw_path)
         except ValueError:
             if self._result_path_resolver is None:
                 raise
-            path = await self._result_path_resolver(context.session_id, raw_path)
-        start = int(call.arguments.get("start_line", 1))
-        limit = int(call.arguments.get("max_lines", 400))
+            path = await self._result_path_resolver(tool_context.session_id, raw_path)
+        start = int(tool_call.arguments.get("start_line", 1))
+        limit = int(tool_call.arguments.get("max_lines", 400))
         text = await asyncio.to_thread(path.read_text, "utf-8")
         lines = text.splitlines()
         selected = lines[start - 1 : start - 1 + limit]
         numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(selected, start=start))
-        return ToolResult(call.call_id, call.name, numbered)
+        return ToolResult(tool_call.call_id, tool_call.name, numbered)
 
 
 class WriteFileTool(Tool):
@@ -140,14 +140,16 @@ class WriteFileTool(Tool):
     capabilities = frozenset({"filesystem.write"})
     risk = ToolRisk.WRITE
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
-        _check_memory_write(context.workspace, path)
-        content = str(call.arguments["content"])
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+        _check_memory_write(tool_context.workspace, path)
+        content = str(tool_call.arguments["content"])
 
         size = await _mutate_file(path, lambda: _atomic_write(path, content))
         return ToolResult(
-            call.call_id, call.name, f"已写入 {path.relative_to(context.workspace)}（{size} 字节）"
+            tool_call.call_id,
+            tool_call.name,
+            f"已写入 {path.relative_to(tool_context.workspace)}（{size} 字节）",
         )
 
 
@@ -169,11 +171,11 @@ class EditFileTool(Tool):
     capabilities = frozenset({"filesystem.write"})
     risk = ToolRisk.WRITE
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(context.workspace, str(call.arguments["path"]))
-        _check_memory_write(context.workspace, path)
-        old_text = str(call.arguments["old_text"])
-        new_text = str(call.arguments["new_text"])
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+        _check_memory_write(tool_context.workspace, path)
+        old_text = str(tool_call.arguments["old_text"])
+        new_text = str(tool_call.arguments["new_text"])
 
         def edit() -> int:
             content = path.read_text("utf-8")
@@ -183,4 +185,6 @@ class EditFileTool(Tool):
             return _atomic_write(path, content.replace(old_text, new_text, 1))
 
         await _mutate_file(path, edit)
-        return ToolResult(call.call_id, call.name, f"已编辑 {path.relative_to(context.workspace)}")
+        return ToolResult(
+            tool_call.call_id, tool_call.name, f"已编辑 {path.relative_to(tool_context.workspace)}"
+        )

@@ -33,31 +33,31 @@ class AssistantMessageAccumulator:
     def __init__(self, provider: str, model: str) -> None:
         self._provider = provider
         self._model = model
-        self._text: list[str] = []
-        self._reasoning: list[str] = []
-        self._calls: list[ToolUseBlock] = []
+        self._text_parts: list[str] = []
+        self._reasoning_parts: list[str] = []
+        self._tool_calls: list[ToolUseBlock] = []
         self._stop_reason: LlmStopReason | None = None
         self._response_model: str | None = None
         self._error: str | None = None
         self.usage: LlmUsage | None = None
 
-    def feed(self, event: LlmStreamEvent) -> None:
+    def feed(self, llm_event: LlmStreamEvent) -> None:
         """累积规范内容和累计用量；错误保留到完整性检查，允许调用方先转发事件。"""
 
-        if isinstance(event, StreamStarted | MessageCompleted) and event.model:
-            self._response_model = event.model
-        if isinstance(event, TextDelta):
-            self._text.append(event.text)
-        elif isinstance(event, ReasoningDelta):
-            self._reasoning.append(event.text)
-        elif isinstance(event, ToolCallCompleted):
-            self._calls.append(event.tool_call)
-        elif isinstance(event, UsageUpdated):
-            self.usage = (self.usage or LlmUsage()).merge(event.usage)
-        elif isinstance(event, MessageCompleted):
-            self._stop_reason = event.stop_reason
-        elif isinstance(event, StreamFailed):
-            self._error = event.error
+        if isinstance(llm_event, StreamStarted | MessageCompleted) and llm_event.model:
+            self._response_model = llm_event.model
+        if isinstance(llm_event, TextDelta):
+            self._text_parts.append(llm_event.text)
+        elif isinstance(llm_event, ReasoningDelta):
+            self._reasoning_parts.append(llm_event.text)
+        elif isinstance(llm_event, ToolCallCompleted):
+            self._tool_calls.append(llm_event.tool_call)
+        elif isinstance(llm_event, UsageUpdated):
+            self.usage = (self.usage or LlmUsage()).merge(llm_event.usage)
+        elif isinstance(llm_event, MessageCompleted):
+            self._stop_reason = llm_event.stop_reason
+        elif isinstance(llm_event, StreamFailed):
+            self._error = llm_event.error
 
     def finish(self) -> AssistantMessage:
         """只返回具有完成事件且结束原因与内容一致的响应。"""
@@ -66,16 +66,16 @@ class AssistantMessageAccumulator:
             raise RuntimeError(self._error)
         if self._stop_reason is None:
             raise RuntimeError("LLM 流缺少 MessageCompleted，禁止使用不完整消息")
-        if self._stop_reason is LlmStopReason.TOOL_USE and not self._calls:
+        if self._stop_reason is LlmStopReason.TOOL_USE and not self._tool_calls:
             raise RuntimeError("LLM 以 tool_use 结束，但未返回完整工具调用")
-        if self._stop_reason is LlmStopReason.STOP and self._calls:
+        if self._stop_reason is LlmStopReason.STOP and self._tool_calls:
             raise RuntimeError("LLM 以 stop 结束，但响应中存在工具调用")
         blocks: list[AssistantContent] = []
-        if self._reasoning:
-            blocks.append(ReasoningBlock("".join(self._reasoning)))
-        if self._text:
-            blocks.append(TextBlock("".join(self._text)))
-        blocks.extend(self._calls)
+        if self._reasoning_parts:
+            blocks.append(ReasoningBlock("".join(self._reasoning_parts)))
+        if self._text_parts:
+            blocks.append(TextBlock("".join(self._text_parts)))
+        blocks.extend(self._tool_calls)
         return AssistantMessage(
             tuple(blocks),
             self._stop_reason,
@@ -96,32 +96,32 @@ class LlmClient:
             adapters = {adapters.provider_id: adapters}
         if not adapters:
             raise ValueError("至少需要一个 Provider 适配器")
-        self._adapters = dict(adapters)
+        self._adapters_by_provider = dict(adapters)
         self._max_attempts = max_attempts
 
     def supports(self, provider: str) -> bool:
         """返回是否配置了指定 Provider 的适配器。"""
 
-        return provider in self._adapters
+        return provider in self._adapters_by_provider
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """执行规范请求；一旦发出事件便不再重试，避免消费者收到重复增量。"""
 
-        adapter = self._adapters.get(request.model.provider)
+        adapter = self._adapters_by_provider.get(llm_request.model.provider)
         if adapter is None:
-            yield StreamFailed(f"未配置的 Provider：{request.model.provider}", retryable=False)
+            yield StreamFailed(f"未配置的 Provider：{llm_request.model.provider}", retryable=False)
             return
         for attempt in range(1, self._max_attempts + 1):
             emitted = False
             failure: StreamFailed | None = None
-            stream = adapter.stream(request)
+            stream = adapter.stream(llm_request)
             try:
-                async for event in stream:
-                    if isinstance(event, StreamFailed):
-                        failure = event
+                async for llm_event in stream:
+                    if isinstance(llm_event, StreamFailed):
+                        failure = llm_event
                         break
                     emitted = True
-                    yield event
+                    yield llm_event
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

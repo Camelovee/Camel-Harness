@@ -41,23 +41,23 @@ def test_json_settings_ignore_environment_and_dotenv(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
-    settings = AgentSettings.load()
-    resolved = settings.resolve_model(None)
+    agent_settings = AgentSettings.load()
+    resolved = agent_settings.resolve_model(None)
     assert resolved.provider == "openai"
     assert resolved.model == "json-model"
     assert resolved.api_key == "json-key"
-    assert settings.resolved_session_dir() == tmp_path / "custom" / "sessions"
-    assert "json-key" not in repr(settings)
-    assert "json-key" not in repr(settings.models[0])
+    assert agent_settings.resolved_session_dir() == tmp_path / "custom" / "sessions"
+    assert "json-key" not in repr(agent_settings)
+    assert "json-key" not in repr(agent_settings.models[0])
 
 
 def test_missing_json_uses_defaults(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     path = tmp_path / ".camel" / "config.json"
-    settings = AgentSettings.load(path)
-    assert settings.models == []
-    assert settings.default_model_id == ""
-    assert settings.resolved_session_dir() == tmp_path / ".camel" / "sessions"
+    agent_settings = AgentSettings.load(path)
+    assert agent_settings.models == []
+    assert agent_settings.default_model_id == ""
+    assert agent_settings.resolved_session_dir() == tmp_path / ".camel" / "sessions"
     assert path.is_file()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
@@ -66,8 +66,8 @@ def test_missing_json_uses_defaults(tmp_path: Path, monkeypatch) -> None:
 def test_concurrent_startup_creates_one_complete_config(tmp_path: Path) -> None:
     path = tmp_path / "settings" / "config.json"
     with ThreadPoolExecutor(max_workers=8) as pool:
-        settings = list(pool.map(lambda _: AgentSettings.load(path), range(8)))
-    assert all(item.default_model_id == "" for item in settings)
+        loaded_settings = list(pool.map(lambda _: AgentSettings.load(path), range(8)))
+    assert all(item.default_model_id == "" for item in loaded_settings)
     assert list(path.parent.iterdir()) == [path]
 
 
@@ -132,32 +132,32 @@ def test_nested_compaction_is_independent_and_validated(tmp_path: Path) -> None:
         json.dumps({"max_output_tokens": 100, "compaction": {"max_output_tokens": 8192}}),
         encoding="utf-8",
     )
-    settings = AgentSettings.load(path)
-    assert settings.max_output_tokens == 100
-    assert settings.compaction.max_output_tokens == 8192
+    agent_settings = AgentSettings.load(path)
+    assert agent_settings.max_output_tokens == 100
+    assert agent_settings.compaction.max_output_tokens == 8192
     path.write_text('{"compaction":{"retry_max_output_tokens":0}}', encoding="utf-8")
     with pytest.raises(ValueError, match="compaction.retry_max_output_tokens"):
         AgentSettings.load(path)
 
 
 def test_resolve_model_errors_are_actionable(tmp_path: Path) -> None:
-    settings = AgentSettings()
+    agent_settings = AgentSettings()
     with pytest.raises(ValueError, match="请先"):
-        settings.resolve_model(None)
-    settings.models.append(ModelProfile(id="a", name="无密钥", provider="openai", model="m"))
+        agent_settings.resolve_model(None)
+    agent_settings.models.append(ModelProfile(id="a", name="无密钥", provider="openai", model="m"))
     with pytest.raises(ValueError, match="不存在"):
-        settings.resolve_model("missing")
+        agent_settings.resolve_model("missing")
     with pytest.raises(ValueError, match="缺少 API Key"):
-        settings.resolve_model("a")
+        agent_settings.resolve_model("a")
 
 
 @pytest.mark.parametrize("field", ["max_entries", "context_tokens"])
 def test_memory_budget_validation_and_defaults(tmp_path: Path, field: str) -> None:
     path = tmp_path / "config.json"
-    settings = AgentSettings.load(path)
-    assert settings.memory.enabled
-    assert settings.memory.max_entries == 5
-    assert settings.memory.context_tokens == 2000
+    agent_settings = AgentSettings.load(path)
+    assert agent_settings.memory.enabled
+    assert agent_settings.memory.max_entries == 5
+    assert agent_settings.memory.context_tokens == 2000
     path.write_text(json.dumps({"memory": {field: 0}}), encoding="utf-8")
     with pytest.raises(ValueError, match=f"memory.{field}"):
         AgentSettings.load(path)

@@ -38,9 +38,11 @@ class AuditedLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         yield StreamStarted(model="actual")
-        first_turn = not any(isinstance(message, AssistantMessage) for message in request.messages)
+        first_turn = not any(
+            isinstance(message, AssistantMessage) for message in llm_request.messages
+        )
         if first_turn:
             yield ToolCallCompleted(ToolUseBlock("call", "read_file", {"path": "sample.txt"}))
         else:
@@ -55,23 +57,23 @@ class AuditedLlm(LlmAdapter):
 async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) -> None:
     root = tmp_path / "sessions"
     (tmp_path / "sample.txt").write_text("大结果中文内容", "utf-8")
-    sessions = SessionManager(JsonlSessionStorage(root))
-    await sessions.create("session", tmp_path, "审计")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    llm = LlmClient(AuditedLlm())
+    session_manager = SessionManager(JsonlSessionStorage(root))
+    await session_manager.create("session", tmp_path, "审计")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient(AuditedLlm())
     agent = Agent(
-        sessions.bind("session"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(
-            registry,
-            normalize_result=FileToolResultStorage(sessions.directory, 5).normalize,
+        session=session_manager.bind("session"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(
+            tool_registry=tool_registry,
+            normalize_result=FileToolResultStorage(session_manager.directory, 5).normalize,
         ),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events: list = []
     agent.subscribe(events.append)

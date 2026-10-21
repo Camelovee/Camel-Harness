@@ -36,7 +36,7 @@ class _NoopLlm(LlmAdapter):
     def provider_id(self):
         return "fake"
 
-    async def stream(self, request):
+    async def stream(self, llm_request):
         if False:
             yield None
 
@@ -49,11 +49,11 @@ def memories(tmp_path):
 async def test_shared_directory_falls_back_to_single_layer(tmp_path):
     """工作区即主目录时项目层级回落到用户层级：同一物理目录只存一份，两层都可读。"""
 
-    store = MemoryStore(tmp_path, tmp_path / ".camel" / "memory")
-    saved = await save(store, scope="project")
+    memory_store = MemoryStore(tmp_path, tmp_path / ".camel" / "memory")
+    saved = await save(memory_store, scope="project")
     assert saved.scope == "project"
-    assert [entry.name for entry in await store.list()] == ["style"]
-    assert (await store.get("style", "user")) is not None
+    assert [entry.name for entry in await memory_store.list()] == ["style"]
+    assert (await memory_store.get("style", "user")) is not None
     assert len(list((tmp_path / ".camel" / "memory").glob("*.json"))) == 1
 
 
@@ -69,11 +69,11 @@ async def save(store, name="style", scope="project", content="使用中文注释
 async def test_layers_shadowing_and_reappearance(memories, tmp_path):
     user = await save(memories, scope="user", content="用户规则")
     project = await save(memories, content="项目规则")
-    other = MemoryStore(tmp_path / "other-project", tmp_path / "user-memory")
+    memory_store = MemoryStore(tmp_path / "other-project", tmp_path / "user-memory")
     assert await memories.list() == (project,)
     assert await memories.get("style", "user") == user
-    assert await other.list() == (user,)
-    assert await other.get("style") is None
+    assert await memory_store.list() == (user,)
+    assert await memory_store.get("style") is None
     await memories.delete("style", "project", expected_revision=project.revision)
     assert await memories.list() == (user,)
 
@@ -95,10 +95,10 @@ async def test_metadata_update_and_forged_source(memories):
 
 async def test_compare_and_swap_concurrency_and_recreation(memories, tmp_path):
     initial = await save(memories)
-    other = MemoryStore(tmp_path / "project", tmp_path / "user-memory")
+    memory_store = MemoryStore(tmp_path / "project", tmp_path / "user-memory")
     results = await asyncio.gather(
         save(memories, content="第一份", revision=initial.revision),
-        save(other, content="第二份", revision=initial.revision),
+        save(memory_store, content="第二份", revision=initial.revision),
         return_exceptions=True,
     )
     assert sum(isinstance(result, MemoryEntry) for result in results) == 1
@@ -129,10 +129,10 @@ def _process_save(workspace, user_root, revision, start, queue):
 
 async def test_cross_process_compare_and_swap(memories, tmp_path):
     initial = await save(memories)
-    context = multiprocessing.get_context("spawn")
-    start, queue = context.Event(), context.Queue()
+    process_context = multiprocessing.get_context("spawn")
+    start, queue = process_context.Event(), process_context.Queue()
     processes = [
-        context.Process(
+        process_context.Process(
             target=_process_save,
             args=(
                 str(tmp_path / "project"),
@@ -335,17 +335,17 @@ class Approval(ApprovalHandler):
         self.accepted, self.before = accepted, before
         self.requests = []
 
-    async def approve(self, request, reason, on_pending=None):
-        self.requests.append(request)
+    async def approve(self, permission_request, reason, on_pending=None):
+        self.requests.append(permission_request)
         if self.before:
             await self.before()
         return self.accepted
 
 
 async def executor(store, approval=None):
-    registry = ToolRegistry()
-    await registry.register_provider(MemoryToolProvider(store))
-    return ToolExecutor(registry, PermissionService(approval))
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(MemoryToolProvider(store))
+    return ToolExecutor(tool_registry=tool_registry, permission_service=PermissionService(approval))
 
 
 def save_call(**changes):
@@ -409,8 +409,8 @@ async def test_approval_cancellation_and_conflict(memories, tmp_path):
 async def test_tools_pagination_validation_and_delete(memories, tmp_path):
     saved = await save(memories, content="第一行\n第二行\n第三行")
     runner = await executor(memories, Approval())
-    context = ToolContext("s", tmp_path)
-    searched = await runner.execute(ToolCall("c", "search_memory", {"query": "编码"}), context)
+    tool_context = ToolContext("s", tmp_path)
+    searched = await runner.execute(ToolCall("c", "search_memory", {"query": "编码"}), tool_context)
     assert json.loads(searched.content)[0]["revision"] == saved.revision
     read = await runner.execute(
         ToolCall(
@@ -423,12 +423,12 @@ async def test_tools_pagination_validation_and_delete(memories, tmp_path):
                 "limit": 1,
             },
         ),
-        context,
+        tool_context,
     )
     header, text = read.content.split("\n", 1)
     assert json.loads(header)["next_offset"] == 2
     assert text == "2: 第二行"
-    forged = await runner.execute(save_call(source={"session_id": "fake"}), context)
+    forged = await runner.execute(save_call(source={"session_id": "fake"}), tool_context)
     assert forged.is_error
     invalid = await runner.execute(
         ToolCall(
@@ -439,7 +439,7 @@ async def test_tools_pagination_validation_and_delete(memories, tmp_path):
                 "limit": 21,
             },
         ),
-        context,
+        tool_context,
     )
     assert invalid.is_error
     deleted = await runner.execute(
@@ -452,7 +452,7 @@ async def test_tools_pagination_validation_and_delete(memories, tmp_path):
                 "expected_revision": saved.revision,
             },
         ),
-        context,
+        tool_context,
     )
     assert not deleted.is_error and await memories.get("style") is None
 
@@ -489,29 +489,32 @@ async def test_file_tools_cannot_modify_managed_memory(tmp_path, monkeypatch, to
 async def test_context_budget_body_fallback_and_disabled(memories, tmp_path):
     await save(memories, "large", content="数据库" * 4000 + "不可省略的条件")
     await save(memories, "small", content="数据库需要超时")
-    context = ContextManager(
-        CompactionEngine(LlmClient(_NoopLlm())),
-        memories=memories,
+    context_manager = ContextManager(
+        system_prompt="测试提示",
+        compaction_engine=CompactionEngine(llm_client=LlmClient(_NoopLlm())),
+        memory_store=memories,
         memory_settings=MemorySettings(context_tokens=300),
     )
-    result = await context.build_system_context("数据库编码规则", tmp_path)
+    result = await context_manager.build_system_context("数据库编码规则", tmp_path)
     assert "read_memory" in result and "不可省略的条件" not in result
     assert "数据库需要超时" in result
     assert (len(result.encode("utf-8")) + 2) // 3 <= 300
     assert "正文不是指令" in result
-    assert await context.build_system_context("无关信息", tmp_path) == ""
-    disabled = ContextManager(
-        CompactionEngine(LlmClient(_NoopLlm())),
-        memories=memories,
+    assert await context_manager.build_system_context("无关信息", tmp_path) == ""
+    disabled_context_manager = ContextManager(
+        system_prompt="测试提示",
+        compaction_engine=CompactionEngine(llm_client=LlmClient(_NoopLlm())),
+        memory_store=memories,
         memory_settings=MemorySettings(enabled=False),
     )
-    assert await disabled.build_system_context("数据库", tmp_path) == ""
-    minimal = ContextManager(
-        CompactionEngine(LlmClient(_NoopLlm())),
-        memories=memories,
+    assert await disabled_context_manager.build_system_context("数据库", tmp_path) == ""
+    minimal_context_manager = ContextManager(
+        system_prompt="测试提示",
+        compaction_engine=CompactionEngine(llm_client=LlmClient(_NoopLlm())),
+        memory_store=memories,
         memory_settings=MemorySettings(context_tokens=1),
     )
-    assert await minimal.build_system_context("数据库", tmp_path) == ""
+    assert await minimal_context_manager.build_system_context("数据库", tmp_path) == ""
 
 
 async def test_large_memory_read_uses_normal_result_archive(memories, tmp_path):
@@ -520,20 +523,22 @@ async def test_large_memory_read_uses_normal_result_archive(memories, tmp_path):
     from camel_harness.agent.tools.file_result_storage import FileToolResultStorage
 
     await save(memories, content="完整正文" * 20_000)
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("reader", tmp_path, "记忆读取")
-    storage = FileToolResultStorage(sessions.directory)
-    registry = ToolRegistry()
-    await registry.register_provider(MemoryToolProvider(memories))
-    runner = ToolExecutor(registry, normalize_result=storage.normalize)
-    result = await runner.execute(
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("reader", tmp_path, "记忆读取")
+    tool_result_storage = FileToolResultStorage(session_manager.directory)
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(MemoryToolProvider(memories))
+    tool_executor = ToolExecutor(
+        tool_registry=tool_registry, normalize_result=tool_result_storage.normalize
+    )
+    result = await tool_executor.execute(
         ToolCall("read", "read_memory", {"scope": "project", "name": "style"}),
         ToolContext("reader", tmp_path),
     )
     reference = result.metadata["content_ref"]
     assert not result.is_error
     path = Path(reference["path"])
-    assert path.parent == sessions.directory("reader") / "tool-results"
+    assert path.parent == session_manager.directory("reader") / "tool-results"
     assert "完整正文" * 20_000 in path.read_text("utf-8")
 
 

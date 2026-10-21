@@ -37,22 +37,22 @@ class McpRemoteTool(Tool):
         self.risk = ToolRisk.EXTERNAL
         self.timeout_seconds = 60
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
-        result = await self._session.call_tool(self._remote_name, call.arguments)
-        parts: list[str] = []
-        for block in result.content:
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        del tool_context
+        mcp_result = await self._session.call_tool(self._remote_name, tool_call.arguments)
+        content_parts: list[str] = []
+        for block in mcp_result.content:
             text = getattr(block, "text", None)
             if text is not None:
-                parts.append(str(text))
+                content_parts.append(str(text))
             else:
-                dump = block.model_dump(mode="json")
-                parts.append(json.dumps(dump, ensure_ascii=False))
+                content_data = block.model_dump(mode="json")
+                content_parts.append(json.dumps(content_data, ensure_ascii=False))
         return ToolResult(
-            call.call_id,
-            call.name,
-            "\n".join(parts),
-            is_error=bool(result.isError),
+            tool_call.call_id,
+            tool_call.name,
+            "\n".join(content_parts),
+            is_error=bool(mcp_result.isError),
         )
 
 
@@ -62,7 +62,7 @@ class McpManager(ToolProvider):
     def __init__(self, workspace: Path, config_path: Path) -> None:
         self._workspace = workspace
         self._config_path = config_path
-        self._tools: list[Tool] = []
+        self._remote_tools: list[Tool] = []
         self.errors: list[str] = []
         self._task: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
@@ -95,17 +95,19 @@ class McpManager(ToolProvider):
                 return
             async with AsyncExitStack() as stack:
                 if self._config_path.is_file():
-                    raw = json.loads(await asyncio.to_thread(self._config_path.read_text, "utf-8"))
-                    if not isinstance(raw, dict):
+                    mcp_config = json.loads(
+                        await asyncio.to_thread(self._config_path.read_text, "utf-8")
+                    )
+                    if not isinstance(mcp_config, dict):
                         raise ValueError("MCP 配置顶层必须是对象")
-                    servers = raw.get("mcpServers", {})
-                    if not isinstance(servers, dict):
+                    server_configs = mcp_config.get("mcpServers", {})
+                    if not isinstance(server_configs, dict):
                         raise ValueError("MCP 配置中的 mcpServers 必须是对象")
-                    for name, value in servers.items():
+                    for server_name, server_config in server_configs.items():
                         try:
-                            await self._connect(str(name), value, stack)
+                            await self._connect(str(server_name), server_config, stack)
                         except Exception as exc:
-                            self.errors.append(f"{name}: {exc}")
+                            self.errors.append(f"{server_name}: {exc}")
                 self._ready.set()
                 await self._stop.wait()
         except asyncio.CancelledError:
@@ -116,13 +118,13 @@ class McpManager(ToolProvider):
             self._failure = exc
             logger.error("MCP 连接任务失败：%s", type(exc).__name__)
         finally:
-            self._tools.clear()
+            self._remote_tools.clear()
             self._ready.set()
 
     async def discover(self) -> tuple[Tool, ...]:
         if self._failure is not None:
             raise self._failure
-        return tuple(self._tools)
+        return tuple(self._remote_tools)
 
     async def close(self) -> None:
         """取消等待者不取消资源清理；初始化阶段可取消连接任务以打断握手。"""
@@ -136,27 +138,32 @@ class McpManager(ToolProvider):
         if self._failure is not None:
             raise self._failure
 
-    async def _connect(self, name: str, value: object, stack: AsyncExitStack) -> None:
-        if not isinstance(value, dict):
+    async def _connect(
+        self, server_name: str, server_config: object, stack: AsyncExitStack
+    ) -> None:
+        if not isinstance(server_config, dict):
             raise ValueError("Server 配置必须是对象")
-        command = value.get("command")
+        command = server_config.get("command")
         if not isinstance(command, str) or not command:
             raise ValueError("缺少 command")
-        raw_args = value.get("args", [])
-        raw_env = value.get("env")
-        if not isinstance(raw_args, list) or not all(isinstance(item, str) for item in raw_args):
+        server_arguments = server_config.get("args", [])
+        server_environment = server_config.get("env")
+        if not isinstance(server_arguments, list) or not all(
+            isinstance(item, str) for item in server_arguments
+        ):
             raise ValueError("args 必须是字符串数组")
-        if raw_env is not None and (
-            not isinstance(raw_env, dict)
+        if server_environment is not None and (
+            not isinstance(server_environment, dict)
             or not all(
-                isinstance(key, str) and isinstance(item, str) for key, item in raw_env.items()
+                isinstance(key, str) and isinstance(item, str)
+                for key, item in server_environment.items()
             )
         ):
             raise ValueError("env 必须是字符串映射")
         parameters = StdioServerParameters(
             command=command,
-            args=raw_args,
-            env=raw_env,
+            args=server_arguments,
+            env=server_environment,
             cwd=self._workspace,
         )
         # 失败连接就地清理，成功连接按进入顺序交给同一任务的外层栈。
@@ -165,9 +172,9 @@ class McpManager(ToolProvider):
             session = await connection.enter_async_context(ClientSession(reader, writer))
             await asyncio.wait_for(session.initialize(), 30)
             catalog = await asyncio.wait_for(session.list_tools(), 30)
-            tools = [
+            remote_tools = [
                 McpRemoteTool(
-                    name,
+                    server_name,
                     item.name,
                     item.description or "MCP 外部工具",
                     dict(item.inputSchema),
@@ -176,4 +183,4 @@ class McpManager(ToolProvider):
                 for item in catalog.tools
             ]
             stack.push_async_callback(connection.pop_all().aclose)
-            self._tools.extend(tools)
+            self._remote_tools.extend(remote_tools)

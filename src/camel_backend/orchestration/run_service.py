@@ -21,13 +21,13 @@ class RunService:
     def __init__(
         self,
         build_agent: AgentBuilder,
-        sessions: SessionManager,
-        settings: SettingsStore,
+        session_manager: SessionManager,
+        settings_store: SettingsStore,
     ) -> None:
         self._build_agent = build_agent
-        self._sessions = sessions
-        self._settings = settings
-        self._agents: dict[str, Agent] = {}
+        self._session_manager = session_manager
+        self._settings_store = settings_store
+        self._agents_by_session_id: dict[str, Agent] = {}
         self._lock = asyncio.Lock()
 
     async def require_agent(self, session_id: str, model_id: str | None = None) -> Agent:
@@ -46,25 +46,25 @@ class RunService:
             if agent.is_running:
                 raise AgentBusyError("会话已有正在运行的 Agent")
             if model_id:
-                await self._sessions.update(session_id, model_id=model_id)
+                await self._session_manager.update(session_id, model_id=model_id)
             yield agent, model
 
     async def steer(self, session_id: str, content: str) -> SteerResult:
         """向活动 Run 追加输入；不存在活动 Run 时拒绝。"""
-        agent = self._agents.get(session_id)
+        agent = self._agents_by_session_id.get(session_id)
         if agent is None:
             raise AgentNotRunningError("会话没有活动 Run")
         return await agent.steer(content)
 
     async def abort(self, session_id: str) -> None:
         """请求中断活动 Run；不存在或已经结束时不视为成功。"""
-        agent = self._agents.get(session_id)
+        agent = self._agents_by_session_id.get(session_id)
         if agent is None or not await agent.abort():
             raise AgentNotRunningError("会话没有活动 Run")
 
     def is_running(self, session_id: str) -> bool:
         """返回该会话当前是否存在活动 Run。"""
-        agent = self._agents.get(session_id)
+        agent = self._agents_by_session_id.get(session_id)
         return agent is not None and agent.is_running
 
     @asynccontextmanager
@@ -75,35 +75,35 @@ class RunService:
 
     async def release_idle_locked(self, session_id: str) -> bool:
         """仅在 mutation 内使用，避免释放与会话删除之间重新创建 Agent。"""
-        agent = self._agents.get(session_id)
+        agent = self._agents_by_session_id.get(session_id)
         if agent is None:
             return True
         if agent.is_running:
             return False
-        self._agents.pop(session_id)
+        self._agents_by_session_id.pop(session_id)
         await agent.close()
         return True
 
     async def close(self) -> None:
         """关闭所有按需创建的 Agent。"""
         async with self._lock:
-            agents = tuple(self._agents.values())
-            self._agents.clear()
+            agents = tuple(self._agents_by_session_id.values())
+            self._agents_by_session_id.clear()
         await asyncio.gather(*(agent.close() for agent in agents))
 
     async def _require_agent_locked(
         self, session_id: str, model_id: str | None
     ) -> tuple[Agent, LlmModel]:
-        metadata = await self._sessions.get(session_id)
+        metadata = await self._session_manager.get(session_id)
         if metadata is None:
             raise KeyError(f"会话不存在：{session_id}")
-        model = await self._settings.resolve(model_id or metadata.model_id)
-        current = self._agents.get(session_id)
+        model = await self._settings_store.resolve(model_id or metadata.model_id)
+        current = self._agents_by_session_id.get(session_id)
         if current is not None:
             return current, model
         # 模型是 per-run 输入，Agent 只随非模型配置构建一次，不随切换重建。
         agent = await self._build_agent(
-            session_id, Path(metadata.workspace), await self._settings.base_settings()
+            session_id, Path(metadata.workspace), await self._settings_store.base_settings()
         )
-        self._agents[session_id] = agent
+        self._agents_by_session_id[session_id] = agent
         return agent, model

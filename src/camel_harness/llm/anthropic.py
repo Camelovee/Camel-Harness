@@ -57,53 +57,53 @@ class AnthropicLlmAdapter(LlmAdapter):
     def provider_id(self) -> str:
         return "anthropic"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        target = request.model
-        if not target.api_key:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        llm_model = llm_request.model
+        if not llm_model.api_key:
             yield StreamFailed("Anthropic 请求缺少 API Key", retryable=False)
             return
-        client = self._client_factory(target.api_key, target.base_url)
+        sdk_client = self._client_factory(llm_model.api_key, llm_model.base_url)
         try:
-            async for event in self._stream_with_client(client, request):
-                yield event
+            async for llm_event in self._stream_with_client(sdk_client, llm_request):
+                yield llm_event
         finally:
-            await client.close()
+            await sdk_client.close()
 
     async def _stream_with_client(
-        self, client: AsyncAnthropic, request: LlmRequest
+        self, sdk_client: AsyncAnthropic, llm_request: LlmRequest
     ) -> AsyncIterator[LlmStreamEvent]:
-        messages = self._convert_messages(request.messages)
-        tools = [
+        messages = self._convert_messages(llm_request.messages)
+        tool_definitions = [
             {
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
+                "name": tool_definition.name,
+                "description": tool_definition.description,
+                "input_schema": tool_definition.input_schema,
             }
-            for tool in request.tools
+            for tool_definition in llm_request.tools
         ]
-        kwargs: dict[str, Any] = {
-            "model": request.model.model,
-            "max_tokens": request.max_output_tokens,
+        request_parameters: dict[str, Any] = {
+            "model": llm_request.model.model,
+            "max_tokens": llm_request.max_output_tokens,
             "messages": messages,
         }
-        if request.system_prompt:
-            kwargs["system"] = request.system_prompt
-        if tools:
-            kwargs["tools"] = tools
-        if request.temperature is not None:
-            kwargs["temperature"] = request.temperature
+        if llm_request.system_prompt:
+            request_parameters["system"] = llm_request.system_prompt
+        if tool_definitions:
+            request_parameters["tools"] = tool_definitions
+        if llm_request.temperature is not None:
+            request_parameters["temperature"] = llm_request.temperature
         # 当前模型使用自适应思考与强度档位；budget_tokens 形态已被官方废弃。
-        kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
-        kwargs["output_config"] = {"effort": request.effort.value}
+        request_parameters["thinking"] = {"type": "adaptive", "display": "summarized"}
+        request_parameters["output_config"] = {"effort": llm_request.effort.value}
 
-        tool_blocks: dict[int, dict[str, str]] = {}
+        tool_blocks_by_index: dict[int, dict[str, str]] = {}
         completion: dict[str, LlmStopReason] = {}
         usage_state: dict[str, int] = {}
         try:
-            async with client.messages.stream(**kwargs) as sdk_stream:
-                async for event in sdk_stream:
+            async with sdk_client.messages.stream(**request_parameters) as sdk_stream:
+                async for sdk_event in sdk_stream:
                     for mapped_event in self._map_event(
-                        event, tool_blocks, completion, usage_state
+                        sdk_event, tool_blocks_by_index, completion, usage_state
                     ):
                         yield mapped_event
         except asyncio.CancelledError:
@@ -144,12 +144,12 @@ class AnthropicLlmAdapter(LlmAdapter):
 
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
+        converted_messages: list[dict[str, Any]] = []
         pending_tool_results: list[dict[str, Any]] = []
 
         def flush_tool_results() -> None:
             if pending_tool_results:
-                result.append({"role": "user", "content": list(pending_tool_results)})
+                converted_messages.append({"role": "user", "content": list(pending_tool_results)})
                 pending_tool_results.clear()
 
         for message in messages:
@@ -166,7 +166,7 @@ class AnthropicLlmAdapter(LlmAdapter):
 
             flush_tool_results()
             if isinstance(message, UserMessage):
-                result.append(
+                converted_messages.append(
                     {"role": "user", "content": [{"type": "text", "text": message.content}]}
                 )
                 continue
@@ -187,31 +187,31 @@ class AnthropicLlmAdapter(LlmAdapter):
                         }
                     )
             if content:
-                result.append({"role": "assistant", "content": content})
+                converted_messages.append({"role": "assistant", "content": content})
         flush_tool_results()
-        return result
+        return converted_messages
 
     @staticmethod
     def _map_event(
-        event: Any,
-        tool_blocks: dict[int, dict[str, str]],
+        sdk_event: Any,
+        tool_blocks_by_index: dict[int, dict[str, str]],
         completion: dict[str, LlmStopReason],
         usage_state: dict[str, int] | None = None,
     ) -> list[LlmStreamEvent]:
-        event_type = getattr(event, "type", "")
+        event_type = getattr(sdk_event, "type", "")
         if event_type == "message_start":
-            message = getattr(event, "message", None)
+            message = getattr(sdk_event, "message", None)
             usage = getattr(message, "usage", None)
             model = getattr(message, "model", None)
-            result: list[LlmStreamEvent] = [StreamStarted(model=model)]
+            llm_events: list[LlmStreamEvent] = [StreamStarted(model=model)]
             if usage is not None:
-                data = AnthropicLlmAdapter._map_usage(usage, usage_state)
-                result.append(UsageUpdated(LlmUsage(**data)))
-            return result
+                usage_data = AnthropicLlmAdapter._map_usage(usage, usage_state)
+                llm_events.append(UsageUpdated(LlmUsage(**usage_data)))
+            return llm_events
         if event_type == "content_block_start":
-            block = event.content_block
+            block = sdk_event.content_block
             if getattr(block, "type", "") == "tool_use":
-                tool_blocks[event.index] = {
+                tool_blocks_by_index[sdk_event.index] = {
                     "call_id": block.id,
                     "name": block.name,
                     "arguments": "",
@@ -219,30 +219,30 @@ class AnthropicLlmAdapter(LlmAdapter):
                 return [ToolCallStarted(call_id=block.id, name=block.name)]
             return []
         if event_type == "content_block_delta":
-            delta = event.delta
+            delta = sdk_event.delta
             if getattr(delta, "type", "") == "text_delta":
                 return [TextDelta(text=delta.text)]
             if getattr(delta, "type", "") == "thinking_delta":
                 return [ReasoningDelta(text=delta.thinking)]
             if getattr(delta, "type", "") == "input_json_delta":
-                block = tool_blocks[event.index]
+                block = tool_blocks_by_index[sdk_event.index]
                 block["arguments"] += delta.partial_json
                 return [ToolCallArgumentsDelta(call_id=block["call_id"], delta=delta.partial_json)]
-        if event_type == "content_block_stop" and event.index in tool_blocks:
-            block = tool_blocks.pop(event.index)
-            raw = block["arguments"] or "{}"
+        if event_type == "content_block_stop" and sdk_event.index in tool_blocks_by_index:
+            block = tool_blocks_by_index.pop(sdk_event.index)
+            arguments_json = block["arguments"] or "{}"
             try:
-                arguments = json.loads(raw)
+                arguments = json.loads(arguments_json)
             except json.JSONDecodeError:
-                arguments = {"_invalid_json": raw}
+                arguments = {"_invalid_json": arguments_json}
             return [ToolCallCompleted(ToolUseBlock(block["call_id"], block["name"], arguments))]
         if event_type == "message_delta":
-            usage = getattr(event, "usage", None)
-            data = AnthropicLlmAdapter._map_usage(usage, usage_state) if usage else {}
-            reason = getattr(getattr(event, "delta", None), "stop_reason", None)
+            usage = getattr(sdk_event, "usage", None)
+            usage_data = AnthropicLlmAdapter._map_usage(usage, usage_state) if usage else {}
+            reason = getattr(getattr(sdk_event, "delta", None), "stop_reason", None)
             if reason:
                 completion["stop_reason"] = AnthropicLlmAdapter._map_stop_reason(reason)
-            return [UsageUpdated(LlmUsage(**data))]
+            return [UsageUpdated(LlmUsage(**usage_data))]
         if event_type == "message_stop":
             reason = completion.get("stop_reason")
             if reason is None:
@@ -266,7 +266,7 @@ class AnthropicLlmAdapter(LlmAdapter):
         thinking = getattr(getattr(usage, "output_tokens_details", None), "thinking_tokens", None)
         if thinking is not None:
             snapshot["reasoning_tokens"] = thinking
-        data: dict[str, Any] = {}
+        usage_data: dict[str, Any] = {}
         for field, key in (
             ("input_tokens", "input_tokens"),
             ("output_tokens", "output_tokens"),
@@ -275,13 +275,13 @@ class AnthropicLlmAdapter(LlmAdapter):
             ("reasoning_tokens", "reasoning_tokens"),
         ):
             if field in snapshot:
-                data[key] = snapshot[field]
+                usage_data[key] = snapshot[field]
         # Anthropic 原生输入不含缓存，必须在原生快照上求和，不能反复累加规范输入。
-        if "input_tokens" in data:
-            data["input_tokens"] += data.get("cache_read_tokens", 0) + data.get(
+        if "input_tokens" in usage_data:
+            usage_data["input_tokens"] += usage_data.get("cache_read_tokens", 0) + usage_data.get(
                 "cache_write_tokens", 0
             )
-        return data
+        return usage_data
 
     @staticmethod
     def _map_stop_reason(reason: str) -> LlmStopReason:

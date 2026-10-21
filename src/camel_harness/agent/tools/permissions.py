@@ -60,30 +60,33 @@ class ApprovalHandler(ABC):
     @abstractmethod
     async def approve(
         self,
-        request: PermissionRequest,
+        permission_request: PermissionRequest,
         reason: str,
         on_pending: ApprovalPendingListener | None = None,
     ) -> bool:
         raise NotImplementedError
 
 
-def default_permission_decision(request: PermissionRequest) -> PermissionDecision:
+def default_permission_decision(permission_request: PermissionRequest) -> PermissionDecision:
     """提供保守且可预测的本地工具授权默认策略。"""
 
-    if "memory.write" in request.capabilities:
-        if request.mode is PermissionMode.PLAN:
+    if "memory.write" in permission_request.capabilities:
+        if permission_request.mode is PermissionMode.PLAN:
             return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止修改长期记忆")
         return PermissionDecision(
             PermissionAction.ASK,
             "长期记忆修改必须确认层级和实际内容；用户级记忆影响其他项目",
         )
-    if request.mode is PermissionMode.YOLO:
+    if permission_request.mode is PermissionMode.YOLO:
         return PermissionDecision(PermissionAction.ALLOW, "YOLO 模式允许所有已注册工具")
-    if request.risk == "read":
+    if permission_request.risk == "read":
         return PermissionDecision(PermissionAction.ALLOW, "只读能力自动允许")
-    if request.mode is PermissionMode.PLAN:
+    if permission_request.mode is PermissionMode.PLAN:
         return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止产生副作用")
-    if request.mode is PermissionMode.ACCEPT_EDITS and request.risk == "write":
+    if (
+        permission_request.mode is PermissionMode.ACCEPT_EDITS
+        and permission_request.risk == "write"
+    ):
         return PermissionDecision(PermissionAction.ALLOW, "接受编辑模式允许工作区写入")
     return PermissionDecision(PermissionAction.ASK, "该工具可能修改环境，需要用户确认")
 
@@ -93,23 +96,25 @@ class PermissionService:
 
     def __init__(
         self,
-        approval: ApprovalHandler | None = None,
+        approval_handler: ApprovalHandler | None = None,
     ) -> None:
-        self._approval = approval
+        self._approval_handler = approval_handler
 
     async def authorize(
         self,
-        request: PermissionRequest,
+        permission_request: PermissionRequest,
         on_pending: ApprovalPendingListener | None = None,
     ) -> PermissionDecision:
         """返回包含审批结果的最终权限决策。"""
 
-        decision = default_permission_decision(request)
+        decision = default_permission_decision(permission_request)
         if decision.action is not PermissionAction.ASK:
             return decision
-        if self._approval is None:
+        if self._approval_handler is None:
             return PermissionDecision(PermissionAction.DENY, "权限请求需要审批但没有可用审批服务")
-        approved = await self._approval.approve(request, decision.reason, on_pending)
+        approved = await self._approval_handler.approve(
+            permission_request, decision.reason, on_pending
+        )
         if approved:
             return PermissionDecision(PermissionAction.ALLOW, decision.reason)
         return PermissionDecision(PermissionAction.DENY, "用户未批准工具执行")

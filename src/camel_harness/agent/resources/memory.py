@@ -59,15 +59,17 @@ class MemoryStore:
     """项目与用户两层 JSON 记忆；写入使用文件锁和版本条件提交。"""
 
     def __init__(self, workspace: Path, user_root: Path | None = None) -> None:
-        self._roots: dict[MemoryScope, Path] = {
+        self._roots_by_scope: dict[MemoryScope, Path] = {
             "project": workspace.resolve() / ".camel" / "memory",
             "user": user_root or Path.home().resolve() / ".camel" / "memory",
         }
-        self._roots = {scope: root.expanduser().absolute() for scope, root in self._roots.items()}
-        if self._roots["project"] == self._roots["user"]:
+        self._roots_by_scope = {
+            scope: root.expanduser().absolute() for scope, root in self._roots_by_scope.items()
+        }
+        if self._roots_by_scope["project"] == self._roots_by_scope["user"]:
             # 工作区即主目录（如 WebUI 默认工作区）时两层物理重合，
             # 项目层级回落到用户层级，同名覆盖语义在同目录下自然成立。
-            self._roots["project"] = self._roots["user"]
+            self._roots_by_scope["project"] = self._roots_by_scope["user"]
 
     async def list(
         self, scope: MemoryScope | None = None, *, tolerant: bool = False
@@ -120,9 +122,9 @@ class MemoryStore:
         return True
 
     def _root(self, scope: MemoryScope, *, create: bool = False) -> Path:
-        if scope not in self._roots:
+        if scope not in self._roots_by_scope:
             raise ValueError("记忆层级必须是 project 或 user")
-        root = self._roots[scope]
+        root = self._roots_by_scope[scope]
         # 固定根目录的每一层均不得是符号链接；避免 .camel 本身绕过边界。
         if any(is_link(path) for path in (root, *root.parents)):
             raise ValueError("记忆目录不得包含符号链接")
@@ -149,8 +151,8 @@ class MemoryStore:
         except FileNotFoundError:
             return None
         with os.fdopen(descriptor, encoding="utf-8") as stream:
-            raw = json.load(stream)
-        fields = {
+            memory_data = json.load(stream)
+        required_fields = {
             "name",
             "description",
             "content",
@@ -159,26 +161,31 @@ class MemoryStore:
             "revision",
             "source",
         }
-        if not isinstance(raw, dict) or set(raw) != fields:
+        if not isinstance(memory_data, dict) or set(memory_data) != required_fields:
             raise ValueError("记忆格式无效，不兼容旧条目")
-        if any(not isinstance(raw[key], str) for key in fields - {"source"}):
+        if any(not isinstance(memory_data[key], str) for key in required_fields - {"source"}):
             raise ValueError("记忆文字字段无效")
-        if raw["name"] != name or not re.fullmatch(r"[a-f0-9]{32}", raw["revision"]):
+        if memory_data["name"] != name or not re.fullmatch(
+            r"[a-f0-9]{32}", memory_data["revision"]
+        ):
             raise ValueError("记忆名称或版本无效")
         for key in ("created_at", "updated_at"):
-            if datetime.fromisoformat(raw[key]).utcoffset() != UTC.utcoffset(None):
+            if datetime.fromisoformat(memory_data[key]).utcoffset() != UTC.utcoffset(None):
                 raise ValueError("记忆时间必须使用 UTC")
-        source = raw["source"]
-        if not isinstance(source, dict) or set(source) != {"session_id", "tool_call_id"}:
+        memory_source = memory_data["source"]
+        if not isinstance(memory_source, dict) or set(memory_source) != {
+            "session_id",
+            "tool_call_id",
+        }:
             raise ValueError("记忆来源无效")
-        if any(not isinstance(value, str) or not value for value in source.values()):
+        if any(not isinstance(value, str) or not value for value in memory_source.values()):
             raise ValueError("记忆来源无效")
-        return MemoryEntry(scope=scope, **raw)
+        return MemoryEntry(scope=scope, **memory_data)
 
     def _list_sync(self, scope: MemoryScope | None, tolerant: bool) -> tuple[MemoryEntry, ...]:
-        if scope is not None and scope not in self._roots:
+        if scope is not None and scope not in self._roots_by_scope:
             raise ValueError("记忆层级必须是 project 或 user")
-        entries: dict[str, MemoryEntry] = {}
+        entries_by_name: dict[str, MemoryEntry] = {}
         scopes: tuple[MemoryScope, ...] = (scope,) if scope is not None else ("user", "project")
         for selected in scopes:
             try:
@@ -192,14 +199,14 @@ class MemoryStore:
                     try:
                         entry = self._get_sync(path.stem, selected)
                         if entry is not None:
-                            entries[entry.name] = entry
+                            entries_by_name[entry.name] = entry
                     except (OSError, ValueError, UnicodeError):
                         logger.warning("跳过无效记忆条目：%s/%s", selected, path.stem)
             except (OSError, ValueError) as exc:
                 if not tolerant:
                     raise
                 logger.warning("记忆读取降级：%s（%s）", selected, type(exc).__name__)
-        return tuple(entries[name] for name in sorted(entries))
+        return tuple(entries_by_name[name] for name in sorted(entries_by_name))
 
     async def _commit(
         self,

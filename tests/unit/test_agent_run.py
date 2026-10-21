@@ -4,15 +4,15 @@ from camel_harness import AgentOptions, AgentRun, RunStatus, StopReason
 
 
 def test_agent_run_enforces_turn_limit() -> None:
-    run = AgentRun("session", "run", max_turns=1)
-    run.start()
+    agent_run = AgentRun("session", "run", max_turns=1)
+    agent_run.start()
 
-    assert run.next_turn() == 1
+    assert agent_run.next_turn() == 1
     with pytest.raises(RuntimeError, match="最大 Turn"):
-        run.next_turn()
+        agent_run.next_turn()
 
-    assert run.status is RunStatus.FAILED
-    assert run.stop_reason is StopReason.MAX_TURNS
+    assert agent_run.status is RunStatus.FAILED
+    assert agent_run.stop_reason is StopReason.MAX_TURNS
 
 
 @pytest.mark.parametrize(

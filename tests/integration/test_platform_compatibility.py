@@ -30,24 +30,24 @@ def test_backend_starts_with_isolated_default_config_and_can_create_session(tmp_
 
 
 async def test_memory_native_create_update_read_delete(tmp_path):
-    store = MemoryStore(tmp_path / "项目 with spaces", tmp_path / "user-memory")
-    initial = await store.save(
+    memory_store = MemoryStore(tmp_path / "项目 with spaces", tmp_path / "user-memory")
+    initial = await memory_store.save(
         MemoryEntry("rules", "中文说明", "保留中文和换行\n第二行"),
         expected_revision="0",
         session_id="s",
         tool_call_id="call",
     )
-    assert await store.get("rules") == initial
-    updated = await store.save(
+    assert await memory_store.get("rules") == initial
+    updated = await memory_store.save(
         MemoryEntry("rules", "说明", "新正文"),
         expected_revision=initial.revision,
         session_id="s",
         tool_call_id="call2",
     )
     assert updated.revision != initial.revision
-    assert await store.get("rules") == updated
-    assert await store.delete("rules", "project", expected_revision=updated.revision)
-    assert await store.get("rules") is None
+    assert await memory_store.get("rules") == updated
+    assert await memory_store.delete("rules", "project", expected_revision=updated.revision)
+    assert await memory_store.get("rules") is None
 
 
 async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
@@ -79,9 +79,11 @@ async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
 async def test_result_archive_keeps_exact_utf8_bytes_on_every_platform(tmp_path):
     directory = tmp_path / "session"
     directory.mkdir()
-    storage = FileToolResultStorage(lambda _: directory, max_inline_chars=1)
+    tool_result_storage = FileToolResultStorage(lambda _: directory, max_inline_chars=1)
     text = "中文\n第二行\r\n"
-    result = await storage.normalize(ToolResult("c", "read_file", text), ToolContext("s", tmp_path))
+    result = await tool_result_storage.normalize(
+        ToolResult("c", "read_file", text), ToolContext("s", tmp_path)
+    )
     reference = result.metadata["content_ref"]
     assert Path(reference["path"]).read_bytes() == text.encode("utf-8")
     assert reference["size_bytes"] == Path(reference["path"]).stat().st_size
@@ -89,9 +91,9 @@ async def test_result_archive_keeps_exact_utf8_bytes_on_every_platform(tmp_path)
 
 def _append_from_process(root, writer, start):
     async def append():
-        storage = JsonlSessionStorage(Path(root))
+        session_storage = JsonlSessionStorage(Path(root))
         for number in range(8):
-            await storage.append_message("shared", UserMessage(f"{writer}-{number}"))
+            await session_storage.append_message("shared", UserMessage(f"{writer}-{number}"))
 
     if not start.wait(10):
         raise TimeoutError("并发测试启动超时")
@@ -100,12 +102,12 @@ def _append_from_process(root, writer, start):
 
 async def test_session_cross_process_appends_keep_single_complete_history(tmp_path):
     root = tmp_path / "sessions"
-    sessions = SessionManager(JsonlSessionStorage(root))
-    await sessions.create("shared", tmp_path, "并发写入")
-    context = multiprocessing.get_context("spawn")
-    start = context.Event()
+    session_manager = SessionManager(JsonlSessionStorage(root))
+    await session_manager.create("shared", tmp_path, "并发写入")
+    process_context = multiprocessing.get_context("spawn")
+    start = process_context.Event()
     processes = [
-        context.Process(target=_append_from_process, args=(str(root), writer, start))
+        process_context.Process(target=_append_from_process, args=(str(root), writer, start))
         for writer in range(2)
     ]
     try:
@@ -115,7 +117,7 @@ async def test_session_cross_process_appends_keep_single_complete_history(tmp_pa
         for process in processes:
             await asyncio.to_thread(process.join, 15)
             assert process.exitcode == 0
-        session = sessions.bind("shared")
+        session = session_manager.bind("shared")
         messages = await session.messages()
         assert len(messages) == 16
         assert {message.content for message in messages} == {

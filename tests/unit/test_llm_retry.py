@@ -24,7 +24,7 @@ class FlakyAdapter(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.calls == 1:
             raise ConnectionError("临时断开")
@@ -41,7 +41,7 @@ class FailedEventAdapter(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.calls == 1:
             yield StreamFailed(error="临时断开", retryable=True)
@@ -51,19 +51,19 @@ class FailedEventAdapter(LlmAdapter):
 
 async def test_retry_only_before_first_event() -> None:
     inner = FlakyAdapter()
-    service = LlmClient(inner)
-    request = LlmRequest(_MODEL, (UserMessage("hi"),))
-    events = [event async for event in service.stream(request)]
+    llm_client = LlmClient(inner)
+    llm_request = LlmRequest(_MODEL, (UserMessage("hi"),))
+    events = [event async for event in llm_client.stream(llm_request)]
     assert inner.calls == 2
     assert events[0].text == "ok"
 
 
 async def test_failure_event_before_content_is_hidden_when_retry_succeeds() -> None:
     inner = FailedEventAdapter()
-    service = LlmClient(inner)
-    request = LlmRequest(_MODEL, (UserMessage("hi"),))
+    llm_client = LlmClient(inner)
+    llm_request = LlmRequest(_MODEL, (UserMessage("hi"),))
 
-    events = [event async for event in service.stream(request)]
+    events = [event async for event in llm_client.stream(llm_request)]
 
     assert inner.calls == 2
     assert [event.type for event in events] == [LlmStreamEventType.TEXT_DELTA]
@@ -71,7 +71,7 @@ async def test_failure_event_before_content_is_hidden_when_retry_succeeds() -> N
 
 async def test_permanent_failure_is_delivered_once_without_retry():
     class PermanentAdapter(FailedEventAdapter):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             yield StreamFailed("认证失败")
 
@@ -83,7 +83,7 @@ async def test_permanent_failure_is_delivered_once_without_retry():
 
 async def test_failure_after_content_never_retries():
     class PartialAdapter(FailedEventAdapter):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             yield TextDelta("部分回答")
             yield StreamFailed("断开", retryable=True)
@@ -101,7 +101,7 @@ async def test_retry_exhaustion_delivers_last_failure_once(monkeypatch):
     monkeypatch.setattr("camel_harness.llm.client.asyncio.sleep", no_sleep)
 
     class AlwaysFailed(FailedEventAdapter):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             yield StreamFailed("暂时失败", retryable=True)
 
@@ -113,7 +113,7 @@ async def test_retry_exhaustion_delivers_last_failure_once(monkeypatch):
 
 async def test_context_overflow_never_retries_unchanged_request_even_if_marked_transient():
     class OverflowAdapter(FailedEventAdapter):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             yield StreamFailed("上下文超限", retryable=True, code=LlmErrorCode.CONTEXT_OVERFLOW)
 
@@ -134,18 +134,18 @@ class _MarkerAdapter(LlmAdapter):
     def provider_id(self) -> str:
         return self._provider
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        self.requests.append(request)
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.requests.append(llm_request)
         yield TextDelta(f"来自{self._provider}")
 
 
 async def test_routes_by_request_provider() -> None:
     first, second = _MarkerAdapter("a"), _MarkerAdapter("b")
-    service = LlmClient({"a": first, "b": second})
+    llm_client = LlmClient({"a": first, "b": second})
 
     events = [
         event
-        async for event in service.stream(LlmRequest(LlmModel("b", "m-x"), (UserMessage("hi"),)))
+        async for event in llm_client.stream(LlmRequest(LlmModel("b", "m-x"), (UserMessage("hi"),)))
     ]
 
     assert events == [TextDelta("来自b")]
@@ -154,11 +154,11 @@ async def test_routes_by_request_provider() -> None:
 
 
 async def test_unknown_provider_fails_before_any_event() -> None:
-    service = LlmClient(_MarkerAdapter("a"))
+    llm_client = LlmClient(_MarkerAdapter("a"))
 
     events = [
         event
-        async for event in service.stream(LlmRequest(LlmModel("b", "m"), (UserMessage("hi"),)))
+        async for event in llm_client.stream(LlmRequest(LlmModel("b", "m"), (UserMessage("hi"),)))
     ]
 
     assert len(events) == 1
@@ -169,9 +169,9 @@ async def test_unknown_provider_fails_before_any_event() -> None:
 
 async def test_single_adapter_normalizes_to_its_provider() -> None:
     adapter = _MarkerAdapter("solo")
-    service = LlmClient(adapter)
-    assert service.supports("solo")
-    assert not service.supports("other")
+    llm_client = LlmClient(adapter)
+    assert llm_client.supports("solo")
+    assert not llm_client.supports("other")
 
 
 async def test_empty_adapters_rejected() -> None:

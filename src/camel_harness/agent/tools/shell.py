@@ -45,14 +45,16 @@ class RunShellTool(Tool):
     risk = ToolRisk.EXECUTE
     timeout_seconds = 125
 
-    def __init__(self, output_storage: FileToolResultStorage | None = None) -> None:
-        self._output_storage = output_storage
+    def __init__(self, tool_result_storage: FileToolResultStorage | None = None) -> None:
+        self._tool_result_storage = tool_result_storage
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        command = str(call.arguments["command"])
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        command = str(tool_call.arguments["command"])
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
-            return ToolResult(call.call_id, call.name, "危险命令已被安全规则阻止", is_error=True)
-        timeout = float(call.arguments.get("timeout_seconds", 30))
+            return ToolResult(
+                tool_call.call_id, tool_call.name, "危险命令已被安全规则阻止", is_error=True
+            )
+        timeout = float(tool_call.arguments.get("timeout_seconds", 30))
         with tempfile.TemporaryFile() as output_file:
             output = cast(BinaryIO, output_file)
             environment = os.environ.copy()
@@ -62,7 +64,7 @@ class RunShellTool(Tool):
                 environment["PYTHONIOENCODING"] = "utf-8"
             process = await asyncio.create_subprocess_shell(
                 command,
-                cwd=context.workspace,
+                cwd=tool_context.workspace,
                 stdout=output,
                 stderr=asyncio.subprocess.STDOUT,
                 env=environment,
@@ -75,13 +77,15 @@ class RunShellTool(Tool):
                 await asyncio.wait_for(process.wait(), timeout=timeout)
             except TimeoutError:
                 await _stop_process_group(process)
-                return ToolResult(call.call_id, call.name, "Shell 命令执行超时", is_error=True)
+                return ToolResult(
+                    tool_call.call_id, tool_call.name, "Shell 命令执行超时", is_error=True
+                )
             except asyncio.CancelledError:
                 await _stop_process_group(process)
                 raise
-            if self._output_storage is not None:
-                result = await self._output_storage.from_file(
-                    output, call.call_id, call.name, context
+            if self._tool_result_storage is not None:
+                tool_result = await self._tool_result_storage.from_file(
+                    output, tool_call.call_id, tool_call.name, tool_context
                 )
             else:
                 output.seek(0)
@@ -89,16 +93,19 @@ class RunShellTool(Tool):
                 truncated = output.tell() < os.fstat(output.fileno()).st_size
                 if truncated:
                     text += "\n…输出预览已截断，当前工具未配置完整结果存储"
-                result = ToolResult(
-                    call.call_id, call.name, text, metadata={"output_truncated": truncated}
+                tool_result = ToolResult(
+                    tool_call.call_id,
+                    tool_call.name,
+                    text,
+                    metadata={"output_truncated": truncated},
                 )
             return replace(
-                result,
-                content=f"退出码：{process.returncode}\n{result.content}",
+                tool_result,
+                content=f"退出码：{process.returncode}\n{tool_result.content}",
                 is_error=process.returncode != 0,
                 metadata={
-                    **result.metadata,
-                    "argv_preview": _command_preview(str(call.arguments["command"])),
+                    **tool_result.metadata,
+                    "argv_preview": _command_preview(str(tool_call.arguments["command"])),
                     "exit_code": process.returncode,
                 },
             )
@@ -148,12 +155,12 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
     kill_signal = getattr(signal, "SIGKILL", None)
     if kill_group is None or kill_signal is None:
         raise RuntimeError("当前平台不支持 Shell 进程组清理")
-    for sig in (signal.SIGTERM, kill_signal):
+    for signal_number in (signal.SIGTERM, kill_signal):
         try:
-            kill_group(process.pid, sig)
+            kill_group(process.pid, signal_number)
         except ProcessLookupError:
             pass
-        if sig == signal.SIGTERM:
+        if signal_number == signal.SIGTERM:
             try:
                 await asyncio.wait_for(process.wait(), 0.2)
             except TimeoutError:

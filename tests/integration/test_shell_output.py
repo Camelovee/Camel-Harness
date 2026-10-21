@@ -23,22 +23,22 @@ async def test_shell_blocks_dangerous_command(tmp_path) -> None:
 
 
 async def test_shell_large_output_reference_contains_all_output(tmp_path, python_command):
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("shell", tmp_path, "大输出")
-    storage = FileToolResultStorage(sessions.directory, max_inline_chars=100)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("shell", tmp_path, "大输出")
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=100)
     command = python_command(
         "-c", "import sys; sys.stdout.buffer.write(('中' * 100_000 + '\\n').encode('utf-8'))"
     )
-    context = ToolContext("shell", tmp_path, PermissionMode.YOLO)
-    result = await RunShellTool(storage).execute(
-        ToolCall("out", "run_shell", {"command": command}), context
+    tool_context = ToolContext("shell", tmp_path, PermissionMode.YOLO)
+    result = await RunShellTool(tool_result_storage).execute(
+        ToolCall("out", "run_shell", {"command": command}), tool_context
     )
     reference = result.metadata["content_ref"]
     assert Path(reference["path"]).read_text("utf-8") == "中" * 100_000 + "\n"
     assert reference["original_chars"] == 100_001
     assert reference["size_bytes"] == 300_001
     assert len(result.content) < 500
-    assert await storage.normalize(result, context) is result
+    assert await tool_result_storage.normalize(result, tool_context) is result
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -46,8 +46,8 @@ async def test_shell_timeout_or_cancel_terminates_child_process_group(
     tmp_path, cancel, python_command
 ):
     command = python_command(Path(__file__).parents[1] / "fixtures" / "shell_tree.py")
-    call = ToolCall("group", "run_shell", {"command": command, "timeout_seconds": 3})
-    task = asyncio.create_task(RunShellTool().execute(call, ToolContext("shell", tmp_path)))
+    tool_call = ToolCall("group", "run_shell", {"command": command, "timeout_seconds": 3})
+    task = asyncio.create_task(RunShellTool().execute(tool_call, ToolContext("shell", tmp_path)))
     for _ in range(300):
         if (tmp_path / "child.pid").exists():
             break

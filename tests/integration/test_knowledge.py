@@ -23,17 +23,19 @@ async def test_skill_discovery_and_three_stage_loading(tmp_path) -> None:
     assert review.source is SkillSource.PROJECT
     assert not hasattr(review, "instructions")
 
-    registry = ToolRegistry()
-    await registry.register_provider(SkillToolProvider(skills))
-    executor = ToolExecutor(registry)
-    context = ToolContext("session-1", tmp_path)
-    body = await executor.execute(ToolCall("call-1", "load_skill", {"name": "review"}), context)
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(SkillToolProvider(skills))
+    tool_executor = ToolExecutor(tool_registry=tool_registry)
+    tool_context = ToolContext("session-1", tmp_path)
+    body = await tool_executor.execute(
+        ToolCall("call-1", "load_skill", {"name": "review"}), tool_context
+    )
     assert "先检查测试" in body.content
     assert "检查依赖方向" not in body.content
 
-    reference = await executor.execute(
+    reference = await tool_executor.execute(
         ToolCall("call-2", "load_skill", {"name": "review", "path": "references/checklist.md"}),
-        context,
+        tool_context,
     )
     assert "检查依赖方向" in reference.content
 
@@ -119,14 +121,14 @@ async def test_skill_discovery_does_not_read_body(tmp_path) -> None:
 
 
 async def test_memory_is_isolated_under_workspace(tmp_path) -> None:
-    memories = MemoryStore(tmp_path, tmp_path / "user-memory")
-    saved = await memories.save(
+    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
+    saved = await memory_store.save(
         MemoryEntry("decision", "架构决策", "使用 JSONL"),
         expected_revision="0",
         session_id="session-1",
         tool_call_id="call-1",
     )
-    assert (await memories.get("decision")) == saved
+    assert (await memory_store.get("decision")) == saved
     assert saved.content == "使用 JSONL"
     assert saved.source == {"session_id": "session-1", "tool_call_id": "call-1"}
-    assert [item.name for item in await memories.list()] == ["decision"]
+    assert [item.name for item in await memory_store.list()] == ["decision"]

@@ -119,15 +119,15 @@ class AgentSettings(BaseModel):
             if not config_path.exists():
                 cls._create_default(config_path)
             with config_path.open(encoding="utf-8") as stream:
-                data = json.load(stream)
+                settings_data = json.load(stream)
         except (json.JSONDecodeError, UnicodeError):
             raise ValueError(f"配置文件 JSON 格式错误：{config_path}") from None
         except OSError:
             raise ValueError(f"配置文件无法创建或读取：{config_path}") from None
-        if not isinstance(data, dict):
+        if not isinstance(settings_data, dict):
             raise ValueError(f"配置文件顶层必须是字段映射：{config_path}")
         try:
-            return cls.model_validate(data)
+            return cls.model_validate(settings_data)
         except ValidationError as exc:
             fields = ", ".join(
                 ".".join(map(str, error["loc"])) for error in exc.errors(include_input=False)

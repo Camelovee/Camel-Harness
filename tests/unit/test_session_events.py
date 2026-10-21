@@ -87,11 +87,14 @@ def test_context_keeps_summary_before_recent_messages_across_compactions() -> No
 
 def test_context_follows_parent_links_not_file_order() -> None:
     root = SessionMessageEvent("now", UserMessage("共同起点"), id="root")
-    a = SessionMessageEvent("now", UserMessage("分支 A"), id="a", parent_id="root")
-    b = SessionMessageEvent("now", UserMessage("分支 B"), id="b", parent_id="root")
-    events = (root, a, b)
-    assert project_context(events).messages == (root.message, b.message)
-    assert project_context(events, "a", use_latest=False).messages == (root.message, a.message)
+    branch_a_event = SessionMessageEvent("now", UserMessage("分支 A"), id="a", parent_id="root")
+    branch_b_event = SessionMessageEvent("now", UserMessage("分支 B"), id="b", parent_id="root")
+    events = (root, branch_a_event, branch_b_event)
+    assert project_context(events).messages == (root.message, branch_b_event.message)
+    assert project_context(events, "a", use_latest=False).messages == (
+        root.message,
+        branch_a_event.message,
+    )
     assert project_context(events, None, use_latest=False).messages == ()
     with pytest.raises(ValueError, match="叶节点"):
         project_context(events, "missing", use_latest=False)

@@ -29,24 +29,24 @@ from camel_harness.agent.tools.skill_loader import SkillToolProvider
 logger = logging.getLogger(__name__)
 
 
-async def _local_extensions(settings: AgentSettings, workspace: Path) -> AgentExtensions:
+async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> AgentExtensions:
     """Web 入口注入的本地可选能力：Skill、Memory、MCP 与子 Agent 委派。"""
 
     skills = Skills(workspace)
-    memories = MemoryStore(workspace) if settings.memory.enabled else None
-    mcp = McpManager(workspace, workspace / settings.mcp_config)
-    await mcp.start()
-    for error in mcp.errors:
+    memory_store = MemoryStore(workspace) if agent_settings.memory.enabled else None
+    mcp_manager = McpManager(workspace, workspace / agent_settings.mcp_config)
+    await mcp_manager.start()
+    for error in mcp_manager.errors:
         logger.warning("MCP 工具加载失败：%s", error)
-    providers: list[ToolProvider] = [SkillToolProvider(skills), mcp]
-    if memories is not None:
-        providers.append(MemoryToolProvider(memories))
+    tool_providers: list[ToolProvider] = [SkillToolProvider(skills), mcp_manager]
+    if memory_store is not None:
+        tool_providers.append(MemoryToolProvider(memory_store))
     return AgentExtensions(
-        tool_providers=tuple(providers),
+        tool_providers=tuple(tool_providers),
         skills=skills,
-        memories=memories,
+        memories=memory_store,
         subagent_provider=SubagentToolProvider,
-        on_close=(mcp.close,),
+        on_close=(mcp_manager.close,),
     )
 
 
@@ -58,32 +58,44 @@ def create_app(workspace: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        settings = AgentSettings.load()
-        approval = WebApproval()
-        sessions = build_session_manager(settings)
-        store = SettingsStore()
+        agent_settings = AgentSettings.load()
+        web_approval = WebApproval()
+        session_manager = build_session_manager(agent_settings)
+        settings_store = SettingsStore()
         workspace_picker = NativeWorkspacePicker()
 
         async def create_session_agent(
-            session_id: str, agent_workspace: Path, model_settings: AgentSettings
+            session_id: str, agent_workspace: Path, agent_settings: AgentSettings
         ) -> Agent:
             return await build_agent(
-                model_settings,
-                session_id,
-                agent_workspace,
-                approval=approval,
-                sessions=sessions,
-                extensions=await _local_extensions(model_settings, agent_workspace),
+                agent_settings=agent_settings,
+                session_id=session_id,
+                workspace=agent_workspace,
+                approval_handler=web_approval,
+                session_manager=session_manager,
+                agent_extensions=await _local_extensions(agent_settings, agent_workspace),
             )
 
-        runs = RunService(create_session_agent, sessions, store)
+        run_service = RunService(
+            build_agent=create_session_agent,
+            session_manager=session_manager,
+            settings_store=settings_store,
+        )
         dependencies.bind(
-            runs=runs,
-            sessions=sessions,
-            session_service=SessionService(sessions, runs, store),
-            settings_service=SettingsService(store, sessions, runs),
-            settings=store,
-            approvals=approval,
+            run_service=run_service,
+            session_manager=session_manager,
+            session_service=SessionService(
+                session_manager=session_manager,
+                run_service=run_service,
+                settings_store=settings_store,
+            ),
+            settings_service=SettingsService(
+                settings_store=settings_store,
+                session_manager=session_manager,
+                run_service=run_service,
+            ),
+            settings_store=settings_store,
+            web_approval=web_approval,
             select_workspace=workspace_picker.select,
         )
         try:

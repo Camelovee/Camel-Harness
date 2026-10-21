@@ -67,6 +67,7 @@ class AgentRun:
     stop_reason: StopReason | None = None
     total_tokens: int = 0
     context_overflow_recovery_used: bool = False
+    length_recovery_used: bool = False
 
     def start(self) -> None:
         if self.status is not RunStatus.IDLE:
@@ -126,7 +127,7 @@ class SteerResult:
 class RunControl:
     """一个 Agent 当前唯一 Run 的瞬时控制状态。"""
 
-    run: AgentRun
+    agent_run: AgentRun
     done: asyncio.Event
     owner_task: asyncio.Task[object] | None = None
     steering: deque[QueuedInput] = field(default_factory=deque)

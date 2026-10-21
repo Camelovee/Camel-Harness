@@ -27,40 +27,44 @@ _MODEL = LlmModel("fake", "fake-model")
 
 
 async def test_branch_append_preserves_siblings_and_restores_last_written_leaf(tmp_path) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("tree", tmp_path, "分支测试")
-    session = manager.bind("tree")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("tree", tmp_path, "分支测试")
+    session = session_manager.bind("tree")
     root = await session.append_message(UserMessage("共同起点"))
-    a = await session.append_message(UserMessage("方案 A"))
+    branch_a_entry_id = await session.append_message(UserMessage("方案 A"))
     branch_snapshot = await session.branch(root)
     assert branch_snapshot.leaf_id == root
     assert branch_snapshot.messages == (UserMessage("共同起点"),)
-    b = await session.append_message(UserMessage("方案 B"))
+    branch_b_entry_id = await session.append_message(UserMessage("方案 B"))
     entries = await session.entries()
-    assert [(item.id, item.parent_id) for item in entries] == [(root, None), (a, root), (b, root)]
+    assert [(item.id, item.parent_id) for item in entries] == [
+        (root, None),
+        (branch_a_entry_id, root),
+        (branch_b_entry_id, root),
+    ]
     assert await session.messages() == (UserMessage("共同起点"), UserMessage("方案 B"))
     assert (await session.context_snapshot()).messages == await session.messages()
     restarted = SessionManager(JsonlSessionStorage(tmp_path)).bind("tree")
-    assert (await restarted.context_snapshot()).leaf_id == b
+    assert (await restarted.context_snapshot()).leaf_id == branch_b_entry_id
     assert await restarted.messages() == await session.messages()
-    await restarted.branch(a)
+    await restarted.branch(branch_a_entry_id)
     assert await restarted.messages() == (UserMessage("共同起点"), UserMessage("方案 A"))
     # 只选择叶节点不重写文件；未追加前重启仍恢复最后写入的条目，和 pi 相同。
-    assert (await manager.bind("tree").context_snapshot()).leaf_id == b
-    metadata = await manager.get("tree")
+    assert (await session_manager.bind("tree").context_snapshot()).leaf_id == branch_b_entry_id
+    metadata = await session_manager.get("tree")
     assert metadata is not None and metadata.message_count == 3
 
 
 async def test_empty_root_and_invalid_branch_selection(tmp_path) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("tree", tmp_path, "根分支")
-    session = manager.bind("tree")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("tree", tmp_path, "根分支")
+    session = session_manager.bind("tree")
     old_id = await session.append_message(UserMessage("旧根"))
-    before = (manager.directory("tree") / "session.jsonl").read_bytes()
+    before = (session_manager.directory("tree") / "session.jsonl").read_bytes()
     with pytest.raises(ValueError, match="叶节点"):
         await session.branch("missing")
     assert (await session.context_snapshot()).leaf_id == old_id
-    assert (manager.directory("tree") / "session.jsonl").read_bytes() == before
+    assert (session_manager.directory("tree") / "session.jsonl").read_bytes() == before
     assert (await session.branch(None)).messages == ()
     new_id = await session.append_message(UserMessage("新根"))
     assert await session.messages() == (UserMessage("新根"),)
@@ -71,21 +75,25 @@ async def test_empty_root_and_invalid_branch_selection(tmp_path) -> None:
 
 
 async def test_compaction_and_append_stay_on_selected_branch(tmp_path) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("tree", tmp_path, "分支压缩")
-    session = manager.bind("tree")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("tree", tmp_path, "分支压缩")
+    session = session_manager.bind("tree")
     root = await session.append_message(UserMessage("共同起点"))
-    a = await session.append_message(UserMessage("A 的近期消息"))
+    branch_a_entry_id = await session.append_message(UserMessage("A 的近期消息"))
     await session.branch(root)
-    b = await session.append_message(UserMessage("B 的近期消息"))
-    snapshot_a = await session.branch(a)
+    branch_b_entry_id = await session.append_message(UserMessage("B 的近期消息"))
+    branch_a_snapshot = await session.branch(branch_a_entry_id)
     updated = await session.compact(
-        "A 摘要", a, snapshot=snapshot_a, tokens_before=100, usage=LlmUsage(12, 4)
+        "A 摘要",
+        branch_a_entry_id,
+        snapshot=branch_a_snapshot,
+        tokens_before=100,
+        usage=LlmUsage(12, 4),
     )
     compacted = (await session.entries())[-1]
     assert isinstance(compacted, SessionCompactionEvent)
-    assert compacted.parent_id == a
-    assert compacted.first_kept_entry_id == a
+    assert compacted.parent_id == branch_a_entry_id
+    assert compacted.first_kept_entry_id == branch_a_entry_id
     assert compacted.tokens_before == 100
     assert compacted.usage == LlmUsage(12, 4)
     assert updated.messages == (
@@ -94,13 +102,13 @@ async def test_compaction_and_append_stay_on_selected_branch(tmp_path) -> None:
     )
     following = await session.append_message(UserMessage("A 继续"))
     assert (await session.entries())[-1].parent_id == compacted.id
-    restarted = manager.bind("tree")
+    restarted = session_manager.bind("tree")
     assert (await restarted.context_snapshot()).leaf_id == following
     assert (await restarted.context_snapshot()).messages == (
         *updated.messages,
         UserMessage("A 继续"),
     )
-    await restarted.branch(b)
+    await restarted.branch(branch_b_entry_id)
     assert (await restarted.context_snapshot()).messages == (
         UserMessage("共同起点"),
         UserMessage("B 的近期消息"),
@@ -108,30 +116,30 @@ async def test_compaction_and_append_stay_on_selected_branch(tmp_path) -> None:
 
 
 async def test_changed_branch_rejects_old_compaction_plan_without_writing(tmp_path) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("tree", tmp_path, "分支切换")
-    session = manager.bind("tree")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("tree", tmp_path, "分支切换")
+    session = session_manager.bind("tree")
     root = await session.append_message(UserMessage("共同起点"))
-    a = await session.append_message(UserMessage("A"))
+    branch_a_entry_id = await session.append_message(UserMessage("A"))
     await session.branch(root)
-    b = await session.append_message(UserMessage("B"))
-    snapshot_a = await session.branch(a)
-    await session.branch(b)
-    path = manager.directory("tree") / "session.jsonl"
+    branch_b_entry_id = await session.append_message(UserMessage("B"))
+    branch_a_snapshot = await session.branch(branch_a_entry_id)
+    await session.branch(branch_b_entry_id)
+    path = session_manager.directory("tree") / "session.jsonl"
     before = path.read_bytes()
     with pytest.raises(ValueError, match="并发修改"):
-        await session.compact("A 摘要", a, snapshot=snapshot_a)
+        await session.compact("A 摘要", branch_a_entry_id, snapshot=branch_a_snapshot)
     assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("defect", ["duplicate", "missing_parent", "self_parent", "old_version"])
 async def test_invalid_tree_is_rejected_and_list_isolated(tmp_path, defect) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("bad", tmp_path, "坏日志")
-    await manager.create("good", tmp_path, "正常日志")
-    session = manager.bind("bad")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("bad", tmp_path, "坏日志")
+    await session_manager.create("good", tmp_path, "正常日志")
+    session = session_manager.bind("bad")
     first = await session.append_message(UserMessage("消息"))
-    path = manager.directory("bad") / "session.jsonl"
+    path = session_manager.directory("bad") / "session.jsonl"
     if defect == "old_version":
         rows = path.read_text("utf-8").splitlines()
         header = json.loads(rows[0])
@@ -155,7 +163,7 @@ async def test_invalid_tree_is_rejected_and_list_isolated(tmp_path, defect) -> N
             )
     with pytest.raises(ValueError, match="会话日志损坏"):
         await session.messages()
-    assert [item.session_id for item in await manager.list()] == ["good"]
+    assert [item.session_id for item in await session_manager.list()] == ["good"]
 
 
 class RecordingLlm(LlmAdapter):
@@ -168,31 +176,31 @@ class RecordingLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        self.requests.append(request)
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.requests.append(llm_request)
         yield TextDelta("新分支回答")
         yield MessageCompleted(LlmStopReason.STOP)
 
 
 async def test_agent_uses_selected_branch_not_sibling_history(tmp_path) -> None:
-    manager = SessionManager(JsonlSessionStorage(tmp_path))
-    await manager.create("tree", tmp_path, "Agent 分支")
-    session = manager.bind("tree")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("tree", tmp_path, "Agent 分支")
+    session = session_manager.bind("tree")
     root = await session.append_message(UserMessage("共同问题"))
     await session.append_message(AssistantMessage((TextBlock("旧分支回答"),), LlmStopReason.STOP))
     await session.branch(root)
     adapter = RecordingLlm()
-    llm = LlmClient(adapter)
-    registry = ToolRegistry()
+    llm_client = LlmClient(adapter)
+    tool_registry = ToolRegistry()
     agent = Agent(
-        session,
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session,
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     await agent.run("走新方案", model=_MODEL)
     assert adapter.requests[0].messages == (UserMessage("共同问题"), UserMessage("走新方案"))

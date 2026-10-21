@@ -67,8 +67,8 @@ class JsonlSessionStorage:
 
     def __init__(self, root: Path) -> None:
         self._root = root.expanduser().resolve()
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._locations: dict[str, Path] = {}
+        self._locks_by_session_id: dict[str, asyncio.Lock] = {}
+        self._paths_by_session_id: dict[str, Path] = {}
 
     def directory(self, session_id: str) -> Path:
         """定位已存在会话，关联文件复用日志的真实目录。"""
@@ -81,7 +81,7 @@ class JsonlSessionStorage:
         async with self._lock(metadata.session_id):
             path = self._new_path(metadata)
             await _complete_write(self._create_sync, path, metadata)
-            self._locations[metadata.session_id] = path
+            self._paths_by_session_id[metadata.session_id] = path
 
     async def append_message(
         self,
@@ -177,7 +177,7 @@ class JsonlSessionStorage:
             if not path.exists():
                 return False
             await _complete_write(self._delete_sync, path)
-            self._locations.pop(session_id, None)
+            self._paths_by_session_id.pop(session_id, None)
             return True
 
     async def _events(self, session_id: str) -> list[SessionEvent]:
@@ -185,25 +185,25 @@ class JsonlSessionStorage:
             return await asyncio.to_thread(self._read_events_sync, self._path(session_id))
 
     def _lock(self, session_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(session_id, asyncio.Lock())
+        return self._locks_by_session_id.setdefault(session_id, asyncio.Lock())
 
     def _path(self, session_id: str) -> Path:
         if not _SAFE_ID.fullmatch(session_id):
             raise ValueError("session_id 只能包含字母、数字、下划线和连字符")
-        cached = self._locations.get(session_id)
+        cached = self._paths_by_session_id.get(session_id)
         if cached is not None:
             self._assert_no_symlink(cached)
             if cached.exists():
                 return cached
-            self._locations.pop(session_id, None)
+            self._paths_by_session_id.pop(session_id, None)
         direct = self._root / session_id / "session.jsonl"
         self._assert_no_symlink(direct)
         if direct.exists():
-            self._locations[session_id] = direct
+            self._paths_by_session_id[session_id] = direct
             return direct
         for path in self._session_paths():
             if path.parent.name == session_id:
-                self._locations[session_id] = path
+                self._paths_by_session_id[session_id] = path
                 return path
         return direct
 

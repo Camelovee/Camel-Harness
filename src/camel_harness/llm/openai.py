@@ -56,59 +56,61 @@ class OpenAiLlmAdapter(LlmAdapter):
     def provider_id(self) -> str:
         return "openai"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        target = request.model
-        if not target.api_key:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        llm_model = llm_request.model
+        if not llm_model.api_key:
             yield StreamFailed("OpenAI 请求缺少 API Key", retryable=False)
             return
-        client = self._client_factory(target.api_key, target.base_url)
+        sdk_client = self._client_factory(llm_model.api_key, llm_model.base_url)
         try:
-            async for event in self._stream_with_client(client, request):
-                yield event
+            async for llm_event in self._stream_with_client(sdk_client, llm_request):
+                yield llm_event
         finally:
-            await client.close()
+            await sdk_client.close()
 
     async def _stream_with_client(
-        self, client: AsyncOpenAI, request: LlmRequest
+        self, sdk_client: AsyncOpenAI, llm_request: LlmRequest
     ) -> AsyncIterator[LlmStreamEvent]:
-        input_items = self._convert_messages(request.messages)
-        tools = [
+        input_items = self._convert_messages(llm_request.messages)
+        tool_definitions = [
             {
                 "type": "function",
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema,
+                "name": tool_definition.name,
+                "description": tool_definition.description,
+                "parameters": tool_definition.input_schema,
                 "strict": False,
             }
-            for tool in request.tools
+            for tool_definition in llm_request.tools
         ]
-        kwargs: dict[str, Any] = {
-            "model": request.model.model,
+        request_parameters: dict[str, Any] = {
+            "model": llm_request.model.model,
             "input": input_items,
-            "max_output_tokens": request.max_output_tokens,
+            "max_output_tokens": llm_request.max_output_tokens,
             "stream": True,
             "store": False,
         }
-        if request.system_prompt:
-            kwargs["instructions"] = request.system_prompt
-        if tools:
-            kwargs["tools"] = tools
-        if request.temperature is not None:
-            kwargs["temperature"] = request.temperature
+        if llm_request.system_prompt:
+            request_parameters["instructions"] = llm_request.system_prompt
+        if tool_definitions:
+            request_parameters["tools"] = tool_definitions
+        if llm_request.temperature is not None:
+            request_parameters["temperature"] = llm_request.temperature
         effort = {
             "low": "low",
             "high": "high",
             "max": "xhigh",
-        }[request.effort.value]
-        kwargs["reasoning"] = {"effort": effort, "summary": "auto"}
+        }[llm_request.effort.value]
+        request_parameters["reasoning"] = {"effort": effort, "summary": "auto"}
 
-        calls: dict[str, dict[str, str]] = {}
+        tool_calls_by_item_id: dict[str, dict[str, str]] = {}
         completion_state = {"has_tool_call": False}
         try:
-            sdk_stream = await client.responses.create(**kwargs)
+            sdk_stream = await sdk_client.responses.create(**request_parameters)
             try:
-                async for event in sdk_stream:
-                    for mapped_event in self._map_event(event, calls, completion_state):
+                async for sdk_event in sdk_stream:
+                    for mapped_event in self._map_event(
+                        sdk_event, tool_calls_by_item_id, completion_state
+                    ):
                         yield mapped_event
             finally:
                 close = getattr(sdk_stream, "close", None) or getattr(sdk_stream, "aclose", None)
@@ -170,39 +172,49 @@ class OpenAiLlmAdapter(LlmAdapter):
 
     @staticmethod
     def _map_event(
-        event: Any,
-        calls: dict[str, dict[str, str]],
+        sdk_event: Any,
+        tool_calls_by_item_id: dict[str, dict[str, str]],
         completion_state: dict[str, bool],
     ) -> list[LlmStreamEvent]:
-        event_type = getattr(event, "type", "")
+        event_type = getattr(sdk_event, "type", "")
         if event_type == "response.created":
-            model = getattr(getattr(event, "response", None), "model", None)
+            model = getattr(getattr(sdk_event, "response", None), "model", None)
             return [StreamStarted(model=model)]
         if event_type == "response.output_text.delta":
-            return [TextDelta(text=event.delta)]
+            return [TextDelta(text=sdk_event.delta)]
         if event_type in {"response.reasoning_text.delta", "response.reasoning_summary_text.delta"}:
-            return [ReasoningDelta(text=event.delta)]
+            return [ReasoningDelta(text=sdk_event.delta)]
         if event_type == "response.output_item.added":
-            item = event.item
+            item = sdk_event.item
             if getattr(item, "type", "") == "function_call":
                 completion_state["has_tool_call"] = True
-                calls[item.id] = {"call_id": item.call_id, "name": item.name}
+                tool_calls_by_item_id[item.id] = {"call_id": item.call_id, "name": item.name}
                 return [ToolCallStarted(call_id=item.call_id, name=item.name)]
         if event_type == "response.function_call_arguments.delta":
-            call = calls.get(event.item_id, {"call_id": event.item_id})
-            return [ToolCallArgumentsDelta(call_id=call["call_id"], delta=event.delta)]
+            tool_call_data = tool_calls_by_item_id.get(
+                sdk_event.item_id, {"call_id": sdk_event.item_id}
+            )
+            return [
+                ToolCallArgumentsDelta(call_id=tool_call_data["call_id"], delta=sdk_event.delta)
+            ]
         if event_type == "response.function_call_arguments.done":
-            call = calls.pop(event.item_id, {"call_id": event.item_id, "name": event.name})
+            tool_call_data = tool_calls_by_item_id.pop(
+                sdk_event.item_id, {"call_id": sdk_event.item_id, "name": sdk_event.name}
+            )
             try:
-                arguments = json.loads(event.arguments or "{}")
+                arguments = json.loads(sdk_event.arguments or "{}")
             except json.JSONDecodeError:
-                arguments = {"_invalid_json": event.arguments}
-            return [ToolCallCompleted(ToolUseBlock(call["call_id"], call["name"], arguments))]
+                arguments = {"_invalid_json": sdk_event.arguments}
+            return [
+                ToolCallCompleted(
+                    ToolUseBlock(tool_call_data["call_id"], tool_call_data["name"], arguments)
+                )
+            ]
         if event_type in {"response.completed", "response.incomplete", "response.failed"}:
-            usage = getattr(event.response, "usage", None)
-            result: list[LlmStreamEvent] = []
+            usage = getattr(sdk_event.response, "usage", None)
+            llm_events: list[LlmStreamEvent] = []
             if usage is not None:
-                data = {
+                usage_data = {
                     key: value
                     for key in ("input_tokens", "output_tokens")
                     if (value := getattr(usage, key, None)) is not None
@@ -227,19 +239,19 @@ class OpenAiLlmAdapter(LlmAdapter):
                 ):
                     value = getattr(details, field, None)
                     if value is not None:
-                        data[key] = value
-                result.append(UsageUpdated(LlmUsage(**data)))
+                        usage_data[key] = value
+                llm_events.append(UsageUpdated(LlmUsage(**usage_data)))
             if event_type == "response.failed":
-                error = getattr(event.response, "error", None)
-                result.append(
+                error = getattr(sdk_event.response, "error", None)
+                llm_events.append(
                     OpenAiLlmAdapter._failure(
                         getattr(error, "message", None) or "OpenAI 响应失败",
                         getattr(error, "code", None),
                     )
                 )
-                return result
+                return llm_events
             if event_type == "response.incomplete":
-                details = getattr(event.response, "incomplete_details", None)
+                details = getattr(sdk_event.response, "incomplete_details", None)
                 detail_reason = getattr(details, "reason", None)
                 if detail_reason not in {"max_output_tokens", "max_tokens"}:
                     raise RuntimeError(f"OpenAI 响应未完成：{detail_reason or 'unknown'}")
@@ -248,14 +260,14 @@ class OpenAiLlmAdapter(LlmAdapter):
                 stop_reason = LlmStopReason.TOOL_USE
             else:
                 stop_reason = LlmStopReason.STOP
-            model = getattr(event.response, "model", None)
-            result.append(MessageCompleted(stop_reason, model=model))
-            return result
+            model = getattr(sdk_event.response, "model", None)
+            llm_events.append(MessageCompleted(stop_reason, model=model))
+            return llm_events
         if event_type == "error":
             return [
                 OpenAiLlmAdapter._failure(
-                    getattr(event, "message", None) or "OpenAI 流错误",
-                    getattr(event, "code", None),
+                    getattr(sdk_event, "message", None) or "OpenAI 流错误",
+                    getattr(sdk_event, "code", None),
                 )
             ]
         return []

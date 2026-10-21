@@ -51,9 +51,9 @@ class FakeLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
-        self.requests.append(request)
+        self.requests.append(llm_request)
         if self.calls == 1:
             yield ToolCallCompleted(
                 ToolUseBlock("call-1", "read_file", {"path": "sample.txt", "max_lines": 1})
@@ -75,7 +75,7 @@ class ApprovalFakeLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
         if self.calls == 1:
             yield TextDelta(text="我准备写入文件。")
@@ -97,7 +97,7 @@ class TruncatedToolLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         yield ToolCallCompleted(
             ToolUseBlock(
                 "truncated-write",
@@ -110,7 +110,7 @@ class TruncatedToolLlm(LlmAdapter):
 
 async def test_four_identical_valid_calls_are_all_executed(tmp_path):
     class RepeatedLlm(FakeLlm):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             if self.calls == 1:
                 for index in range(4):
@@ -123,20 +123,20 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
                 yield MessageCompleted(LlmStopReason.STOP)
 
     (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("repeated", tmp_path, "重复读取")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    llm = LlmClient(RepeatedLlm())
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("repeated", tmp_path, "重复读取")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient(RepeatedLlm())
     agent = Agent(
-        sessions.bind("repeated"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("repeated"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events: list = []
     agent.subscribe(events.append)
@@ -149,31 +149,31 @@ async def test_four_identical_valid_calls_are_all_executed(tmp_path):
 
 async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_path):
     (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("tool-storage-failure", tmp_path, "归档失败")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    llm = LlmClient(FakeLlm())
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("tool-storage-failure", tmp_path, "归档失败")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient(FakeLlm())
 
     async def failed_storage(result, context):
         raise OSError("工具结果归档失败")
 
     agent = Agent(
-        sessions.bind("tool-storage-failure"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry, normalize_result=failed_storage),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("tool-storage-failure"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry, normalize_result=failed_storage),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events: list = []
     agent.subscribe(events.append)
     await agent.run("读取", model=_MODEL)
     assert events[-1].stop_reason == "tool_failed"
     assert events[-1].error == "工具结果归档失败"
-    messages = await sessions.bind("tool-storage-failure").messages()
+    messages = await session_manager.bind("tool-storage-failure").messages()
     assert len([message for message in messages if isinstance(message, AssistantMessage)]) == 1
     assert len([message for message in messages if isinstance(message, ToolResultMessage)]) == 2
 
@@ -181,21 +181,21 @@ async def test_tool_result_storage_failure_ends_run_without_retrying_tool(tmp_pa
 async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     (tmp_path / "sample.txt").write_text("内容", encoding="utf-8")
     runtime = FakeLlm()
-    llm = LlmClient(runtime)
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    context = ContextManager(CompactionEngine(llm))
-    await sessions.create("session-1", tmp_path, "读取文件")
+    llm_client = LlmClient(runtime)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    context_manager = ContextManager(
+        system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+    )
+    await session_manager.create("session-1", tmp_path, "读取文件")
     agent = Agent(
-        sessions.bind("session-1"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        context,
-        system_prompt="测试提示",
+        session=session_manager.bind("session-1"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=context_manager,
     )
 
     events: list = []
@@ -228,7 +228,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         if event.type == "message_update"
         and event.assistant_event.type == LlmStreamEventType.TEXT_DELTA
     )
-    assert [message.role for message in await sessions.bind("session-1").messages()] == [
+    assert [message.role for message in await session_manager.bind("session-1").messages()] == [
         "user",
         "assistant",
         "toolResult",
@@ -241,6 +241,12 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
         if isinstance(message, ToolResultMessage)
     ]
     assert [message.call_id for message in tool_messages] == ["call-1", "call-2"]
+    assert {definition.name for definition in runtime.requests[0].tools} == {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "run_shell",
+    }
     assert all(request.effort is LlmThinkingEffort.HIGH for request in runtime.requests)
 
 
@@ -249,24 +255,26 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     (tmp_path / "sample.txt").write_text(content, encoding="utf-8")
 
     class IntermediateTextLlm(FakeLlm):
-        async def stream(self, request):
+        async def stream(self, llm_request):
             if self.calls == 0:
                 yield TextDelta("准备读取，不是最终结论")
-            async for event in super().stream(request):
+            async for event in super().stream(llm_request):
                 yield event
 
-    llm = LlmClient(IntermediateTextLlm())
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("parent", tmp_path, "父会话")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient(IntermediateTextLlm())
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("parent", tmp_path, "父会话")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
     runner = LocalSubagentRunner(
-        llm,
-        sessions,
-        registry,
-        PermissionService(),
-        ContextManager(CompactionEngine(llm)),
-        AgentOptions(),
+        llm_client=llm_client,
+        session_manager=session_manager,
+        tool_registry=tool_registry,
+        permission_service=PermissionService(),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
+        agent_options=AgentOptions(),
     )
 
     result = await runner.run(
@@ -283,11 +291,11 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
 
     assert result.succeeded
     assert result.content == "已读取文件"
-    metadata = await sessions.get(result.session_id)
+    metadata = await session_manager.get(result.session_id)
     assert metadata is not None
     assert metadata.parent_session_id == "parent"
     assert metadata.parent_tool_call_id == "delegate-call"
-    results = list((sessions.directory(result.session_id) / "tool-results").glob("*.txt"))
+    results = list((session_manager.directory(result.session_id) / "tool-results").glob("*.txt"))
     if len(content) > 20_000:
         assert len(results) == 2
         assert all(path.read_text("utf-8") == f"1: {content}" for path in results)
@@ -300,23 +308,25 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     """审批事件应在本 Turn 的 assistant 流结束后发送，并在决定后继续工具结果。"""
 
     runtime = ApprovalFakeLlm()
-    llm = LlmClient(runtime)
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    approval = WebApproval(timeout_seconds=2)
-    permission = PermissionService(approval)
-    context = ContextManager(CompactionEngine(llm))
-    await sessions.create("session-approval", tmp_path, "写入文件")
+    llm_client = LlmClient(runtime)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    web_approval = WebApproval(timeout_seconds=2)
+    permission_service = PermissionService(web_approval)
+    context_manager = ContextManager(
+        system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+    )
+    await session_manager.create("session-approval", tmp_path, "写入文件")
     agent = Agent(
-        sessions.bind("session-approval"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry, permission),
-        context,
-        system_prompt="测试提示",
+        session=session_manager.bind("session-approval"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(
+            tool_registry=tool_registry, permission_service=permission_service
+        ),
+        context_manager=context_manager,
     )
 
     async def collect() -> list:
@@ -336,13 +346,13 @@ async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
     stream_task = asyncio.create_task(collect())
     pending: tuple = ()
     for _ in range(100):
-        pending = await approval.list_pending()
+        pending = await web_approval.list_pending()
         if pending:
             break
         await asyncio.sleep(0.01)
     assert pending
     await asyncio.sleep(0)
-    assert await approval.resolve(pending[0].request_id, True)
+    assert await web_approval.resolve(pending[0].request_id, True)
     events = await stream_task
 
     types = [event.type for event in events]
@@ -363,27 +373,27 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path,
 
     adapter = TruncatedToolLlm()
     adapter.tool_name = tool_name
-    llm = LlmClient(adapter)
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
-    await sessions.create("session-length", tmp_path, "截断工具调用")
+    llm_client = LlmClient(adapter)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / ".camel" / "sessions"))
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
+    await session_manager.create("session-length", tmp_path, "截断工具调用")
     agent = Agent(
-        sessions.bind("session-length"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("session-length"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
 
     events: list = []
     unsubscribe = agent.subscribe(events.append)
     await agent.run("写文件", model=_MODEL)
     unsubscribe()
-    messages = await sessions.bind("session-length").messages()
+    messages = await session_manager.bind("session-length").messages()
 
     assert not (tmp_path / "should-not-exist.txt").exists()
     assert events[-1].type == "agent_end"
@@ -411,20 +421,20 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
         def __init__(self):
             self.requests = []
 
-        async def stream(self, request):
-            self.requests.append(request)
+        async def stream(self, llm_request):
+            self.requests.append(llm_request)
             if len(self.requests) == 1:
                 if scenario == "text_length":
                     yield TextDelta("未完成的文本")
                     yield MessageCompleted(LlmStopReason.LENGTH)
                 else:
-                    async for event in super().stream(request):
+                    async for event in super().stream(llm_request):
                         yield event
             elif len(self.requests) == 2:
                 if scenario == "cancel":
                     await asyncio.Future()
-                assert isinstance(request.messages[-1], ToolResultMessage)
-                assert request.messages[-1].is_error
+                assert isinstance(llm_request.messages[-1], ToolResultMessage)
+                assert llm_request.messages[-1].is_error
                 yield ToolCallCompleted(
                     ToolUseBlock(
                         "small-write", "write_file", {"path": "small.txt", "content": "完整"}
@@ -436,20 +446,20 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
                 yield MessageCompleted(LlmStopReason.STOP)
 
     adapter = RecoveringLlm()
-    llm = LlmClient(adapter)
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("recover", tmp_path, "截断恢复")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient(adapter)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("recover", tmp_path, "截断恢复")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
     agent = Agent(
-        sessions.bind("recover"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("recover"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events = []
     agent.subscribe(events.append)
@@ -497,9 +507,9 @@ class _RoutingSpyLlm(LlmAdapter):
     def provider_id(self) -> str:
         return self._provider
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.calls += 1
-        self.requests.append(request)
+        self.requests.append(llm_request)
         if self._delegate and self.calls == 1:
             yield ToolCallCompleted(
                 ToolUseBlock(
@@ -516,19 +526,19 @@ async def test_run_model_selects_adapter_per_run(tmp_path) -> None:
     """同一个 Agent 的两次 Run 可以分别路由到不同 Provider。"""
 
     first, second = _RoutingSpyLlm("one"), _RoutingSpyLlm("two")
-    llm = LlmClient({"one": first, "two": second})
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("routing", tmp_path, "按 Run 选模型")
-    registry = ToolRegistry()
+    llm_client = LlmClient({"one": first, "two": second})
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("routing", tmp_path, "按 Run 选模型")
+    tool_registry = ToolRegistry()
     agent = Agent(
-        sessions.bind("routing"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("routing"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
 
     await agent.run("第一次", model=LlmModel("one", "m-a"))
@@ -543,31 +553,33 @@ async def test_subagent_follows_parent_run_model(tmp_path) -> None:
 
     parent_llm = _RoutingSpyLlm("one", delegate=True)
     other = _RoutingSpyLlm("two")
-    llm = LlmClient({"one": parent_llm, "two": other})
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("parent", tmp_path, "委派模型跟随")
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider())
+    llm_client = LlmClient({"one": parent_llm, "two": other})
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("parent", tmp_path, "委派模型跟随")
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider())
     runner = LocalSubagentRunner(
-        llm,
-        sessions,
-        registry,
-        PermissionService(),
-        ContextManager(CompactionEngine(llm)),
-        AgentOptions(),
+        llm_client=llm_client,
+        session_manager=session_manager,
+        tool_registry=tool_registry,
+        permission_service=PermissionService(),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
+        agent_options=AgentOptions(),
     )
     from camel_harness.agent.subagent import SubagentToolProvider
 
-    await registry.register_provider(SubagentToolProvider(runner.run))
+    await tool_registry.register_provider(SubagentToolProvider(runner.run))
     agent = Agent(
-        sessions.bind("parent"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("parent"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
 
     await agent.run(

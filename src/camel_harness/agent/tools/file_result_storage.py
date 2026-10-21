@@ -32,16 +32,16 @@ class FileToolResultStorage:
         self._max_inline_chars = max_inline_chars
         self._registered_paths = registered_paths
 
-    async def normalize(self, result: ToolResult, context: ToolContext) -> ToolResult:
-        if "content_ref" in result.metadata:
-            return result
-        if len(result.content) <= self._max_inline_chars:
-            return result
-        call_id = _SAFE_PART.sub("-", result.call_id)[:80] or "result"
+    async def normalize(self, tool_result: ToolResult, tool_context: ToolContext) -> ToolResult:
+        if "content_ref" in tool_result.metadata:
+            return tool_result
+        if len(tool_result.content) <= self._max_inline_chars:
+            return tool_result
+        call_id = _SAFE_PART.sub("-", tool_result.call_id)[:80] or "result"
         try:
-            directory = self._session_directory(context.session_id) / "tool-results"
+            directory = self._session_directory(tool_context.session_id) / "tool-results"
             task = asyncio.create_task(
-                asyncio.to_thread(self._write, directory, call_id, result.content)
+                asyncio.to_thread(self._write, directory, call_id, tool_result.content)
             )
             cancelled = False
             while not task.done():
@@ -63,22 +63,22 @@ class FileToolResultStorage:
         except Exception as exc:
             raise ToolResultStorageError(f"工具结果归档失败：{exc}") from exc
         reference = str(path)
-        preview = result.content[: self._max_inline_chars]
+        preview = tool_result.content[: self._max_inline_chars]
         metadata = {
-            **result.metadata,
+            **tool_result.metadata,
             "content_ref": {
                 "path": reference,
                 "mime_type": "text/plain; charset=utf-8",
-                "size_bytes": len(result.content.encode("utf-8")),
-                "original_chars": len(result.content),
+                "size_bytes": len(tool_result.content.encode("utf-8")),
+                "original_chars": len(tool_result.content),
                 "preview_chars": len(preview),
             },
         }
         return ToolResult(
-            result.call_id,
-            result.name,
+            tool_result.call_id,
+            tool_result.name,
             f"{preview}\n\n[结果已截断，完整内容：{reference}]",
-            result.is_error,
+            tool_result.is_error,
             metadata,
         )
 
@@ -99,11 +99,11 @@ class FileToolResultStorage:
         return path
 
     async def from_file(
-        self, source: BinaryIO, call_id: str, name: str, context: ToolContext
+        self, source: BinaryIO, call_id: str, name: str, tool_context: ToolContext
     ) -> ToolResult:
         """分块归档 Shell 输出，内存只保留预览，不丢失完整文件内容。"""
         task = asyncio.create_task(
-            asyncio.to_thread(self._from_file, source, call_id, name, context)
+            asyncio.to_thread(self._from_file, source, call_id, name, tool_context)
         )
         cancelled = False
         while not task.done():
@@ -128,13 +128,13 @@ class FileToolResultStorage:
         return result
 
     def _from_file(
-        self, source: BinaryIO, call_id: str, name: str, context: ToolContext
+        self, source: BinaryIO, call_id: str, name: str, tool_context: ToolContext
     ) -> ToolResult:
         source.seek(0)
         size = os.fstat(source.fileno()).st_size
         if size <= self._max_inline_chars:
             return ToolResult(call_id, name, source.read().decode("utf-8", errors="replace"))
-        directory = self._session_directory(context.session_id) / "tool-results"
+        directory = self._session_directory(tool_context.session_id) / "tool-results"
         safe_id = _SAFE_PART.sub("-", call_id)[:80] or "result"
         path = self._write(directory, safe_id, "")
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")

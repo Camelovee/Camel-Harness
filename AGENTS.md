@@ -12,7 +12,12 @@
 ### 代码质量规范（Code quality standards）
 
 - 所有 Python 代码必须包含类型注解，函数和方法必须声明参数类型与返回类型（包括 `-> None`）。
-- 使用含义明确、能说明用途的变量名。
+- 使用含义明确、能说明用途的变量名；源码、脚本和测试遵循相同规则。
+- 依赖对象按职责命名，例如 `agent_options`、`llm_client`、`tool_registry`、`context_manager`、`session_manager`、`session_storage`、`settings_store`；参数、局部变量和对应实例属性使用一致名称，不以 `options`、`llm`、`tools` 等笼统名称表示具体依赖。
+- 保留 LLM、MCP、ID 等通用术语；区分对象、定义集合和索引映射，例如 `tool_registry`、`tool_definitions`、`tools_by_name`。
+- 请求、结果和事件在跨组件时标明所属领域，例如 `llm_request`、`permission_request`、`tool_result`；依赖较多的组装调用使用关键字参数。
+- 同一作用域存在多个同类实例时，用角色或状态区分，例如 `restarted_session_manager`、`disabled_context_manager`，不得因统一命名混淆独立实例。
+- 重命名同步更新调用方、关键字参数、测试替身和反射引用；保持类型名、模块路径及对外协议、配置和持久化字段不变，不做无差别文本替换。
 - 遵循当前修改模块已有的代码模式与约定。
 - 对复杂函数，在职责可以清晰拆分时提取为更小、职责集中的函数，避免为凑行数机械拆分。
 - 函数 docstring 以单行摘要开头；需要补充上下文时另起段落，参数和返回值说明使用 `Args`、`Returns` 段落。描述内容默认使用中文。

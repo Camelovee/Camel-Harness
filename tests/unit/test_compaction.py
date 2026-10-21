@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
@@ -44,9 +45,11 @@ _MODEL = LlmModel("fake", "fake-model")
 async def test_context_prepare_owns_prompt_and_plan_but_does_not_change_snapshot(
     tmp_path, monkeypatch
 ):
-    engine = _engine(threshold=100_000)
-    context = ContextManager(engine)
-    snapshot = _log()
+    compaction_engine = _compaction_engine(threshold=100_000)
+    context_manager = ContextManager(
+        system_prompt=" \n基础\t ", compaction_engine=compaction_engine
+    )
+    snapshot = _context_snapshot()
     original_nodes = snapshot.nodes
     plan = CompactionResult("kept", 100, "摘要")
     calls = []
@@ -59,17 +62,16 @@ async def test_context_prepare_owns_prompt_and_plan_but_does_not_change_snapshot
         calls.append((current, model, kwargs["context_overhead_tokens"]))
         return plan
 
-    monkeypatch.setattr(context, "build_system_context", build_context)
-    monkeypatch.setattr(engine, "compact_if_needed", plan_compaction)
-    tools = (ToolDefinition("read_file", "读取", {"type": "object"}),)
+    monkeypatch.setattr(context_manager, "build_system_context", build_context)
+    monkeypatch.setattr(compaction_engine, "compact_if_needed", plan_compaction)
+    tool_definitions = (ToolDefinition("read_file", "读取", {"type": "object"}),)
     for query in ("第一次", "第二次"):
-        prepared = await context.prepare(
+        prepared = await context_manager.prepare(
             snapshot,
             "summary-model",
             query=query,
             workspace=tmp_path,
-            system_prompt="基础",
-            tools=tools,
+            tool_definitions=tool_definitions,
         )
         assert prepared.system_prompt == f"基础\n\n资源：{query}"
         assert prepared.compaction is plan
@@ -83,25 +85,76 @@ async def test_context_prepare_owns_prompt_and_plan_but_does_not_change_snapshot
 async def test_context_prepare_keeps_resource_errors_distinct_and_propagates_cancel(
     tmp_path, monkeypatch
 ):
-    context = ContextManager(_engine(threshold=100_000))
+    context_manager = ContextManager(
+        system_prompt="基础", compaction_engine=_compaction_engine(threshold=100_000)
+    )
 
     async def fail(*args):
         raise OSError("规则读取失败")
 
-    monkeypatch.setattr(context, "build_system_context", fail)
+    monkeypatch.setattr(context_manager, "build_system_context", fail)
     with pytest.raises(ContextResourceError, match="规则读取失败"):
-        await context.prepare(
-            _log(), _MODEL, query="任务", workspace=tmp_path, system_prompt="基础"
-        )
+        await context_manager.prepare(_context_snapshot(), _MODEL, query="任务", workspace=tmp_path)
 
     async def cancel(*args):
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(context, "build_system_context", cancel)
+    monkeypatch.setattr(context_manager, "build_system_context", cancel)
     with pytest.raises(asyncio.CancelledError):
-        await context.prepare(
-            _log(), _MODEL, query="任务", workspace=tmp_path, system_prompt="基础"
-        )
+        await context_manager.prepare(_context_snapshot(), _MODEL, query="任务", workspace=tmp_path)
+
+
+@pytest.mark.parametrize("system_prompt", ["", " ", "\n\t", "\u3000"])
+def test_context_rejects_empty_base_prompt_and_role_prompt(system_prompt: str) -> None:
+    compaction_engine = _compaction_engine(threshold=100_000)
+    with pytest.raises(ValueError, match="系统提示不能为空"):
+        ContextManager(compaction_engine=compaction_engine, system_prompt=system_prompt)
+
+    context_manager = ContextManager(compaction_engine=compaction_engine, system_prompt="父角色")
+    with pytest.raises(ValueError, match="系统提示不能为空"):
+        context_manager.with_system_prompt(system_prompt)
+
+
+async def test_context_uses_trimmed_base_prompt_without_resources(tmp_path: Path) -> None:
+    context_manager = ContextManager(
+        compaction_engine=_compaction_engine(threshold=100_000), system_prompt=" \n基础提示\t "
+    )
+
+    prepared = await context_manager.prepare(
+        _context_snapshot(), _MODEL, query="任务", workspace=tmp_path
+    )
+
+    assert prepared.system_prompt == "基础提示"
+    assert prepared.compaction is None
+
+
+async def test_role_prompt_is_counted_in_shared_compaction_budget(tmp_path: Path) -> None:
+    adapter = RecordingSummaryLlm()
+    context_manager = ContextManager(
+        compaction_engine=CompactionEngine(
+            llm_client=LlmClient(adapter),
+            compaction_settings=CompactionSettings(
+                context_window_tokens=4096,
+                reserve_tokens=2048,
+                keep_recent_tokens=128,
+                max_output_tokens=64,
+                retry_max_output_tokens=128,
+            ),
+        ),
+        system_prompt="父角色",
+    )
+    snapshot = _context_snapshot(count=2)
+    prepared = await context_manager.prepare(snapshot, _MODEL, query="任务", workspace=tmp_path)
+    assert prepared.compaction is None
+
+    child_context_manager = context_manager.with_system_prompt("子角色" * 3000)
+    with pytest.raises(CompactionError, match="没有足够的完整消息"):
+        await child_context_manager.prepare(snapshot, _MODEL, query="任务", workspace=tmp_path)
+
+    prepared = await context_manager.prepare(snapshot, _MODEL, query="任务", workspace=tmp_path)
+    assert prepared.system_prompt == "父角色"
+    assert prepared.compaction is None
+    assert not adapter.requests
 
 
 def test_context_query_resolution_uses_latest_original_user_message():
@@ -122,7 +175,7 @@ class SummaryLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         yield TextDelta(text="保留目标、决策和待办。")
         yield MessageCompleted(LlmStopReason.STOP, model=None)
 
@@ -133,20 +186,20 @@ class RecordingSummaryLlm(SummaryLlm):
     def __init__(self) -> None:
         self.requests: list[LlmRequest] = []
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        self.requests.append(request)
-        async for event in super().stream(request):
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.requests.append(llm_request)
+        async for event in super().stream(llm_request):
             yield event
 
 
-def _engine(
+def _compaction_engine(
     threshold: int = 384,
     min_messages: int = 8,
 ) -> CompactionEngine:
-    llm = LlmClient(SummaryLlm())
+    llm_client = LlmClient(SummaryLlm())
     return CompactionEngine(
-        llm,
-        settings=CompactionSettings(
+        llm_client=llm_client,
+        compaction_settings=CompactionSettings(
             context_window_tokens=max(4096, threshold + 128),
             reserve_tokens=max(4096, threshold + 128) - threshold,
             keep_recent_tokens=140,
@@ -157,7 +210,7 @@ def _engine(
     )
 
 
-def _log(count: int = 8) -> ContextSnapshot:
+def _context_snapshot(count: int = 8) -> ContextSnapshot:
     nodes = tuple(
         ContextNode(
             f"entry-{index}",
@@ -171,9 +224,9 @@ def _log(count: int = 8) -> ContextSnapshot:
 
 
 async def test_compaction_keeps_recent_token_budget() -> None:
-    engine = _engine()
+    compaction_engine = _compaction_engine()
 
-    result = await engine.compact_if_needed(_log(), _MODEL)
+    result = await compaction_engine.compact_if_needed(_context_snapshot(), _MODEL)
 
     assert result is not None
     assert result.first_kept_entry_id == "entry-6"
@@ -182,7 +235,9 @@ async def test_compaction_keeps_recent_token_budget() -> None:
 
 
 async def test_basic_compaction_skips_history_below_pressure() -> None:
-    result = await _engine(threshold=100_000).compact_if_needed(_log(), _MODEL)
+    result = await _compaction_engine(threshold=100_000).compact_if_needed(
+        _context_snapshot(), _MODEL
+    )
 
     assert result is None
 
@@ -190,23 +245,23 @@ async def test_basic_compaction_skips_history_below_pressure() -> None:
 async def test_short_history_cannot_bypass_context_capacity_check():
     snapshot = ContextSnapshot("entry", "entry", (ContextNode("entry", UserMessage("。" * 5000)),))
     with pytest.raises(CompactionError, match="没有足够"):
-        await _engine().compact_if_needed(snapshot, _MODEL)
+        await _compaction_engine().compact_if_needed(snapshot, _MODEL)
 
 
 async def test_disabled_compaction_does_not_disable_capacity_guard():
-    settings = CompactionSettings(enabled=False)
+    compaction_settings = CompactionSettings(enabled=False)
     snapshot = ContextSnapshot(
         "entry", "entry", (ContextNode("entry", UserMessage("。" * 130_000)),)
     )
     with pytest.raises(CompactionError, match="未开启"):
-        await CompactionEngine(LlmClient(SummaryLlm()), settings).compact_if_needed(
-            snapshot, _MODEL
-        )
+        await CompactionEngine(
+            llm_client=LlmClient(SummaryLlm()), compaction_settings=compaction_settings
+        ).compact_if_needed(snapshot, _MODEL)
 
 
 async def test_context_overflow_trigger_ignores_pressure_threshold() -> None:
-    result = await _engine(threshold=100_000).compact_if_needed(
-        _log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+    result = await _compaction_engine(threshold=100_000).compact_if_needed(
+        _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
     )
 
     assert result is not None
@@ -214,16 +269,16 @@ async def test_context_overflow_trigger_ignores_pressure_threshold() -> None:
 
 async def test_basic_compaction_does_not_reinject_reasoning() -> None:
     adapter = RecordingSummaryLlm()
-    llm = LlmClient(adapter)
-    engine = CompactionEngine(
-        llm,
-        settings=CompactionSettings(min_messages=2),
+    llm_client = LlmClient(adapter)
+    compaction_engine = CompactionEngine(
+        llm_client=llm_client,
+        compaction_settings=CompactionSettings(min_messages=2),
     )
     reasoning = AssistantMessage(
         (ReasoningBlock("不应重新注入的推理"), TextBlock("可见结论")),
         LlmStopReason.STOP,
     )
-    log = ContextSnapshot(
+    context_snapshot = ContextSnapshot(
         "entry-2",
         "entry-2",
         (
@@ -233,8 +288,8 @@ async def test_basic_compaction_does_not_reinject_reasoning() -> None:
         ),
     )
 
-    await engine.compact_if_needed(
-        log,
+    await compaction_engine.compact_if_needed(
+        context_snapshot,
         _MODEL,
         trigger=CompactionTrigger.CONTEXT_OVERFLOW,
     )
@@ -259,9 +314,13 @@ def test_basic_compaction_rejects_invalid_options() -> None:
 
 async def test_context_manager_loads_workspace_rules(tmp_path) -> None:
     (tmp_path / "AGENTS.md").write_text("只修改工作区内文件", encoding="utf-8")
-    context = ContextManager(CompactionEngine(LlmClient(SummaryLlm())), ProjectRules())
+    context_manager = ContextManager(
+        system_prompt="测试提示",
+        compaction_engine=CompactionEngine(llm_client=LlmClient(SummaryLlm())),
+        project_rules=ProjectRules(),
+    )
 
-    result = await context.build_system_context("继续实现", tmp_path)
+    result = await context_manager.build_system_context("继续实现", tmp_path)
 
     assert "# 项目规则" in result
     assert "只修改工作区内文件" in result
@@ -275,20 +334,21 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
         "---\nname: python-style\ndescription: Python style\n---\n使用类型注解\n",
         encoding="utf-8",
     )
-    memories = MemoryStore(tmp_path, tmp_path / "user-memory")
-    await memories.save(
+    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
+    await memory_store.save(
         MemoryEntry("architecture", "architecture decision", "保持线性会话"),
         expected_revision="0",
         session_id="test",
         tool_call_id="call",
     )
-    context = ContextManager(
-        CompactionEngine(LlmClient(SummaryLlm())),
+    context_manager = ContextManager(
+        system_prompt="测试提示",
+        compaction_engine=CompactionEngine(llm_client=LlmClient(SummaryLlm())),
         skills=skills,
-        memories=memories,
+        memory_store=memory_store,
     )
 
-    result = await context.build_system_context("review architecture decision", tmp_path)
+    result = await context_manager.build_system_context("review architecture decision", tmp_path)
 
     assert "python-style" in result
     assert "python-style (project)" in result
@@ -330,9 +390,9 @@ class ScriptedSummaryLlm(RecordingSummaryLlm):
         self.reasons = reasons
         self.text = text
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         index = len(self.requests)
-        self.requests.append(request)
+        self.requests.append(llm_request)
         yield TextDelta(self.text)
         yield UsageUpdated(LlmUsage(100, 20))
         yield UsageUpdated(LlmUsage(100, 30))
@@ -342,10 +402,10 @@ class ScriptedSummaryLlm(RecordingSummaryLlm):
 
 async def test_length_retry_has_independent_budget_and_counts_both_requests() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
-    engine = CompactionEngine(LlmClient(adapter))
+    compaction_engine = CompactionEngine(llm_client=LlmClient(adapter))
     charged: list[LlmUsage] = []
-    result = await engine.compact_if_needed(
-        _log(),
+    result = await compaction_engine.compact_if_needed(
+        _context_snapshot(),
         _MODEL,
         trigger=CompactionTrigger.CONTEXT_OVERFLOW,
         on_usage=charged.append,
@@ -369,10 +429,10 @@ async def test_length_retry_has_independent_budget_and_counts_both_requests() ->
 )
 async def test_failed_summary_never_returns_a_commit_plan(reasons, text, error) -> None:
     adapter = ScriptedSummaryLlm(reasons, text)
-    snapshot = _log()
+    snapshot = _context_snapshot()
     before = snapshot.nodes
     with pytest.raises(CompactionError, match=error):
-        await CompactionEngine(LlmClient(adapter)).compact_if_needed(
+        await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
             snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
         )
     assert snapshot.nodes == before
@@ -381,7 +441,7 @@ async def test_failed_summary_never_returns_a_commit_plan(reasons, text, error) 
 
 async def test_compaction_rejects_summary_input_larger_than_context_window() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
-    settings = CompactionSettings(
+    compaction_settings = CompactionSettings(
         context_window_tokens=512,
         reserve_tokens=128,
         keep_recent_tokens=140,
@@ -389,17 +449,17 @@ async def test_compaction_rejects_summary_input_larger_than_context_window() -> 
         retry_max_output_tokens=128,
     )
     with pytest.raises(CompactionError, match="上下文窗口"):
-        await CompactionEngine(LlmClient(adapter), settings).compact_if_needed(
-            _log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
-        )
+        await CompactionEngine(
+            llm_client=LlmClient(adapter), compaction_settings=compaction_settings
+        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
     assert adapter.requests == []
 
 
 async def test_retry_budget_is_not_reduced_by_previous_request_usage() -> None:
-    snapshot = _log()
+    snapshot = _context_snapshot()
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
     charged: list[LlmUsage] = []
-    result = await CompactionEngine(LlmClient(adapter)).compact_if_needed(
+    result = await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
         snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW, on_usage=charged.append
     )
     assert result is not None
@@ -409,7 +469,7 @@ async def test_retry_budget_is_not_reduced_by_previous_request_usage() -> None:
 
 async def test_oversized_completed_summary_is_not_committed() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.STOP], "。" * 300)
-    settings = CompactionSettings(
+    compaction_settings = CompactionSettings(
         context_window_tokens=4096,
         reserve_tokens=3712,
         keep_recent_tokens=140,
@@ -417,9 +477,9 @@ async def test_oversized_completed_summary_is_not_committed() -> None:
         retry_max_output_tokens=128,
     )
     with pytest.raises(CompactionError, match="仍超过安全预算"):
-        await CompactionEngine(LlmClient(adapter), settings).compact_if_needed(
-            _log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
-        )
+        await CompactionEngine(
+            llm_client=LlmClient(adapter), compaction_settings=compaction_settings
+        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
     assert len(adapter.requests) == 1
 
 
@@ -427,15 +487,18 @@ async def test_cancelled_compaction_propagates_and_accounts_known_usage() -> Non
     started = asyncio.Event()
 
     class BlockingSummaryLlm(SummaryLlm):
-        async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
             yield UsageUpdated(LlmUsage(10, 2))
             started.set()
             await asyncio.Event().wait()
 
     charged: list[LlmUsage] = []
     task = asyncio.create_task(
-        CompactionEngine(LlmClient(BlockingSummaryLlm())).compact_if_needed(
-            _log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW, on_usage=charged.append
+        CompactionEngine(llm_client=LlmClient(BlockingSummaryLlm())).compact_if_needed(
+            _context_snapshot(),
+            _MODEL,
+            trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+            on_usage=charged.append,
         )
     )
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -447,20 +510,24 @@ async def test_cancelled_compaction_propagates_and_accounts_known_usage() -> Non
 
 async def test_disabled_compaction_does_not_call_provider() -> None:
     adapter = RecordingSummaryLlm()
-    engine = CompactionEngine(LlmClient(adapter), CompactionSettings(enabled=False))
-    assert await engine.compact_if_needed(_log(), _MODEL) is None
+    compaction_engine = CompactionEngine(
+        llm_client=LlmClient(adapter), compaction_settings=CompactionSettings(enabled=False)
+    )
+    assert await compaction_engine.compact_if_needed(_context_snapshot(), _MODEL) is None
     with pytest.raises(CompactionError, match="未开启"):
-        await engine.compact_if_needed(_log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
+        await compaction_engine.compact_if_needed(
+            _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+        )
     assert not adapter.requests
 
 
 async def test_previous_summary_is_updated_with_new_history() -> None:
     adapter = RecordingSummaryLlm()
-    snapshot = _log()
+    snapshot = _context_snapshot()
     nodes = (
         ContextNode("summary", UserMessage("[Compacted History]\n\n已有约束")),
     ) + snapshot.nodes
-    await CompactionEngine(LlmClient(adapter)).compact_if_needed(
+    await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
         ContextSnapshot(snapshot.leaf_id, snapshot.revision, nodes),
         _MODEL,
         trigger=CompactionTrigger.CONTEXT_OVERFLOW,
@@ -473,15 +540,15 @@ async def test_compaction_timeout_never_retries() -> None:
     requests: list[LlmRequest] = []
 
     class SlowSummaryLlm(SummaryLlm):
-        async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-            requests.append(request)
+        async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+            requests.append(llm_request)
             yield TextDelta("未完成")
             await asyncio.Event().wait()
 
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.05):
-            await CompactionEngine(LlmClient(SlowSummaryLlm())).compact_if_needed(
-                _log(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+            await CompactionEngine(llm_client=LlmClient(SlowSummaryLlm())).compact_if_needed(
+                _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
             )
     assert len(requests) == 1
 
@@ -510,10 +577,11 @@ async def test_tool_boundary_is_not_split_by_recent_budget() -> None:
         ),
     )
     adapter = RecordingSummaryLlm()
-    engine = CompactionEngine(
-        LlmClient(adapter), CompactionSettings(min_messages=2, keep_recent_tokens=50)
+    compaction_engine = CompactionEngine(
+        llm_client=LlmClient(adapter),
+        compaction_settings=CompactionSettings(min_messages=2, keep_recent_tokens=50),
     )
-    result = await engine.compact_if_needed(
+    result = await compaction_engine.compact_if_needed(
         snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
     )
     assert result is not None
@@ -526,7 +594,7 @@ async def test_tool_boundary_is_not_split_by_recent_budget() -> None:
 async def test_overflow_retains_entire_final_multi_tool_interval() -> None:
     from camel_harness.llm import ToolResultMessage, ToolUseBlock
 
-    nodes = _log(2).nodes + (
+    nodes = _context_snapshot(2).nodes + (
         ContextNode(
             "calls",
             AssistantMessage(
@@ -539,9 +607,11 @@ async def test_overflow_retains_entire_final_multi_tool_interval() -> None:
     )
     snapshot = ContextSnapshot("result-2", "result-2", nodes)
     adapter = RecordingSummaryLlm()
-    engine = CompactionEngine(LlmClient(adapter), CompactionSettings(keep_recent_tokens=50))
+    compaction_engine = CompactionEngine(
+        llm_client=LlmClient(adapter), compaction_settings=CompactionSettings(keep_recent_tokens=50)
+    )
 
-    result = await engine.compact_if_needed(
+    result = await compaction_engine.compact_if_needed(
         snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
     )
 
@@ -560,16 +630,16 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     from camel_harness.agent.session.jsonl import JsonlSessionStorage
     from camel_harness.agent.tools import ToolExecutor, ToolRegistry
 
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("failed-compaction", tmp_path, "压缩失败")
-    session = sessions.bind("failed-compaction")
-    for node in _log().nodes:
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("failed-compaction", tmp_path, "压缩失败")
+    session = session_manager.bind("failed-compaction")
+    for node in _context_snapshot().nodes:
         await session.append_message(node.message)
     previous = await session.entries()
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.LENGTH])
-    llm = LlmClient(adapter)
-    registry = ToolRegistry()
-    settings = CompactionSettings(
+    llm_client = LlmClient(adapter)
+    tool_registry = ToolRegistry()
+    compaction_settings = CompactionSettings(
         context_window_tokens=4096,
         reserve_tokens=3712,
         keep_recent_tokens=140,
@@ -577,14 +647,17 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
         retry_max_output_tokens=128,
     )
     agent = Agent(
-        session,
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm, settings)),
-        system_prompt="测试提示",
+        session=session,
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="测试提示",
+            compaction_engine=CompactionEngine(
+                llm_client=llm_client, compaction_settings=compaction_settings
+            ),
+        ),
     )
     events: list = []
     agent.subscribe(events.append)

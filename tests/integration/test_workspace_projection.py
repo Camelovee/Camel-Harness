@@ -15,7 +15,7 @@ from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
-def _store(config: Path, **fields: object) -> SettingsStore:
+def _settings_store(config: Path, **fields: object) -> SettingsStore:
     """把测试配置写入临时 config.json 后构造 SettingsStore。"""
 
     import json
@@ -24,27 +24,31 @@ def _store(config: Path, **fields: object) -> SettingsStore:
     return SettingsStore(config)
 
 
-def _services(tmp_path: Path, sessions: SessionManager) -> tuple[RunService, SettingsStore]:
-    store = _store(tmp_path / "config.json")
-    return RunService(_stub_build_agent, sessions, store), store
+def _services(tmp_path: Path, session_manager: SessionManager) -> tuple[RunService, SettingsStore]:
+    settings_store = _settings_store(tmp_path / "config.json")
+    return RunService(
+        build_agent=_stub_build_agent,
+        session_manager=session_manager,
+        settings_store=settings_store,
+    ), settings_store
 
 
-async def _stub_build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
+async def _stub_build_agent(_: str, __: Path, agent_settings: AgentSettings) -> Agent:
     raise AssertionError("该用例不应触发 Agent 创建")
 
 
 async def test_workspaces_are_projected_from_session_directories(tmp_path: Path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     first_workspace = tmp_path / "first"
     second_workspace = tmp_path / "second"
-    await sessions.create("first-session", first_workspace, "第一个会话")
-    await sessions.create("second-session", first_workspace, "第二个会话")
-    await sessions.create("third-session", second_workspace, "第三个会话")
-    await sessions.create(
+    await session_manager.create("first-session", first_workspace, "第一个会话")
+    await session_manager.create("second-session", first_workspace, "第二个会话")
+    await session_manager.create("third-session", second_workspace, "第三个会话")
+    await session_manager.create(
         "sub-session", first_workspace, "子会话", parent_session_id="first-session"
     )
 
-    result = _group_sessions(await sessions.list())
+    result = _group_sessions(await session_manager.list())
 
     grouped = dict(result)
     assert {item.session_id for item in grouped[str(first_workspace.resolve())]} == {
@@ -57,17 +61,21 @@ async def test_workspaces_are_projected_from_session_directories(tmp_path: Path)
 
 
 async def test_session_api_hides_children_and_deletes_them_with_parent(tmp_path: Path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("parent", tmp_path, "父会话")
-    await sessions.create("child", tmp_path, "子会话", parent_session_id="parent")
-    runs, store = _services(tmp_path, sessions)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("parent", tmp_path, "父会话")
+    await session_manager.create("child", tmp_path, "子会话", parent_session_id="parent")
+    run_service, settings_store = _services(tmp_path, session_manager)
     dependencies = HttpDependencies(tmp_path)
     dependencies.bind(
-        runs=runs,
-        sessions=sessions,
-        session_service=SessionService(sessions, runs, store),
-        settings_service=SettingsService(store, sessions, runs),
-        settings=store,
+        run_service=run_service,
+        session_manager=session_manager,
+        session_service=SessionService(
+            session_manager=session_manager, run_service=run_service, settings_store=settings_store
+        ),
+        settings_service=SettingsService(
+            settings_store=settings_store, session_manager=session_manager, run_service=run_service
+        ),
+        settings_store=settings_store,
     )
     app = FastAPI()
     install_exception_handlers(app)
@@ -84,24 +92,28 @@ async def test_session_api_hides_children_and_deletes_them_with_parent(tmp_path:
 
         deleted = await client.delete("/sessions/parent")
         assert deleted.status_code == 204
-        assert await sessions.get("child") is None
+        assert await session_manager.get("child") is None
 
 
 async def test_workspace_selection_uses_injected_platform_function(tmp_path: Path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     selected = tmp_path / "selected"
 
     async def select_workspace() -> Path | None:
         return selected
 
-    runs, store = _services(tmp_path, sessions)
+    run_service, settings_store = _services(tmp_path, session_manager)
     dependencies = HttpDependencies(tmp_path)
     dependencies.bind(
-        runs=runs,
-        sessions=sessions,
-        session_service=SessionService(sessions, runs, store),
-        settings_service=SettingsService(store, sessions, runs),
-        settings=store,
+        run_service=run_service,
+        session_manager=session_manager,
+        session_service=SessionService(
+            session_manager=session_manager, run_service=run_service, settings_store=settings_store
+        ),
+        settings_service=SettingsService(
+            settings_store=settings_store, session_manager=session_manager, run_service=run_service
+        ),
+        settings_store=settings_store,
         select_workspace=select_workspace,
     )
 
@@ -109,15 +121,19 @@ async def test_workspace_selection_uses_injected_platform_function(tmp_path: Pat
 
 
 async def test_new_chat_without_workspace_uses_local_default(tmp_path: Path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    runs, store = _services(tmp_path, sessions)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    run_service, settings_store = _services(tmp_path, session_manager)
     dependencies = HttpDependencies(tmp_path)
     dependencies.bind(
-        runs=runs,
-        sessions=sessions,
-        session_service=SessionService(sessions, runs, store),
-        settings_service=SettingsService(store, sessions, runs),
-        settings=store,
+        run_service=run_service,
+        session_manager=session_manager,
+        session_service=SessionService(
+            session_manager=session_manager, run_service=run_service, settings_store=settings_store
+        ),
+        settings_service=SettingsService(
+            settings_store=settings_store, session_manager=session_manager, run_service=run_service
+        ),
+        settings_store=settings_store,
     )
     app = FastAPI()
     install_exception_handlers(app)

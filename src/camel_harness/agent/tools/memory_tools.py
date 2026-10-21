@@ -28,15 +28,15 @@ class SearchMemoryTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, memories: MemoryStore) -> None:
-        self._memories = memories
+    def __init__(self, memory_store: MemoryStore) -> None:
+        self._memory_store = memory_store
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        selected = call.arguments.get("scope")
-        entries = await self._memories.search(
-            call.arguments["query"],
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        selected = tool_call.arguments.get("scope")
+        entries = await self._memory_store.search(
+            tool_call.arguments["query"],
             scope=memory_scope(selected) if selected is not None else None,
-            limit=call.arguments.get("limit", 5),
+            limit=tool_call.arguments.get("limit", 5),
         )
         items = [
             {
@@ -47,7 +47,7 @@ class SearchMemoryTool(Tool):
             }
             for entry in entries
         ]
-        return ToolResult(call.call_id, call.name, json.dumps(items, ensure_ascii=False))
+        return ToolResult(tool_call.call_id, tool_call.name, json.dumps(items, ensure_ascii=False))
 
 
 class ReadMemoryTool(Tool):
@@ -71,16 +71,16 @@ class ReadMemoryTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, memories: MemoryStore) -> None:
-        self._memories = memories
+    def __init__(self, memory_store: MemoryStore) -> None:
+        self._memory_store = memory_store
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        entry = await self._memories.get(
-            call.arguments["name"], memory_scope(call.arguments["scope"])
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        entry = await self._memory_store.get(
+            tool_call.arguments["name"], memory_scope(tool_call.arguments["scope"])
         )
         if entry is None:
             raise KeyError("记忆不存在")
-        offset, limit = call.arguments.get("offset", 0), call.arguments.get("limit", 400)
+        offset, limit = tool_call.arguments.get("offset", 0), tool_call.arguments.get("limit", 400)
         lines = entry.content.splitlines()
         selected = lines[offset : offset + limit]
         header = {
@@ -97,7 +97,9 @@ class ReadMemoryTool(Tool):
         }
         numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(selected, offset + 1))
         return ToolResult(
-            call.call_id, call.name, json.dumps(header, ensure_ascii=False) + "\n" + numbered
+            tool_call.call_id,
+            tool_call.name,
+            json.dumps(header, ensure_ascii=False) + "\n" + numbered,
         )
 
 
@@ -125,12 +127,12 @@ class SaveMemoryTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, memories: MemoryStore) -> None:
-        self._memories = memories
+    def __init__(self, memory_store: MemoryStore) -> None:
+        self._memory_store = memory_store
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        arguments = call.arguments
-        saved = await self._memories.save(
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        arguments = tool_call.arguments
+        saved = await self._memory_store.save(
             MemoryEntry(
                 arguments["name"],
                 arguments["description"],
@@ -138,12 +140,12 @@ class SaveMemoryTool(Tool):
                 memory_scope(arguments["scope"]),
             ),
             expected_revision=arguments["expected_revision"],
-            session_id=context.session_id,
-            tool_call_id=call.call_id,
+            session_id=tool_context.session_id,
+            tool_call_id=tool_call.call_id,
         )
         return ToolResult(
-            call.call_id,
-            call.name,
+            tool_call.call_id,
+            tool_call.name,
             json.dumps(
                 {"scope": saved.scope, "name": saved.name, "revision": saved.revision},
                 ensure_ascii=False,
@@ -169,28 +171,28 @@ class DeleteMemoryTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, memories: MemoryStore) -> None:
-        self._memories = memories
+    def __init__(self, memory_store: MemoryStore) -> None:
+        self._memory_store = memory_store
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        await self._memories.delete(
-            call.arguments["name"],
-            memory_scope(call.arguments["scope"]),
-            expected_revision=call.arguments["expected_revision"],
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        await self._memory_store.delete(
+            tool_call.arguments["name"],
+            memory_scope(tool_call.arguments["scope"]),
+            expected_revision=tool_call.arguments["expected_revision"],
         )
-        return ToolResult(call.call_id, call.name, "已删除指定版本的记忆")
+        return ToolResult(tool_call.call_id, tool_call.name, "已删除指定版本的记忆")
 
 
 class MemoryToolProvider(ToolProvider):
     """统一发现记忆工具，组合层负责是否注册以及子 Agent 白名单。"""
 
-    def __init__(self, memories: MemoryStore) -> None:
-        self._memories = memories
+    def __init__(self, memory_store: MemoryStore) -> None:
+        self._memory_store = memory_store
 
     async def discover(self) -> tuple[Tool, ...]:
         return (
-            SearchMemoryTool(self._memories),
-            ReadMemoryTool(self._memories),
-            SaveMemoryTool(self._memories),
-            DeleteMemoryTool(self._memories),
+            SearchMemoryTool(self._memory_store),
+            ReadMemoryTool(self._memory_store),
+            SaveMemoryTool(self._memory_store),
+            DeleteMemoryTool(self._memory_store),
         )

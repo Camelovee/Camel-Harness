@@ -99,7 +99,7 @@ class Tool(ABC):
         )
 
     @abstractmethod
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         """执行一次已经通过校验和授权的工具调用。"""
 
         raise NotImplementedError

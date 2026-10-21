@@ -10,6 +10,7 @@ from camel_harness.llm import AssistantMessage, LlmClient, LlmModel, TextBlock
 
 from ..agent import Agent
 from ..context import ContextManager
+from ..context.system_prompt import SUBAGENT_SYSTEM_PROMPTS
 from ..events import AgentEvent
 from ..session import SessionManager
 from ..state import AgentOptions
@@ -66,91 +67,99 @@ class LocalSubagentRunner:
 
     def __init__(
         self,
-        llm: LlmClient,
-        sessions: SessionManager,
-        registry: ToolRegistry,
-        permission: PermissionService,
-        context: ContextManager,
-        options: AgentOptions,
+        llm_client: LlmClient,
+        session_manager: SessionManager,
+        tool_registry: ToolRegistry,
+        permission_service: PermissionService,
+        context_manager: ContextManager,
+        agent_options: AgentOptions,
     ) -> None:
-        self._llm = llm
-        self._sessions = sessions
-        self._registry = registry
-        self._permission = permission
-        self._context = context
-        self._options = options
+        self._llm_client = llm_client
+        self._session_manager = session_manager
+        self._tool_registry = tool_registry
+        self._permission_service = permission_service
+        self._context_manager = context_manager
+        self._agent_options = agent_options
 
-    async def run(self, request: SubagentRequest) -> SubagentResult:
-        allowed = _GENERAL_TOOLS if request.agent_type is SubagentType.GENERAL else _READ_ONLY_TOOLS
+    async def run(self, subagent_request: SubagentRequest) -> SubagentResult:
+        allowed_tool_names = (
+            _GENERAL_TOOLS
+            if subagent_request.agent_type is SubagentType.GENERAL
+            else _READ_ONLY_TOOLS
+        )
         session_id = f"sub-{uuid4().hex}"
-        mode = (
-            request.permission_mode
-            if request.agent_type is SubagentType.GENERAL
+        permission_mode = (
+            subagent_request.permission_mode
+            if subagent_request.agent_type is SubagentType.GENERAL
             else PermissionMode.PLAN
         )
-        system_prompt = (
-            f"你是 {request.agent_type.value} 子 Agent。只完成被委派任务并返回精炼结果。"
-        )
-        await self._sessions.create(
+        system_prompt = SUBAGENT_SYSTEM_PROMPTS[subagent_request.agent_type.value]
+        await self._session_manager.create(
             session_id,
-            request.workspace,
+            subagent_request.workspace,
             "子 Agent",
-            parent_session_id=request.parent_session_id,
-            parent_tool_call_id=request.parent_tool_call_id,
+            parent_session_id=subagent_request.parent_session_id,
+            parent_tool_call_id=subagent_request.parent_tool_call_id,
         )
-        session = self._sessions.bind(session_id)
+        session = self._session_manager.bind(session_id)
 
         async def registered_paths(requested_id: str) -> frozenset[Path]:
             if requested_id != session_id:
                 raise ValueError("结果读取必须使用子 Agent 自身会话")
-            return await self._sessions.tool_result_paths(requested_id)
+            return await self._session_manager.tool_result_paths(requested_id)
 
-        result_storage = FileToolResultStorage(
-            self._sessions.directory, registered_paths=registered_paths
+        tool_result_storage = FileToolResultStorage(
+            self._session_manager.directory, registered_paths=registered_paths
         )
-        selected = self._registry.subset(allowed)
-        registry = ToolRegistry()
-        for definition in selected.llm_definitions():
-            tool = selected.resolve(definition.name)
+        selected_tool_registry = self._tool_registry.subset(allowed_tool_names)
+        tool_registry = ToolRegistry()
+        for tool_definition in selected_tool_registry.llm_definitions():
+            tool = selected_tool_registry.resolve(tool_definition.name)
             # 内置读取工具绑定子会话，其他扩展工具保留注册者提供的实现。
-            registry.register(
-                ReadFileTool(result_storage.resolve_read_path)
+            tool_registry.register(
+                ReadFileTool(tool_result_storage.resolve_read_path)
                 if type(tool) is ReadFileTool
                 else tool
             )
-        executor = ToolExecutor(registry, self._permission, result_storage.normalize)
+        tool_executor = ToolExecutor(
+            tool_registry=tool_registry,
+            permission_service=self._permission_service,
+            normalize_result=tool_result_storage.normalize,
+        )
         agent = Agent(
-            session,
-            request.workspace,
-            self._options,
-            self._llm,
-            registry,
-            executor,
-            self._context,
-            system_prompt=system_prompt,
+            session=session,
+            workspace=subagent_request.workspace,
+            agent_options=self._agent_options,
+            llm_client=self._llm_client,
+            tool_executor=tool_executor,
+            context_manager=self._context_manager.with_system_prompt(system_prompt),
         )
 
         content = ""
         succeeded = False
         error = "子 Agent 未产生终态"
 
-        def collect_text(event: AgentEvent) -> None:
+        def collect_text(agent_event: AgentEvent) -> None:
             nonlocal content, succeeded, error
-            if event.type == "message_end" and isinstance(event.message, AssistantMessage):
+            if agent_event.type == "message_end" and isinstance(
+                agent_event.message, AssistantMessage
+            ):
                 content = "".join(
-                    block.text for block in event.message.content if isinstance(block, TextBlock)
+                    block.text
+                    for block in agent_event.message.content
+                    if isinstance(block, TextBlock)
                 )
-            elif event.type == "agent_end":
-                succeeded = event.status == "completed"
-                error = event.error or f"子 Agent 未完成：{event.stop_reason}"
+            elif agent_event.type == "agent_end":
+                succeeded = agent_event.status == "completed"
+                error = agent_event.error or f"子 Agent 未完成：{agent_event.stop_reason}"
 
         unsubscribe = agent.subscribe(collect_text)
         try:
             await agent.run(
-                request.task,
-                model=request.model,
+                subagent_request.task,
+                model=subagent_request.model,
                 max_turns=8,
-                permission_mode=mode,
+                permission_mode=permission_mode,
             )
         except Exception as exc:
             return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)

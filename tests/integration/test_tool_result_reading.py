@@ -13,24 +13,31 @@ from camel_harness.llm import UserMessage
 async def setup_result(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("parent", workspace, "父会话")
-    session = sessions.bind("parent")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("parent", workspace, "父会话")
+    session = session_manager.bind("parent")
 
     async def registered(session_id):
-        bound = session if session_id == "parent" else sessions.bind(session_id)
+        bound = session if session_id == "parent" else session_manager.bind(session_id)
         return await bound.tool_result_paths()
 
-    store = FileToolResultStorage(
-        sessions.directory, max_inline_chars=5, registered_paths=registered
+    tool_result_storage = FileToolResultStorage(
+        session_manager.directory, max_inline_chars=5, registered_paths=registered
     )
     root = await session.append_message(UserMessage("任务"))
-    context = ToolContext("parent", workspace)
-    result = await store.normalize(
-        ToolResult("call", "run_shell", "第一行\n第二行\n第三行"), context
+    tool_context = ToolContext("parent", workspace)
+    result = await tool_result_storage.normalize(
+        ToolResult("call", "run_shell", "第一行\n第二行\n第三行"), tool_context
     )
     await session.append_message(result.to_message())
-    return sessions, session, store, context, Path(result.metadata["content_ref"]["path"]), root
+    return (
+        session_manager,
+        session,
+        tool_result_storage,
+        tool_context,
+        Path(result.metadata["content_ref"]["path"]),
+        root,
+    )
 
 
 async def test_read_file_pages_registered_result_and_preserves_workspace_access(tmp_path):
@@ -100,27 +107,29 @@ async def test_current_branch_only_and_compaction_keeps_reference_registration(t
 
 
 async def test_parent_child_sibling_references_are_isolated(tmp_path):
-    sessions, _, store, context, parent_path, _ = await setup_result(tmp_path)
+    session_manager, _, store, context, parent_path, _ = await setup_result(tmp_path)
     child_paths = []
     for session_id in ("child", "sibling"):
-        await sessions.create(session_id, context.workspace, "子会话", parent_session_id="parent")
-        child_context = ToolContext(session_id, context.workspace)
-        result = await store.normalize(
-            ToolResult("out", "run_shell", "子会话完整输出"), child_context
+        await session_manager.create(
+            session_id, context.workspace, "子会话", parent_session_id="parent"
         )
-        await sessions.bind(session_id).append_message(result.to_message())
+        tool_context = ToolContext(session_id, context.workspace)
+        result = await store.normalize(
+            ToolResult("out", "run_shell", "子会话完整输出"), tool_context
+        )
+        await session_manager.bind(session_id).append_message(result.to_message())
         child_paths.append(Path(result.metadata["content_ref"]["path"]))
-    child_context = ToolContext("child", context.workspace)
+    tool_context = ToolContext("child", context.workspace)
     tool = ReadFileTool(store.resolve_read_path)
     assert (
         await tool.execute(
-            ToolCall("read", "read_file", {"path": str(child_paths[0])}), child_context
+            ToolCall("read", "read_file", {"path": str(child_paths[0])}), tool_context
         )
     ).content == "1: 子会话完整输出"
     for reader, target in [
         (context, child_paths[0]),
-        (child_context, parent_path),
-        (child_context, child_paths[1]),
+        (tool_context, parent_path),
+        (tool_context, child_paths[1]),
     ]:
         with pytest.raises(ValueError):
             await tool.execute(ToolCall("read", "read_file", {"path": str(target)}), reader)

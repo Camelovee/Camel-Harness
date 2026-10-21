@@ -13,6 +13,7 @@ from camel_harness.llm import (
 from .agent import Agent, CloseHandler
 from .config import AgentSettings
 from .context import CompactionEngine, ContextManager
+from .context.system_prompt import DEFAULT_SYSTEM_PROMPT
 from .resources import MemoryStore, ProjectRules, Skills
 from .session import SessionManager
 from .session.jsonl import JsonlSessionStorage
@@ -42,34 +43,34 @@ class AgentExtensions:
     on_close: tuple[CloseHandler, ...] = ()
 
 
-def build_session_manager(settings: AgentSettings) -> SessionManager:
+def build_session_manager(agent_settings: AgentSettings) -> SessionManager:
     """创建入口层可独立使用的全局 JSONL 会话管理器。"""
 
-    return SessionManager(JsonlSessionStorage(settings.resolved_session_dir()))
+    return SessionManager(JsonlSessionStorage(agent_settings.resolved_session_dir()))
 
 
 async def build_agent(
-    settings: AgentSettings,
+    agent_settings: AgentSettings,
     session_id: str,
     workspace: Path,
-    approval: ApprovalHandler,
-    sessions: SessionManager,
-    extensions: AgentExtensions | None = None,
+    approval_handler: ApprovalHandler,
+    session_manager: SessionManager,
+    agent_extensions: AgentExtensions | None = None,
 ) -> Agent:
     """组装核心运行时；可选 Provider 由入口层经 AgentExtensions 注入。"""
 
-    extensions = extensions or AgentExtensions()
-    metadata = await sessions.get(session_id)
+    agent_extensions = agent_extensions or AgentExtensions()
+    metadata = await session_manager.get(session_id)
     if metadata is None:
         raise KeyError(f"会话不存在：{session_id}")
     if Path(metadata.workspace).resolve() != workspace.resolve():
         raise ValueError("Agent 工作区必须与会话工作区一致")
-    llm = _build_llm_client()
+    llm_client = _build_llm_client()
 
     async def close_resources() -> None:
         """组合层拥有扩展资源，任一资源关闭失败仍尝试关闭其余资源。"""
         error: Exception | None = None
-        for closer in extensions.on_close:
+        for closer in agent_extensions.on_close:
             try:
                 await closer()
             except Exception as exc:
@@ -79,58 +80,59 @@ async def build_agent(
             raise error
 
     try:
-        session = sessions.bind(session_id)
-        result_storage = FileToolResultStorage(
-            sessions.directory, registered_paths=sessions.tool_result_paths
+        session = session_manager.bind(session_id)
+        tool_result_storage = FileToolResultStorage(
+            session_manager.directory, registered_paths=session_manager.tool_result_paths
         )
 
-        registry = ToolRegistry()
-        await registry.register_provider(BuiltinToolProvider(result_storage))
-        for provider in extensions.tool_providers:
-            await registry.register_provider(provider)
+        tool_registry = ToolRegistry()
+        await tool_registry.register_provider(BuiltinToolProvider(tool_result_storage))
+        for provider in agent_extensions.tool_providers:
+            await tool_registry.register_provider(provider)
 
-        permission = PermissionService(approval)
-        executor = ToolExecutor(
-            registry,
-            permission,
-            result_storage.normalize,
+        permission_service = PermissionService(approval_handler)
+        tool_executor = ToolExecutor(
+            tool_registry=tool_registry,
+            permission_service=permission_service,
+            normalize_result=tool_result_storage.normalize,
         )
-        options = AgentOptions(
-            max_output_tokens=settings.max_output_tokens,
-            max_duration_seconds=settings.max_duration_seconds,
-            max_steering_messages=settings.max_steering_messages,
-            max_steering_chars=settings.max_steering_chars,
+        agent_options = AgentOptions(
+            max_output_tokens=agent_settings.max_output_tokens,
+            max_duration_seconds=agent_settings.max_duration_seconds,
+            max_steering_messages=agent_settings.max_steering_messages,
+            max_steering_chars=agent_settings.max_steering_chars,
         )
-        context = ContextManager(
-            CompactionEngine(
-                llm,
-                settings=settings.compaction,
+        context_manager = ContextManager(
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            compaction_engine=CompactionEngine(
+                llm_client=llm_client,
+                compaction_settings=agent_settings.compaction,
             ),
-            ProjectRules(),
-            extensions.skills,
-            extensions.memories,
-            memory_settings=settings.memory,
+            project_rules=ProjectRules(),
+            skills=agent_extensions.skills,
+            memory_store=agent_extensions.memories,
+            memory_settings=agent_settings.memory,
         )
-        if extensions.subagent_provider is not None:
-            subagent = LocalSubagentRunner(
-                llm,
-                sessions,
-                registry,
-                permission,
-                context,
-                options,
+        if agent_extensions.subagent_provider is not None:
+            subagent_runner = LocalSubagentRunner(
+                llm_client=llm_client,
+                session_manager=session_manager,
+                tool_registry=tool_registry,
+                permission_service=permission_service,
+                context_manager=context_manager,
+                agent_options=agent_options,
             )
-            await registry.register_provider(extensions.subagent_provider(subagent.run))
+            await tool_registry.register_provider(
+                agent_extensions.subagent_provider(subagent_runner.run)
+            )
 
         return Agent(
-            session,
-            workspace,
-            options,
-            llm,
-            registry,
-            executor,
-            context,
-            system_prompt="你是一个可靠的 Harness Agent。",
+            session=session,
+            workspace=workspace,
+            agent_options=agent_options,
+            llm_client=llm_client,
+            tool_executor=tool_executor,
+            context_manager=context_manager,
             on_close=close_resources,
         )
     except BaseException:

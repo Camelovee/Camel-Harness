@@ -18,13 +18,15 @@ __all__ = [
 class BuiltinToolProvider(ToolProvider):
     """发现 Harness 自带的工作区工具。"""
 
-    def __init__(self, output_storage: FileToolResultStorage | None = None) -> None:
-        self._output_storage = output_storage
+    def __init__(self, tool_result_storage: FileToolResultStorage | None = None) -> None:
+        self._tool_result_storage = tool_result_storage
 
     async def discover(self) -> tuple[Tool, ...]:
         return (
-            ReadFileTool(self._output_storage.resolve_read_path if self._output_storage else None),
+            ReadFileTool(
+                self._tool_result_storage.resolve_read_path if self._tool_result_storage else None
+            ),
             WriteFileTool(),
             EditFileTool(),
-            RunShellTool(self._output_storage),
+            RunShellTool(self._tool_result_storage),
         )

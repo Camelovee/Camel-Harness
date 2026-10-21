@@ -186,7 +186,7 @@ class LlmAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """把规范请求转换为厂商调用，并返回规范流式事件。"""
 
         raise NotImplementedError

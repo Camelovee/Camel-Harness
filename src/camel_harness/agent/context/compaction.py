@@ -65,11 +65,11 @@ class CompactionEngine:
 
     def __init__(
         self,
-        llm: LlmClient,
-        settings: CompactionSettings | None = None,
+        llm_client: LlmClient,
+        compaction_settings: CompactionSettings | None = None,
     ) -> None:
-        self._llm = llm
-        self._settings = settings or CompactionSettings()
+        self._llm_client = llm_client
+        self._compaction_settings = compaction_settings or CompactionSettings()
 
     async def compact_if_needed(
         self,
@@ -87,25 +87,28 @@ class CompactionEngine:
         estimated_tokens = (
             sum(_message_tokens(message) for message in messages) + context_overhead_tokens
         )
-        if not self._settings.enabled:
+        if not self._compaction_settings.enabled:
             if (
                 trigger is CompactionTrigger.CONTEXT_OVERFLOW
                 or estimated_tokens
-                >= self._settings.context_window_tokens - self._settings.reserve_tokens
+                >= self._compaction_settings.context_window_tokens
+                - self._compaction_settings.reserve_tokens
             ):
                 raise CompactionError("上下文超出安全预算且自动压缩未开启")
             return None
         if (
-            len(surface) < self._settings.min_messages
+            len(surface) < self._compaction_settings.min_messages
             and trigger is not CompactionTrigger.CONTEXT_OVERFLOW
         ):
             if estimated_tokens >= (
-                self._settings.context_window_tokens - self._settings.reserve_tokens
+                self._compaction_settings.context_window_tokens
+                - self._compaction_settings.reserve_tokens
             ):
                 raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
             return None
         if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < (
-            self._settings.context_window_tokens - self._settings.reserve_tokens
+            self._compaction_settings.context_window_tokens
+            - self._compaction_settings.reserve_tokens
         ):
             return None
         result = await self._compact(
@@ -136,7 +139,7 @@ class CompactionEngine:
 
         recent_tokens = 0
         compact_end = len(surface)
-        while compact_end > 0 and recent_tokens < self._settings.keep_recent_tokens:
+        while compact_end > 0 and recent_tokens < self._compaction_settings.keep_recent_tokens:
             compact_end -= 1
             recent_tokens += _message_tokens(surface[compact_end].message)
         # 强制超限恢复时，短消息历史也至少保留最后一个完整消息区间。
@@ -164,7 +167,8 @@ class CompactionEngine:
         if require_reduction and projected_tokens >= tokens_before:
             raise CompactionError("上下文溢出压缩未缩小历史，未提交摘要；请减少输入或调整压缩预算")
         if projected_tokens + context_overhead_tokens >= (
-            self._settings.context_window_tokens - self._settings.reserve_tokens
+            self._compaction_settings.context_window_tokens
+            - self._compaction_settings.reserve_tokens
         ):
             raise CompactionError("压缩后的上下文仍超过安全预算，未提交摘要；请调整近期保留预算")
         return CompactionResult(
@@ -199,9 +203,12 @@ class CompactionEngine:
 
         estimated_input = (len(transcript.encode("utf-8")) + 2) // 3 + 512
         for attempt, maximum in enumerate(
-            (self._settings.max_output_tokens, self._settings.retry_max_output_tokens)
+            (
+                self._compaction_settings.max_output_tokens,
+                self._compaction_settings.retry_max_output_tokens,
+            )
         ):
-            available = self._settings.context_window_tokens - estimated_input
+            available = self._compaction_settings.context_window_tokens - estimated_input
             if available <= 0:
                 raise CompactionError("摘要输入超过模型上下文窗口，未修改历史")
             output_budget = min(maximum, available)
@@ -213,14 +220,14 @@ class CompactionEngine:
                 prompt += "\n首条为之前的历史摘要，请结合新增历史更新它，保留仍有效的约束和待办。"
             if attempt:
                 prompt += "\n上次摘要超过输出上限；这次进一步删去过程细节，不续写上次摘要。"
-            request = LlmRequest(
+            llm_request = LlmRequest(
                 model=model,
                 messages=(UserMessage(transcript),),
                 system_prompt=prompt,
                 max_output_tokens=output_budget,
                 effort=LlmThinkingEffort.LOW,
             )
-            text, reason = await self._generate(request, account)
+            text, reason = await self._generate(llm_request, account)
             if reason is LlmStopReason.STOP:
                 if not text.strip():
                     raise CompactionError("上下文压缩返回空摘要，未修改历史")
@@ -235,7 +242,7 @@ class CompactionEngine:
         raise AssertionError("压缩重试必须有明确终态")
 
     async def _generate(
-        self, request: LlmRequest, on_usage: Callable[[LlmUsage], None]
+        self, llm_request: LlmRequest, on_usage: Callable[[LlmUsage], None]
     ) -> tuple[str, LlmStopReason]:
         """每次请求在 finally 汇报累计用量，失败和取消也不漏计已知统计。"""
 
@@ -245,16 +252,16 @@ class CompactionEngine:
         usage: LlmUsage | None = None
         cancelled = False
         try:
-            async for event in self._llm.stream(request):
-                if isinstance(event, TextDelta):
-                    parts.append(event.text)
-                elif isinstance(event, MessageCompleted):
+            async for llm_event in self._llm_client.stream(llm_request):
+                if isinstance(llm_event, TextDelta):
+                    parts.append(llm_event.text)
+                elif isinstance(llm_event, MessageCompleted):
                     completed = True
-                    completion_reason = event.stop_reason
-                elif isinstance(event, UsageUpdated):
-                    usage = (usage or LlmUsage()).merge(event.usage)
-                elif isinstance(event, StreamFailed):
-                    raise CompactionError(event.error)
+                    completion_reason = llm_event.stop_reason
+                elif isinstance(llm_event, UsageUpdated):
+                    usage = (usage or LlmUsage()).merge(llm_event.usage)
+                elif isinstance(llm_event, StreamFailed):
+                    raise CompactionError(llm_event.error)
         except asyncio.CancelledError:
             cancelled = True
             raise

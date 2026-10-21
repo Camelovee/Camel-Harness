@@ -19,13 +19,13 @@ class ToolRegistry:
     """进程内工具目录，禁止同名工具被静默覆盖。"""
 
     def __init__(self) -> None:
-        self._tools: dict[str, Tool] = {}
+        self._tools_by_name: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
         name = tool.qualified_name
-        if name in self._tools:
+        if name in self._tools_by_name:
             raise ValueError(f"工具已注册：{name}")
-        self._tools[name] = tool
+        self._tools_by_name[name] = tool
 
     async def register_provider(self, provider: ToolProvider) -> None:
         for tool in await provider.discover():
@@ -33,20 +33,20 @@ class ToolRegistry:
 
     def resolve(self, name: str) -> Tool:
         try:
-            return self._tools[name]
+            return self._tools_by_name[name]
         except KeyError as exc:
             raise KeyError(f"未知工具：{name}") from exc
 
     def subset(self, names: frozenset[str]) -> ToolRegistry:
         """为子 Agent 创建只包含显式白名单的隔离工具集。"""
 
-        selected = ToolRegistry()
+        tool_registry = ToolRegistry()
         for name in names:
-            if name in self._tools:
-                selected.register(self._tools[name])
-        return selected
+            if name in self._tools_by_name:
+                tool_registry.register(self._tools_by_name[name])
+        return tool_registry
 
     def llm_definitions(self) -> tuple[ToolDefinition, ...]:
         """返回当前运行时显式注册的全部工具定义。"""
 
-        return tuple(tool.to_definition() for tool in self._tools.values())
+        return tuple(tool.to_definition() for tool in self._tools_by_name.values())

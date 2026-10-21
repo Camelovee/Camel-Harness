@@ -112,14 +112,14 @@ async def test_cancelling_close_waiter_does_not_cancel_mcp_cleanup(tmp_path):
 async def test_mcp_start_failure_remains_observable(tmp_path):
     config = tmp_path / "mcp.json"
     config.write_text("[]", encoding="utf-8")
-    manager = McpManager(tmp_path, config)
+    mcp_manager = McpManager(tmp_path, config)
     with pytest.raises(ValueError, match="顶层"):
-        await manager.start()
-    assert manager._task.done()
+        await mcp_manager.start()
+    assert mcp_manager._task.done()
     with pytest.raises(ValueError, match="顶层"):
-        await manager.discover()
+        await mcp_manager.discover()
     with pytest.raises(ValueError, match="顶层"):
-        await manager.close()
+        await mcp_manager.close()
 
 
 async def test_immediate_start_cancellation_does_not_leave_owner_task(tmp_path):

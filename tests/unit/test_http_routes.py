@@ -12,7 +12,7 @@ from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 
 
-def _store(config: Path, **fields: object) -> SettingsStore:
+def _settings_store(config: Path, **fields: object) -> SettingsStore:
     """把测试配置写入临时 config.json 后构造 SettingsStore。"""
 
     import json
@@ -60,22 +60,28 @@ async def test_http_dependencies_are_published_as_one_complete_set(tmp_path: Pat
     with pytest.raises(RuntimeError, match="尚未完成初始化"):
         dependencies.require_runs()
 
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = _store(tmp_path / "config.json")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    settings_store = _settings_store(tmp_path / "config.json")
 
-    async def build_agent(_: str, __: Path, ___: AgentSettings) -> Agent:
+    async def build_agent(_: str, __: Path, agent_settings: AgentSettings) -> Agent:
         return cast(Agent, object())
 
-    runs = RunService(build_agent, sessions, store)
+    runs = RunService(
+        build_agent=build_agent, session_manager=session_manager, settings_store=settings_store
+    )
     dependencies.bind(
-        runs=runs,
-        sessions=sessions,
-        session_service=SessionService(sessions, runs, store),
-        settings_service=SettingsService(store, sessions, runs),
-        settings=store,
+        run_service=runs,
+        session_manager=session_manager,
+        session_service=SessionService(
+            session_manager=session_manager, run_service=runs, settings_store=settings_store
+        ),
+        settings_service=SettingsService(
+            settings_store=settings_store, session_manager=session_manager, run_service=runs
+        ),
+        settings_store=settings_store,
     )
     assert dependencies.require_runs() is runs
-    assert dependencies.require_sessions() is sessions
+    assert dependencies.require_sessions() is session_manager
 
     await dependencies.close()
     with pytest.raises(RuntimeError, match="尚未完成初始化"):

@@ -47,10 +47,10 @@ class MarkerTool(Tool):
     capabilities = frozenset({"file.write"})
     risk = ToolRisk.WRITE
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        with (context.workspace / "marker.txt").open("a", encoding="utf-8") as stream:
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        with (tool_context.workspace / "marker.txt").open("a", encoding="utf-8") as stream:
             stream.write("执行一次\n")
-        return ToolResult(call.call_id, call.name, "已追加标记")
+        return ToolResult(tool_call.call_id, tool_call.name, "已追加标记")
 
 
 class RecoveryLlm(LlmAdapter):
@@ -68,9 +68,9 @@ class RecoveryLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "fake"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
-        if (request.system_prompt or "").startswith("你负责压缩 Agent"):
-            self.summaries.append(request)
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        if (llm_request.system_prompt or "").startswith("你负责压缩 Agent"):
+            self.summaries.append(llm_request)
             step = self.summary
             usage = LlmUsage(17, 3)
             text = "已完成历史任务，保留用户约束并继续当前任务。"
@@ -78,7 +78,7 @@ class RecoveryLlm(LlmAdapter):
                 text = "巨大摘要" * 2000
         else:
             index = len(self.requests)
-            self.requests.append(request)
+            self.requests.append(llm_request)
             step = self.steps[index]
             usage = LlmUsage(11, 5)
             text = "任务完成"
@@ -104,6 +104,13 @@ class RecoveryLlm(LlmAdapter):
             yield UsageUpdated(usage)
             yield MessageCompleted(LlmStopReason.TOOL_USE)
             return
+        if step == "truncated_tool":
+            yield ToolCallCompleted(
+                ToolUseBlock(f"truncated-{len(self.requests)}", "append_marker", {})
+            )
+            yield UsageUpdated(usage)
+            yield MessageCompleted(LlmStopReason.LENGTH)
+            return
         yield UsageUpdated(usage)
         if step == "blocked":
             self.blocked.set()
@@ -126,9 +133,9 @@ async def _build(
     max_turns: int = 1,
     max_duration: float = 10,
 ) -> tuple[Agent, Session]:
-    manager = SessionManager(JsonlSessionStorage(workspace / "sessions"))
-    await manager.create("overflow", workspace, "超限恢复")
-    session = manager.bind("overflow")
+    session_manager = SessionManager(JsonlSessionStorage(workspace / "sessions"))
+    await session_manager.create("overflow", workspace, "超限恢复")
+    session = session_manager.bind("overflow")
     for index in range(history_count):
         text = f"历史 {index} " + "旧任务已完成，记录约束。" * 60
         await session.append_message(
@@ -136,18 +143,22 @@ async def _build(
             if index % 2 == 0
             else AssistantMessage((TextBlock(text),), LlmStopReason.STOP)
         )
-    llm = LlmClient(adapter)
-    registry = ToolRegistry()
-    registry.register(MarkerTool())
+    llm_client = LlmClient(adapter)
+    tool_registry = ToolRegistry()
+    tool_registry.register(MarkerTool())
     agent = Agent(
-        session,
-        workspace,
-        AgentOptions(max_duration_seconds=max_duration),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm, CompactionSettings(enabled=enabled)), ProjectRules()),
-        system_prompt="基础提示",
+        session=session,
+        workspace=workspace,
+        agent_options=AgentOptions(max_duration_seconds=max_duration),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="基础提示",
+            compaction_engine=CompactionEngine(
+                llm_client=llm_client, compaction_settings=CompactionSettings(enabled=enabled)
+            ),
+            project_rules=ProjectRules(),
+        ),
     )
     return agent, session
 
@@ -428,6 +439,59 @@ async def test_new_run_gets_fresh_recovery_allowance(tmp_path):
         )
         == 2
     )
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        ["truncated_tool", "overflow", "truncated_tool"],
+        ["overflow", "truncated_tool", "truncated_tool"],
+    ],
+)
+async def test_length_and_overflow_recoveries_have_independent_run_allowances(
+    tmp_path: Path, steps: list[str]
+) -> None:
+    adapter = RecoveryLlm(steps)
+    agent, session = await _build(tmp_path, adapter)
+    events = []
+    agent.subscribe(events.append)
+
+    await agent.run("继续任务", max_turns=3, model=_MODEL)
+
+    _assert_terminal(events, "failed", StopReason.MODEL_LENGTH)
+    assert len(adapter.requests) == 3
+    assert len(adapter.summaries) == 1
+    tool_results = [
+        message for message in await session.messages() if isinstance(message, ToolResultMessage)
+    ]
+    assert len(tool_results) == 2
+    assert all(message.is_error for message in tool_results)
+    assert not (tmp_path / "marker.txt").exists()
+
+
+@pytest.mark.parametrize("restart", ["run", "resume"])
+async def test_new_run_or_resume_resets_both_recovery_allowances(
+    tmp_path: Path, restart: str
+) -> None:
+    adapter = RecoveryLlm(["overflow", "truncated_tool", "overflow", "truncated_tool", "complete"])
+    agent, _ = await _build(tmp_path, adapter)
+    events = []
+    agent.subscribe(events.append)
+
+    await agent.run("第一个任务" * 100, max_turns=1, model=_MODEL)
+    _assert_terminal(events, "failed", StopReason.MAX_TURNS)
+    assert len(adapter.requests) == 2
+    events.clear()
+
+    if restart == "resume":
+        await agent.resume(max_turns=2, model=_MODEL)
+    else:
+        await agent.run("新任务", max_turns=2, model=_MODEL)
+
+    _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
+    assert len(adapter.requests) == 5
+    assert len(adapter.summaries) == 2
+    assert not (tmp_path / "marker.txt").exists()
 
 
 async def test_recovery_uses_selected_branch_and_does_not_merge_siblings(tmp_path):

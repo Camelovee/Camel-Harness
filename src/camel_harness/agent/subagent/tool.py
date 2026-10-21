@@ -29,37 +29,39 @@ class DelegateTaskTool(Tool):
     risk = ToolRisk.EXTERNAL
     timeout_seconds = 300
 
-    def __init__(self, runner: SubagentRunner) -> None:
-        self._runner = runner
+    def __init__(self, subagent_runner: SubagentRunner) -> None:
+        self._subagent_runner = subagent_runner
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        if context.model is None:
-            return ToolResult(call.call_id, call.name, "委派缺少模型上下文", is_error=True)
-        result = await self._runner(
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        if tool_context.model is None:
+            return ToolResult(
+                tool_call.call_id, tool_call.name, "委派缺少模型上下文", is_error=True
+            )
+        subagent_result = await self._subagent_runner(
             SubagentRequest(
-                task=str(call.arguments["task"]),
-                agent_type=SubagentType(str(call.arguments["agent_type"])),
-                workspace=context.workspace,
-                permission_mode=context.permission_mode,
-                parent_session_id=context.session_id,
-                parent_tool_call_id=call.call_id,
-                model=context.model,
+                task=str(tool_call.arguments["task"]),
+                agent_type=SubagentType(str(tool_call.arguments["agent_type"])),
+                workspace=tool_context.workspace,
+                permission_mode=tool_context.permission_mode,
+                parent_session_id=tool_context.session_id,
+                parent_tool_call_id=tool_call.call_id,
+                model=tool_context.model,
             )
         )
         return ToolResult(
-            call.call_id,
-            call.name,
-            result.content,
-            is_error=not result.succeeded,
-            metadata={"subagent_session_id": result.session_id},
+            tool_call.call_id,
+            tool_call.name,
+            subagent_result.content,
+            is_error=not subagent_result.succeeded,
+            metadata={"subagent_session_id": subagent_result.session_id},
         )
 
 
 class SubagentToolProvider(ToolProvider):
     """提供唯一的子 Agent 委派工具。"""
 
-    def __init__(self, runner: SubagentRunner) -> None:
-        self._runner = runner
+    def __init__(self, subagent_runner: SubagentRunner) -> None:
+        self._subagent_runner = subagent_runner
 
     async def discover(self) -> tuple[Tool, ...]:
-        return (DelegateTaskTool(self._runner),)
+        return (DelegateTaskTool(self._subagent_runner),)

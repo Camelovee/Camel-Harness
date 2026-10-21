@@ -10,16 +10,17 @@ from camel_harness.agent.tools.filesystem import EditFileTool, WriteFileTool
 
 async def test_write_reports_utf8_bytes_and_preserves_permissions(tmp_path):
     path = tmp_path / "nested" / "sample.txt"
-    context = ToolContext("session", tmp_path)
+    tool_context = ToolContext("session", tmp_path)
     result = await WriteFileTool().execute(
-        ToolCall("write", "write_file", {"path": "nested/sample.txt", "content": "中文"}), context
+        ToolCall("write", "write_file", {"path": "nested/sample.txt", "content": "中文"}),
+        tool_context,
     )
     assert "6 字节" in result.content
     assert path.read_text() == "中文"
     path.chmod(0o754)
     await WriteFileTool().execute(
         ToolCall("write-again", "write_file", {"path": "nested/sample.txt", "content": "新内容"}),
-        context,
+        tool_context,
     )
     assert path.stat().st_mode & 0o777 == 0o754
     assert not list(path.parent.glob("*.tmp"))
@@ -45,19 +46,19 @@ async def test_replace_failure_preserves_original_and_cleans_temporary(tmp_path,
 async def test_concurrent_edits_do_not_lose_updates(tmp_path):
     path = tmp_path / "sample.txt"
     path.write_text("first second")
-    context = ToolContext("session", tmp_path)
+    tool_context = ToolContext("session", tmp_path)
     await asyncio.gather(
         EditFileTool().execute(
             ToolCall(
                 "first", "edit_file", {"path": path.name, "old_text": "first", "new_text": "一"}
             ),
-            context,
+            tool_context,
         ),
         EditFileTool().execute(
             ToolCall(
                 "second", "edit_file", {"path": path.name, "old_text": "second", "new_text": "二"}
             ),
-            context,
+            tool_context,
         ),
     )
     assert path.read_text() == "一 二"
@@ -79,11 +80,12 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
         return original(path, content)
 
     monkeypatch.setattr(filesystem, "_atomic_write", delayed_write)
-    context = ToolContext("session", tmp_path)
+    tool_context = ToolContext("session", tmp_path)
     tool = WriteFileTool()
     first = asyncio.create_task(
         tool.execute(
-            ToolCall("first", "write_file", {"path": "sample.txt", "content": "第一份"}), context
+            ToolCall("first", "write_file", {"path": "sample.txt", "content": "第一份"}),
+            tool_context,
         )
     )
     second = None
@@ -93,7 +95,7 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
         second = asyncio.create_task(
             tool.execute(
                 ToolCall("second", "write_file", {"path": "./sample.txt", "content": "第二份"}),
-                context,
+                tool_context,
             )
         )
         await asyncio.sleep(0.02)
@@ -122,17 +124,18 @@ async def test_cancelled_queued_write_never_modifies_file(tmp_path, monkeypatch)
         return original(path, content)
 
     monkeypatch.setattr(filesystem, "_atomic_write", delayed_write)
-    context = ToolContext("session", tmp_path)
+    tool_context = ToolContext("session", tmp_path)
     tool = WriteFileTool()
     first = asyncio.create_task(
         tool.execute(
-            ToolCall("first", "write_file", {"path": "sample.txt", "content": "保留"}), context
+            ToolCall("first", "write_file", {"path": "sample.txt", "content": "保留"}), tool_context
         )
     )
     assert await asyncio.to_thread(started.wait, 2)
     second = asyncio.create_task(
         tool.execute(
-            ToolCall("second", "write_file", {"path": "sample.txt", "content": "不能写入"}), context
+            ToolCall("second", "write_file", {"path": "sample.txt", "content": "不能写入"}),
+            tool_context,
         )
     )
     try:

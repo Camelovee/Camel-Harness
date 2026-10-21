@@ -26,7 +26,7 @@ from camel_harness.llm import (
 )
 
 
-def _store(config: Path, **fields: object) -> SettingsStore:
+def _settings_store(config: Path, **fields: object) -> SettingsStore:
     """把测试配置写入临时 config.json 后构造 SettingsStore。"""
 
     import json
@@ -49,7 +49,7 @@ class GatedLlm(LlmAdapter):
     def provider_id(self) -> str:
         return "anthropic"
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         self.started.set()
         await self.finish.wait()
         yield TextDelta(text="独立完成")
@@ -57,8 +57,8 @@ class GatedLlm(LlmAdapter):
 
 
 async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = _store(
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    settings_store = _settings_store(
         tmp_path / "config.json",
         models=[
             {
@@ -76,22 +76,24 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
     async def build(session_id: str, workspace: Path, _: AgentSettings) -> Agent:
         adapter = GatedLlm()
         adapters[session_id] = adapter
-        llm = LlmClient(adapter)
-        registry = ToolRegistry()
+        llm_client = LlmClient(adapter)
+        tool_registry = ToolRegistry()
         return Agent(
-            sessions.bind(session_id),
-            workspace,
-            AgentOptions(),
-            llm,
-            registry,
-            ToolExecutor(registry),
-            ContextManager(CompactionEngine(llm)),
-            system_prompt="测试提示",
+            session=session_manager.bind(session_id),
+            workspace=workspace,
+            agent_options=AgentOptions(),
+            llm_client=llm_client,
+            tool_executor=ToolExecutor(tool_registry=tool_registry),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
         )
 
-    runs = RunService(build, sessions, store)
+    run_service = RunService(
+        build_agent=build, session_manager=session_manager, settings_store=settings_store
+    )
     for session_id in ("a", "b"):
-        await sessions.create(session_id, tmp_path, session_id)
+        await session_manager.create(session_id, tmp_path, session_id)
     tasks: list[asyncio.Task[list[dict]]] = []
 
     async def consume(stream: AsyncIterator[str]) -> list[dict]:
@@ -99,7 +101,7 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
 
     try:
         for session_id in ("a", "b"):
-            async with runs.acquire(session_id) as (agent, _model):
+            async with run_service.acquire(session_id) as (agent, _model):
                 stream = await open_agent_sse(
                     agent, lambda agent=agent: agent.run("独立任务", model=_MODEL)
                 )
@@ -107,30 +109,30 @@ async def test_sessions_stream_concurrently_and_abort_independently(tmp_path: Pa
         await asyncio.wait_for(
             asyncio.gather(*(adapter.started.wait() for adapter in adapters.values())), 2
         )
-        assert runs.is_running("a") and runs.is_running("b")
+        assert run_service.is_running("a") and run_service.is_running("b")
         with pytest.raises(AgentBusyError):
-            async with runs.acquire("a") as _unused:
+            async with run_service.acquire("a") as _unused:
                 pytest.fail("同一会话不能启动第二个 Run")
-        await runs.abort("a")
+        await run_service.abort("a")
         first = await asyncio.wait_for(tasks[0], 2)
         assert first[-1]["status"] == "cancelled"
-        assert runs.is_running("b")
+        assert run_service.is_running("b")
         adapters["b"].finish.set()
         second = await asyncio.wait_for(tasks[1], 2)
         assert second[-1]["status"] == "completed"
         assert {event["session_id"] for event in first} == {"a"}
         assert {event["session_id"] for event in second} == {"b"}
-        assert len(await sessions.bind("a").messages()) == 1
-        assert len(await sessions.bind("b").messages()) == 2
+        assert len(await session_manager.bind("a").messages()) == 1
+        assert len(await session_manager.bind("b").messages()) == 2
     finally:
-        await runs.close()
+        await run_service.close()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize("operation", ["update", "delete", "delete_model"])
 async def test_session_mutations_wait_for_startup_and_recheck_active_run(tmp_path, operation):
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = _store(
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    settings_store = _settings_store(
         tmp_path / "config.json",
         models=[
             {
@@ -143,36 +145,42 @@ async def test_session_mutations_wait_for_startup_and_recheck_active_run(tmp_pat
         ],
         default_model_id="m1",
     )
-    await store.add_model(
+    await settings_store.add_model(
         ModelInput(name="备用", provider="anthropic", model="fake-other", api_key="test-only-key")
     )
-    snapshot = await store.snapshot()
+    snapshot = await settings_store.snapshot()
     model_id = str(snapshot["models"][1]["id"])
-    await sessions.create("locked", tmp_path, "互斥测试")
-    await sessions.update("locked", model_id=model_id)
+    await session_manager.create("locked", tmp_path, "互斥测试")
+    await session_manager.update("locked", model_id=model_id)
     adapter = GatedLlm()
 
     async def build(session_id, workspace, settings):
-        llm = LlmClient(adapter)
-        registry = ToolRegistry()
+        llm_client = LlmClient(adapter)
+        tool_registry = ToolRegistry()
         return Agent(
-            sessions.bind(session_id),
-            workspace,
-            AgentOptions(),
-            llm,
-            registry,
-            ToolExecutor(registry),
-            ContextManager(CompactionEngine(llm)),
-            system_prompt="测试提示",
+            session=session_manager.bind(session_id),
+            workspace=workspace,
+            agent_options=AgentOptions(),
+            llm_client=llm_client,
+            tool_executor=ToolExecutor(tool_registry=tool_registry),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
         )
 
-    runs = RunService(build, sessions, store)
-    service = SessionService(sessions, runs, store)
-    settings_service = SettingsService(store, sessions, runs)
+    run_service = RunService(
+        build_agent=build, session_manager=session_manager, settings_store=settings_store
+    )
+    service = SessionService(
+        session_manager=session_manager, run_service=run_service, settings_store=settings_store
+    )
+    settings_service = SettingsService(
+        settings_store=settings_store, session_manager=session_manager, run_service=run_service
+    )
     task = None
     mutation = None
     try:
-        async with runs.acquire("locked") as (agent, _model):
+        async with run_service.acquire("locked") as (agent, _model):
             if operation == "update":
                 change = service.update("locked", model_id="environment")
             elif operation == "delete":
@@ -186,17 +194,17 @@ async def test_session_mutations_wait_for_startup_and_recheck_active_run(tmp_pat
             await asyncio.wait_for(adapter.started.wait(), 1)
         with pytest.raises(AgentBusyError):
             await asyncio.wait_for(mutation, 1)
-        assert (await sessions.get("locked")).model_id == model_id
-        assert (await store.resolve(model_id)).model == "fake-other"
+        assert (await session_manager.get("locked")).model_id == model_id
+        assert (await settings_store.resolve(model_id)).model == "fake-other"
     finally:
-        await runs.close()
+        await run_service.close()
         await asyncio.gather(*(item for item in (task, mutation) if item), return_exceptions=True)
 
 
 async def test_delete_holds_startup_lock_until_session_is_removed(tmp_path, monkeypatch):
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("delete", tmp_path, "删除测试")
-    store = _store(
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("delete", tmp_path, "删除测试")
+    settings_store = _settings_store(
         tmp_path / "config.json",
         models=[
             {
@@ -213,20 +221,24 @@ async def test_delete_holds_startup_lock_until_session_is_removed(tmp_path, monk
     async def forbidden_build(*args):
         pytest.fail("删除过程不得重建 Agent")
 
-    runs = RunService(forbidden_build, sessions, store)
-    service = SessionService(sessions, runs, store)
+    run_service = RunService(
+        build_agent=forbidden_build, session_manager=session_manager, settings_store=settings_store
+    )
+    service = SessionService(
+        session_manager=session_manager, run_service=run_service, settings_store=settings_store
+    )
     deleting, proceed = asyncio.Event(), asyncio.Event()
-    original_delete = sessions.delete
+    original_delete = session_manager.delete
 
     async def gated_delete(session_id):
         deleting.set()
         await proceed.wait()
         return await original_delete(session_id)
 
-    monkeypatch.setattr(sessions, "delete", gated_delete)
+    monkeypatch.setattr(session_manager, "delete", gated_delete)
     delete = asyncio.create_task(service.delete_cascade("delete"))
     await deleting.wait()
-    lookup = asyncio.create_task(runs.require_agent("delete"))
+    lookup = asyncio.create_task(run_service.require_agent("delete"))
     await asyncio.sleep(0)
     assert not lookup.done()
     proceed.set()

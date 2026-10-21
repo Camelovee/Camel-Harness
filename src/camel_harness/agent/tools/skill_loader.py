@@ -27,15 +27,17 @@ class LoadSkillTool(Tool):
     def __init__(self, skills: Skills) -> None:
         self._skills = skills
 
-    async def execute(self, call: ToolCall, context: ToolContext) -> ToolResult:
-        del context
-        name = str(call.arguments["name"])
-        relative_path = call.arguments.get("path")
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        del tool_context
+        name = str(tool_call.arguments["name"])
+        relative_path = tool_call.arguments.get("path")
         if relative_path is None:
             content = await self._skills.load(name)
-            return ToolResult(call.call_id, call.name, f"# Skill: {name}\n\n{content}")
+            return ToolResult(tool_call.call_id, tool_call.name, f"# Skill: {name}\n\n{content}")
         content = await self._skills.read_resource(name, str(relative_path))
-        return ToolResult(call.call_id, call.name, f"# {name}/{relative_path}\n\n{content}")
+        return ToolResult(
+            tool_call.call_id, tool_call.name, f"# {name}/{relative_path}\n\n{content}"
+        )
 
 
 class SkillToolProvider(ToolProvider):

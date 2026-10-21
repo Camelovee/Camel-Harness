@@ -15,20 +15,20 @@ from camel_harness.agent.tools.file_result_storage import (
 async def test_large_result_is_offloaded_to_session(tmp_path, depth) -> None:
     root = tmp_path / "global" / "sessions"
     workspace = tmp_path / "workspace"
-    sessions = SessionManager(JsonlSessionStorage(root))
+    session_manager = SessionManager(JsonlSessionStorage(root))
     parent = None
     expected = root
     for index in range(depth + 1):
         session_id = f"session-{index}"
-        await sessions.create(session_id, workspace, "测试", parent_session_id=parent)
+        await session_manager.create(session_id, workspace, "测试", parent_session_id=parent)
         expected = expected / session_id
         if index < depth:
             expected = expected / "subagents"
         parent = session_id
     # 重新加载仍能找到嵌套目录，不依赖创建时的内存缓存。
-    sessions = SessionManager(JsonlSessionStorage(root))
-    store = FileToolResultStorage(sessions.directory, max_inline_chars=5)
-    result = await store.normalize(
+    session_manager = SessionManager(JsonlSessionStorage(root))
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=5)
+    result = await tool_result_storage.normalize(
         ToolResult("call-1", "read_file", "123456789"),
         ToolContext(session_id, workspace),
     )
@@ -46,19 +46,21 @@ async def test_large_result_is_offloaded_to_session(tmp_path, depth) -> None:
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
     assert not (workspace / ".camel").exists()
-    await sessions.delete("session-0")
+    await session_manager.delete("session-0")
     assert not path.exists()
     assert not (root / "session-0").exists()
 
 
 async def test_large_results_do_not_overwrite_repeated_call_ids(tmp_path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("session-1", tmp_path, "测试")
-    store = FileToolResultStorage(sessions.directory, max_inline_chars=5)
-    context = ToolContext("session-1", tmp_path)
-    first = await store.normalize(ToolResult("../call", "read_file", "123456"), context)
-    second = await store.normalize(
-        ToolResult("../call", "read_file", "abcdef", True, {"source": "测试"}), context
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("session-1", tmp_path, "测试")
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=5)
+    tool_context = ToolContext("session-1", tmp_path)
+    first = await tool_result_storage.normalize(
+        ToolResult("../call", "read_file", "123456"), tool_context
+    )
+    second = await tool_result_storage.normalize(
+        ToolResult("../call", "read_file", "abcdef", True, {"source": "测试"}), tool_context
     )
     assert first.metadata["content_ref"] != second.metadata["content_ref"]
     assert Path(first.metadata["content_ref"]["path"]).read_text() == "123456"
@@ -68,25 +70,28 @@ async def test_large_results_do_not_overwrite_repeated_call_ids(tmp_path) -> Non
 
 
 async def test_small_result_does_not_create_files(tmp_path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = FileToolResultStorage(sessions.directory, max_inline_chars=5)
-    original = ToolResult("call", "read_file", "12345")
-    assert await store.normalize(original, ToolContext("missing", tmp_path)) is original
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=5)
+    tool_result = ToolResult("call", "read_file", "12345")
+    assert (
+        await tool_result_storage.normalize(tool_result, ToolContext("missing", tmp_path))
+        is tool_result
+    )
     assert not (tmp_path / "sessions").exists()
 
 
 async def test_result_storage_rejects_missing_session_and_symlink(tmp_path) -> None:
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    store = FileToolResultStorage(sessions.directory, max_inline_chars=5)
-    result = ToolResult("call", "read_file", "123456")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=5)
+    tool_result = ToolResult("call", "read_file", "123456")
     with pytest.raises(ToolResultStorageError, match="会话不存在") as missing:
-        await store.normalize(result, ToolContext("missing", tmp_path))
+        await tool_result_storage.normalize(tool_result, ToolContext("missing", tmp_path))
     assert isinstance(missing.value.__cause__, KeyError)
-    await sessions.create("session-1", tmp_path, "测试")
+    await session_manager.create("session-1", tmp_path, "测试")
     outside = tmp_path / "outside"
     outside.mkdir()
-    (sessions.directory("session-1") / "tool-results").symlink_to(outside)
+    (session_manager.directory("session-1") / "tool-results").symlink_to(outside)
     with pytest.raises(ToolResultStorageError, match="符号链接") as symlink:
-        await store.normalize(result, ToolContext("session-1", tmp_path))
+        await tool_result_storage.normalize(tool_result, ToolContext("session-1", tmp_path))
     assert isinstance(symlink.value.__cause__, ValueError)
     assert not list(outside.iterdir())

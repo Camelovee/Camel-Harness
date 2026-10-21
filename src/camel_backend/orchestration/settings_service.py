@@ -12,22 +12,24 @@ class SettingsService:
 
     def __init__(
         self,
-        store: SettingsStore,
-        sessions: SessionManager,
-        runs: RunService,
+        settings_store: SettingsStore,
+        session_manager: SessionManager,
+        run_service: RunService,
     ) -> None:
-        self._store = store
-        self._sessions = sessions
-        self._runs = runs
+        self._settings_store = settings_store
+        self._session_manager = session_manager
+        self._run_service = run_service
 
     async def delete_model(self, model_id: str) -> None:
         """删除模型配置并把使用它的会话改绑到新的默认模型。"""
-        async with self._runs.mutation():
-            related = [item for item in await self._sessions.list() if item.model_id == model_id]
-            if any(self._runs.is_running(item.session_id) for item in related):
+        async with self._run_service.mutation():
+            related = [
+                item for item in await self._session_manager.list() if item.model_id == model_id
+            ]
+            if any(self._run_service.is_running(item.session_id) for item in related):
                 raise AgentBusyError("使用此模型的会话运行结束后才能删除")
-            await self._store.delete_model(model_id)
-            replacement = str((await self._store.snapshot())["default_model_id"])
+            await self._settings_store.delete_model(model_id)
+            replacement = str((await self._settings_store.snapshot())["default_model_id"])
             for metadata in related:
-                await self._runs.release_idle_locked(metadata.session_id)
-                await self._sessions.update(metadata.session_id, model_id=replacement)
+                await self._run_service.release_idle_locked(metadata.session_id)
+                await self._session_manager.update(metadata.session_id, model_id=replacement)

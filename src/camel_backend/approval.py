@@ -23,45 +23,45 @@ class WebApproval(ApprovalHandler):
 
     def __init__(self, timeout_seconds: float = 300) -> None:
         self._timeout_seconds = timeout_seconds
-        self._pending: dict[str, _Pending] = {}
+        self._approvals_by_request_id: dict[str, _Pending] = {}
         self._lock = asyncio.Lock()
 
     async def approve(
         self,
-        request: PermissionRequest,
+        permission_request: PermissionRequest,
         reason: str,
         on_pending: ApprovalPendingListener | None = None,
     ) -> bool:
-        request_id = request.request_id or uuid4().hex
-        item = PendingApproval(
+        request_id = permission_request.request_id or uuid4().hex
+        pending_approval = PendingApproval(
             request_id=request_id,
-            tool_name=request.tool_name,
-            capabilities=request.capabilities,
-            risk=request.risk,
-            arguments=dict(request.arguments),
+            tool_name=permission_request.tool_name,
+            capabilities=permission_request.capabilities,
+            risk=permission_request.risk,
+            arguments=dict(permission_request.arguments),
             reason=reason,
-            session_id=request.session_id,
+            session_id=permission_request.session_id,
         )
-        future = asyncio.get_running_loop().create_future()
+        decision_future = asyncio.get_running_loop().create_future()
         async with self._lock:
-            self._pending[request_id] = _Pending(item, future)
+            self._approvals_by_request_id[request_id] = _Pending(pending_approval, decision_future)
         try:
             if on_pending is not None:
-                await on_pending(request_id, request, reason)
-            return await asyncio.wait_for(future, timeout=self._timeout_seconds)
+                await on_pending(request_id, permission_request, reason)
+            return await asyncio.wait_for(decision_future, timeout=self._timeout_seconds)
         except TimeoutError:
             return False
         finally:
             async with self._lock:
-                self._pending.pop(request_id, None)
+                self._approvals_by_request_id.pop(request_id, None)
 
     async def list_pending(self) -> tuple[PendingApproval, ...]:
         async with self._lock:
-            return tuple(pending.item for pending in self._pending.values())
+            return tuple(pending.item for pending in self._approvals_by_request_id.values())
 
     async def resolve(self, request_id: str, approved: bool) -> bool:
         async with self._lock:
-            pending = self._pending.get(request_id)
+            pending = self._approvals_by_request_id.get(request_id)
             if pending is None or pending.future.done():
                 return False
             pending.future.set_result(approved)

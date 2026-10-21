@@ -50,32 +50,34 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
         def provider_id(self):
             return "fake"
 
-        async def stream(self, request):
+        async def stream(self, llm_request):
             self.calls += 1
             yield ToolCallCompleted(ToolUseBlock("shell", "run_shell", {"command": command}))
             yield MessageCompleted(LlmStopReason.TOOL_USE)
 
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("failure", tmp_path, "归档失败测试")
-    storage = FileToolResultStorage(sessions.directory, max_inline_chars=1)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("failure", tmp_path, "归档失败测试")
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=1)
 
     def fail_write(*args):
         raise OSError("模拟磁盘写入失败")
 
-    monkeypatch.setattr(storage, "_write", fail_write)
-    registry = ToolRegistry()
-    await registry.register_provider(BuiltinToolProvider(storage))
+    monkeypatch.setattr(tool_result_storage, "_write", fail_write)
+    tool_registry = ToolRegistry()
+    await tool_registry.register_provider(BuiltinToolProvider(tool_result_storage))
     adapter = ShellLlm()
-    llm = LlmClient(adapter)
+    llm_client = LlmClient(adapter)
     agent = Agent(
-        sessions.bind("failure"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry, normalize_result=storage.normalize),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="测试提示",
+        session=session_manager.bind("failure"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(
+            tool_registry=tool_registry, normalize_result=tool_result_storage.normalize
+        ),
+        context_manager=ContextManager(
+            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events = []
     agent.subscribe(events.append)
@@ -88,7 +90,7 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
     assert sum(event.type == "agent_end" for event in events) == 1
     results = [
         message
-        for message in await sessions.bind("failure").messages()
+        for message in await session_manager.bind("failure").messages()
         if isinstance(message, ToolResultMessage)
     ]
     assert len(results) == 1 and results[0].is_error
@@ -96,16 +98,16 @@ async def test_shell_archive_failure_ends_run_without_repeating_side_effect(
 
 
 async def test_plain_result_storage_failure_uses_specific_error(tmp_path, monkeypatch):
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("failure", tmp_path, "测试")
-    storage = FileToolResultStorage(sessions.directory, max_inline_chars=1)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("failure", tmp_path, "测试")
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=1)
 
     def failed_write(*args):
         raise OSError("模拟磁盘故障")
 
-    monkeypatch.setattr(storage, "_write", failed_write)
+    monkeypatch.setattr(tool_result_storage, "_write", failed_write)
     with pytest.raises(ToolResultStorageError) as failure:
-        await storage.normalize(
+        await tool_result_storage.normalize(
             ToolResult("call", "read_file", "结果"), ToolContext("failure", tmp_path)
         )
     assert isinstance(failure.value.__cause__, OSError)
@@ -114,11 +116,11 @@ async def test_plain_result_storage_failure_uses_specific_error(tmp_path, monkey
 async def test_cancelled_plain_archive_waits_for_thread_and_removes_unreferenced_file(
     tmp_path, monkeypatch
 ):
-    sessions = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await sessions.create("cancel", tmp_path, "测试")
-    storage = FileToolResultStorage(sessions.directory, max_inline_chars=1)
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("cancel", tmp_path, "测试")
+    tool_result_storage = FileToolResultStorage(session_manager.directory, max_inline_chars=1)
     entered, release = threading.Event(), threading.Event()
-    original = storage._write
+    original = tool_result_storage._write
     paths: list[Path] = []
 
     def delayed_write(*args):
@@ -128,9 +130,11 @@ async def test_cancelled_plain_archive_waits_for_thread_and_removes_unreferenced
         paths.append(path)
         return path
 
-    monkeypatch.setattr(storage, "_write", delayed_write)
+    monkeypatch.setattr(tool_result_storage, "_write", delayed_write)
     task = asyncio.create_task(
-        storage.normalize(ToolResult("call", "read_file", "结果"), ToolContext("cancel", tmp_path))
+        tool_result_storage.normalize(
+            ToolResult("call", "read_file", "结果"), ToolContext("cancel", tmp_path)
+        )
     )
     await asyncio.wait_for(asyncio.to_thread(entered.wait), 2)
     task.cancel()

@@ -31,7 +31,7 @@ class TwoChunkLlm(LlmAdapter):
 
     """输出两个文本增量，用于观察生成器暂停时的持久化状态。"""
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         yield TextDelta(text="你")
         yield TextDelta(text="好")
         yield MessageCompleted(LlmStopReason.STOP, model=None)
@@ -44,27 +44,27 @@ class InterruptedLlm(LlmAdapter):
 
     """发送一个增量后中断，用于验证不完整消息不会落盘。"""
 
-    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+    async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         yield TextDelta(text="未完成")
         raise ConnectionError("流中断")
 
 
 async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path) -> None:
     root = tmp_path / "global-sessions"
-    sessions = SessionManager(JsonlSessionStorage(root))
-    registry = ToolRegistry()
-    llm = LlmClient(TwoChunkLlm())
-    context = ContextManager(CompactionEngine(llm))
-    await sessions.create("session-1", tmp_path, "测试批量存储")
+    session_manager = SessionManager(JsonlSessionStorage(root))
+    tool_registry = ToolRegistry()
+    llm_client = LlmClient(TwoChunkLlm())
+    context_manager = ContextManager(
+        system_prompt="system", compaction_engine=CompactionEngine(llm_client=llm_client)
+    )
+    await session_manager.create("session-1", tmp_path, "测试批量存储")
     agent = Agent(
-        sessions.bind("session-1"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        context,
-        system_prompt="system",
+        session=session_manager.bind("session-1"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=context_manager,
     )
     events: list = []
     first_delta = asyncio.Event()
@@ -73,7 +73,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
     async def observe(event) -> None:
         events.append(event)
         if event.type == "message_end":
-            assert event.message in await sessions.bind("session-1").messages()
+            assert event.message in await session_manager.bind("session-1").messages()
         if (
             event.type == "message_update"
             and event.assistant_event.type == LlmStreamEventType.TEXT_DELTA
@@ -89,7 +89,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
 
     assert first.type == "message_update"
     assert first.assistant_event.text == "你"
-    before_completion = await sessions.bind("session-1").messages()
+    before_completion = await session_manager.bind("session-1").messages()
     assert [message.role for message in before_completion] == ["user"]
 
     release.set()
@@ -98,7 +98,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
 
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
     assert [event.type for event in events[-2:]] == ["turn_end", "agent_end"]
-    persisted = await sessions.bind("session-1").messages()
+    persisted = await session_manager.bind("session-1").messages()
     assert [message.role for message in persisted] == [
         "user",
         "assistant",
@@ -110,7 +110,7 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
     stored_lines = (root / "session-1" / "session.jsonl").read_text("utf-8").splitlines()
     assert len(stored_lines) == 3
     assert all("stream_event_recorded" not in line for line in stored_lines)
-    metadata = await sessions.get("session-1")
+    metadata = await session_manager.get("session-1")
     assert metadata is not None
     assert metadata.name == "测试批量存储"
     assert metadata.workspace == str(tmp_path.resolve())
@@ -121,20 +121,20 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     """Provider 异常终止时只能保留已完整接收的 user 消息。"""
 
     root = tmp_path / "global-sessions"
-    sessions = SessionManager(JsonlSessionStorage(root))
-    registry = ToolRegistry()
-    llm = LlmClient(InterruptedLlm())
-    context = ContextManager(CompactionEngine(llm))
-    await sessions.create("session-failed", tmp_path, "测试失败流")
+    session_manager = SessionManager(JsonlSessionStorage(root))
+    tool_registry = ToolRegistry()
+    llm_client = LlmClient(InterruptedLlm())
+    context_manager = ContextManager(
+        system_prompt="system", compaction_engine=CompactionEngine(llm_client=llm_client)
+    )
+    await session_manager.create("session-failed", tmp_path, "测试失败流")
     agent = Agent(
-        sessions.bind("session-failed"),
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        context,
-        system_prompt="system",
+        session=session_manager.bind("session-failed"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=context_manager,
     )
     events: list = []
     unsubscribe = agent.subscribe(events.append)
@@ -148,15 +148,15 @@ async def test_interrupted_llm_stream_does_not_persist_partial_assistant(tmp_pat
     assert failed.status == "failed"
     assert failed.error == "流中断"
 
-    persisted = await sessions.bind("session-failed").messages()
+    persisted = await session_manager.bind("session-failed").messages()
     assert [message.role for message in persisted] == ["user"]
 
 
 async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkeypatch) -> None:
     """落盘失败不得让外部订阅者误认为 assistant 消息已经完成保存。"""
-    manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    await manager.create("session-1", tmp_path, "保存失败")
-    session = manager.bind("session-1")
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("session-1", tmp_path, "保存失败")
+    session = session_manager.bind("session-1")
     append_message = session.append_message
 
     async def fail_assistant(message) -> None:
@@ -165,17 +165,17 @@ async def test_failed_save_is_not_reported_as_completed_message(tmp_path, monkey
         await append_message(message)
 
     monkeypatch.setattr(session, "append_message", fail_assistant)
-    registry = ToolRegistry()
-    llm = LlmClient(TwoChunkLlm())
+    tool_registry = ToolRegistry()
+    llm_client = LlmClient(TwoChunkLlm())
     agent = Agent(
-        session,
-        tmp_path,
-        AgentOptions(),
-        llm,
-        registry,
-        ToolExecutor(registry),
-        ContextManager(CompactionEngine(llm)),
-        system_prompt="system",
+        session=session,
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=llm_client,
+        tool_executor=ToolExecutor(tool_registry=tool_registry),
+        context_manager=ContextManager(
+            system_prompt="system", compaction_engine=CompactionEngine(llm_client=llm_client)
+        ),
     )
     events: list = []
     agent.subscribe(events.append)
