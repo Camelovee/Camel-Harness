@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from camel_harness.agent.context import (
     ContextResourceError,
 )
 from camel_harness.agent.context.compaction import CompactionError
+from camel_harness.agent.context.token_counting import estimate_message_tokens
 from camel_harness.agent.resources import (
     MemoryEntry,
     MemoryStore,
@@ -242,6 +244,74 @@ async def test_basic_compaction_skips_history_below_pressure() -> None:
     assert result is None
 
 
+async def test_usage_controls_pressure_but_cut_and_tokens_before_use_content_estimates() -> None:
+    snapshot = _context_snapshot()
+    last_message = snapshot.nodes[-1].message
+    assert isinstance(last_message, AssistantMessage)
+    last_message = replace(
+        last_message, provider=_MODEL.provider, model=_MODEL.model, usage=LlmUsage(100, 20)
+    )
+    snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
+    compaction_engine = _compaction_engine(threshold=600)
+    assert (
+        await compaction_engine.compact_if_needed(snapshot, _MODEL, context_overhead_tokens=500)
+        is None
+    )
+
+    last_message = replace(last_message, usage=LlmUsage(5000, 100))
+    snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
+    result = await compaction_engine.compact_if_needed(snapshot, _MODEL)
+    assert result is not None
+    assert result.first_kept_entry_id == "entry-6"
+    assert result.tokens_before == sum(
+        estimate_message_tokens(message) for message in snapshot.messages
+    )
+    assert result.tokens_before != 5100
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_usage_guards_capacity_with_compression_disabled_or_short_history(
+    enabled: bool,
+) -> None:
+    compaction_engine = CompactionEngine(
+        llm_client=LlmClient(SummaryLlm()),
+        compaction_settings=CompactionSettings(
+            enabled=enabled,
+            context_window_tokens=4096,
+            reserve_tokens=2048,
+            keep_recent_tokens=128,
+            max_output_tokens=64,
+            retry_max_output_tokens=128,
+        ),
+    )
+    answer = AssistantMessage(
+        (TextBlock("结果"),),
+        LlmStopReason.STOP,
+        provider=_MODEL.provider,
+        model=_MODEL.model,
+        usage=LlmUsage(2048, 1),
+    )
+    snapshot = ContextSnapshot(nodes=(ContextNode("answer", answer),))
+    with pytest.raises(CompactionError, match="安全预算|完整消息"):
+        await compaction_engine.compact_if_needed(snapshot, _MODEL)
+    snapshot = replace(
+        snapshot, nodes=(ContextNode("answer", replace(answer, usage=LlmUsage(100, 20))),)
+    )
+    assert await compaction_engine.compact_if_needed(snapshot, _MODEL) is None
+
+
+async def test_projected_capacity_still_counts_current_prompt_after_usage_trigger() -> None:
+    snapshot = _context_snapshot()
+    last_message = snapshot.nodes[-1].message
+    assert isinstance(last_message, AssistantMessage)
+    last_message = replace(
+        last_message, provider=_MODEL.provider, model=_MODEL.model, usage=LlmUsage(1000, 20)
+    )
+    snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
+    with pytest.raises(CompactionError, match="仍超过安全预算"):
+        await _compaction_engine().compact_if_needed(snapshot, _MODEL, context_overhead_tokens=384)
+
+
 async def test_short_history_cannot_bypass_context_capacity_check():
     snapshot = ContextSnapshot("entry", "entry", (ContextNode("entry", UserMessage("。" * 5000)),))
     with pytest.raises(CompactionError, match="没有足够"):
@@ -361,7 +431,7 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
 
 def test_compaction_budget_excludes_response_audit_and_tool_details() -> None:
     """审计元数据不属于模型输入，不应影响压缩触发或摘要文字。"""
-    from camel_harness.agent.context.compaction import _model_message_dict
+    from camel_harness.agent.context.token_counting import model_message_dict
     from camel_harness.llm import LlmUsage, ToolResultMessage
 
     message = AssistantMessage(
@@ -371,7 +441,7 @@ def test_compaction_budget_excludes_response_audit_and_tool_details() -> None:
         model="model",
         usage=LlmUsage(100, 20),
     )
-    assert _model_message_dict(message) == {
+    assert model_message_dict(message) == {
         "role": "assistant",
         "content": [{"type": "text", "text": "回答"}],
         "stop_reason": "stop",
@@ -379,7 +449,7 @@ def test_compaction_budget_excludes_response_audit_and_tool_details() -> None:
     tool = ToolResultMessage(
         "call", "read_file", "预览", details={"content_ref": {"path": "private"}}
     )
-    assert "details" not in _model_message_dict(tool)
+    assert "details" not in model_message_dict(tool)
 
 
 class ScriptedSummaryLlm(RecordingSummaryLlm):

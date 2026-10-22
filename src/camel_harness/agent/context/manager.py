@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,7 @@ from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session.events import ContextSnapshot
 from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
+from .token_counting import estimate_context_overhead_tokens, estimate_text_tokens
 
 
 class ContextResourceError(RuntimeError):
@@ -155,9 +155,7 @@ class ContextManager:
             for block in choices:
                 candidate = f"{memory_context}\n\n{block}"
                 # 与既有上下文开销采用相同的 UTF-8 估算，包含标题与读取提示。
-                if (
-                    len(candidate.encode("utf-8")) + 2
-                ) // 3 <= self._memory_settings.context_tokens:
+                if estimate_text_tokens(candidate) <= self._memory_settings.context_tokens:
                     memory_context = candidate
                     included = True
                     break
@@ -175,14 +173,7 @@ class ContextManager:
     ) -> CompactionResult | None:
         """根据只读 ContextSnapshot 生成压缩计划，不执行会话持久化。"""
 
-        tool_text = json.dumps(
-            [
-                {"name": tool.name, "description": tool.description, "schema": tool.input_schema}
-                for tool in tool_definitions
-            ],
-            ensure_ascii=False,
-        )
-        overhead = (len((system_prompt + tool_text).encode("utf-8")) + 2) // 3
+        overhead = estimate_context_overhead_tokens(system_prompt, tool_definitions)
         return await self._compaction_engine.compact_if_needed(
             snapshot,
             model,

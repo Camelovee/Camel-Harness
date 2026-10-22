@@ -96,6 +96,8 @@ class ContextSnapshot:
     leaf_id: str | None = None
     revision: str | None = None
     nodes: tuple[ContextNode, ...] = ()
+    # 仅投影到内存；此前节点的 usage 基于压缩前历史，不再代表当前上下文。
+    usage_start_index: int = 0
 
     @property
     def messages(self) -> tuple[Message, ...]:
@@ -143,6 +145,7 @@ def project_context(
         None,
     )
     nodes: list[ContextNode] = []
+    usage_start_index = 0
     for entry in path:
         if isinstance(entry, SessionMessageEvent):
             nodes.append(ContextNode(entry.id, entry.message))
@@ -161,7 +164,13 @@ def project_context(
                 ContextNode(entry.id, UserMessage(f"[Compacted History]\n\n{entry.summary}")),
                 *nodes[kept:],
             ]
-    return ContextSnapshot(path[-1].id if path else None, revision, tuple(nodes))
+            usage_start_index = len(nodes)
+    return ContextSnapshot(
+        leaf_id=path[-1].id if path else None,
+        revision=revision,
+        nodes=tuple(nodes),
+        usage_start_index=usage_start_index,
+    )
 
 
 def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:

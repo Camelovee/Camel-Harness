@@ -18,12 +18,17 @@ from camel_harness.llm import (
     Message,
     MessageCompleted,
     StreamFailed,
-    TextBlock,
     TextDelta,
     ToolResultMessage,
-    ToolUseBlock,
     UsageUpdated,
     UserMessage,
+)
+
+from .token_counting import (
+    estimate_context_tokens,
+    estimate_message_tokens,
+    estimate_text_tokens,
+    model_message_dict,
 )
 
 
@@ -83,10 +88,9 @@ class CompactionEngine:
         """达到压力后总结较早消息，并返回压缩计划。"""
 
         surface = snapshot.nodes
-        messages = tuple(node.message for node in surface)
-        estimated_tokens = (
-            sum(_message_tokens(message) for message in messages) + context_overhead_tokens
-        )
+        estimated_tokens = estimate_context_tokens(
+            snapshot, model, context_overhead_tokens=context_overhead_tokens
+        ).total_tokens
         if not self._compaction_settings.enabled:
             if (
                 trigger is CompactionTrigger.CONTEXT_OVERFLOW
@@ -141,7 +145,7 @@ class CompactionEngine:
         compact_end = len(surface)
         while compact_end > 0 and recent_tokens < self._compaction_settings.keep_recent_tokens:
             compact_end -= 1
-            recent_tokens += _message_tokens(surface[compact_end].message)
+            recent_tokens += estimate_message_tokens(surface[compact_end].message)
         # 强制超限恢复时，短消息历史也至少保留最后一个完整消息区间。
         if compact_end < 2:
             compact_end = len(surface) - 1
@@ -161,9 +165,11 @@ class CompactionEngine:
         selected = surface[:compact_end]
         replaced = tuple(node.message for node in selected)
         summary, usage = await self._summarize(model, replaced, on_usage)
-        projected_tokens = _message_tokens(UserMessage("[Compacted History]\n\n" + summary))
-        projected_tokens += sum(_message_tokens(node.message) for node in surface[compact_end:])
-        tokens_before = sum(_message_tokens(node.message) for node in surface)
+        projected_tokens = estimate_message_tokens(UserMessage("[Compacted History]\n\n" + summary))
+        projected_tokens += sum(
+            estimate_message_tokens(node.message) for node in surface[compact_end:]
+        )
+        tokens_before = sum(estimate_message_tokens(node.message) for node in surface)
         if require_reduction and projected_tokens >= tokens_before:
             raise CompactionError("上下文溢出压缩未缩小历史，未提交摘要；请减少输入或调整压缩预算")
         if projected_tokens + context_overhead_tokens >= (
@@ -187,7 +193,7 @@ class CompactionEngine:
         """通过统一 LLM Client 生成摘要，不把厂商协议泄漏到 Agent。"""
 
         transcript = "\n".join(
-            json.dumps(_model_message_dict(message), ensure_ascii=False, separators=(",", ":"))
+            json.dumps(model_message_dict(message), ensure_ascii=False, separators=(",", ":"))
             for message in messages
         )
         previous_summary = isinstance(messages[0], UserMessage) and messages[0].content.startswith(
@@ -201,7 +207,7 @@ class CompactionEngine:
             if on_usage is not None:
                 on_usage(usage)
 
-        estimated_input = (len(transcript.encode("utf-8")) + 2) // 3 + 512
+        estimated_input = estimate_text_tokens(transcript) + 512
         for attempt, maximum in enumerate(
             (
                 self._compaction_settings.max_output_tokens,
@@ -296,40 +302,3 @@ def _sum_usage(previous: LlmUsage | None, current: LlmUsage) -> LlmUsage:
         first, second = getattr(previous, field), getattr(current, field)
         values[field] = None if first is None or second is None else first + second
     return LlmUsage(**values)
-
-
-def _message_tokens(message: Message) -> int:
-    """按 UTF-8 字节保守估算中英文历史；不是厂商精确 tokenizer。"""
-
-    return (
-        len(json.dumps(_model_message_dict(message), ensure_ascii=False).encode("utf-8")) + 2
-    ) // 3
-
-
-def _model_message_dict(message: Message) -> dict[str, object]:
-    """投影用于摘要模型的消息，过滤只供 UI 回放的 reasoning 块。"""
-
-    if isinstance(message, UserMessage):
-        return {"role": "user", "content": message.content}
-    if isinstance(message, ToolResultMessage):
-        return {
-            "role": "toolResult",
-            "call_id": message.call_id,
-            "name": message.name,
-            "content": message.content,
-            "is_error": message.is_error,
-        }
-    content: list[dict[str, object]] = []
-    for block in message.content:
-        if isinstance(block, TextBlock):
-            content.append({"type": "text", "text": block.text})
-        elif isinstance(block, ToolUseBlock):
-            content.append(
-                {
-                    "type": "tool_use",
-                    "call_id": block.call_id,
-                    "name": block.name,
-                    "arguments": block.arguments,
-                }
-            )
-    return {"role": "assistant", "content": content, "stop_reason": message.stop_reason.value}

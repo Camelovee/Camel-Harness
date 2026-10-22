@@ -1,10 +1,15 @@
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
 from camel_harness.agent import Agent, AgentOptions
 from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.context.token_counting import (
+    estimate_context_tokens,
+    estimate_message_tokens,
+)
 from camel_harness.agent.session import SessionCompactionEvent, SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import ToolExecutor, ToolRegistry
@@ -113,6 +118,76 @@ async def test_compaction_and_append_stay_on_selected_branch(tmp_path) -> None:
         UserMessage("共同起点"),
         UserMessage("B 的近期消息"),
     )
+
+
+async def test_usage_boundary_survives_compactions_branches_and_session_reload(
+    tmp_path: Path,
+) -> None:
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path))
+    await session_manager.create("usage", tmp_path, "用量边界")
+    session = session_manager.bind("usage")
+    await session.append_message(UserMessage("较早任务"))
+    kept_entry_id = await session.append_message(UserMessage("近期任务"))
+    old_answer = AssistantMessage(
+        (TextBlock("近期回答"),),
+        LlmStopReason.STOP,
+        provider=_MODEL.provider,
+        model=_MODEL.model,
+        usage=LlmUsage(5000, 100),
+    )
+    old_answer_id = await session.append_message(old_answer)
+    snapshot = await session.context_snapshot()
+    assert snapshot.usage_start_index == 0
+    assert estimate_context_tokens(snapshot, _MODEL).total_tokens == 5100
+    snapshot = await session.compact(
+        "第一次摘要", kept_entry_id, snapshot=snapshot, usage=LlmUsage(9000, 500)
+    )
+    first_compaction_id = snapshot.leaf_id
+    assert snapshot.usage_start_index == len(snapshot.nodes) == 3
+    assert estimate_context_tokens(snapshot, _MODEL).last_usage_index is None
+
+    # 重新读取日志时应重建边界，摘要请求的 usage 也不能成为任务请求的基数。
+    restarted_session = SessionManager(JsonlSessionStorage(tmp_path)).bind("usage")
+    reloaded_snapshot = await restarted_session.context_snapshot()
+    assert reloaded_snapshot == snapshot
+    estimate = estimate_context_tokens(reloaded_snapshot, _MODEL, context_overhead_tokens=50)
+    assert estimate.total_tokens == 50 + sum(
+        estimate_message_tokens(message) for message in snapshot.messages
+    )
+    assert estimate.usage_tokens == 0
+
+    # 切回未压缩分支时可继续使用该分支的 usage，不受其他分支的压缩影响。
+    old_snapshot = await restarted_session.branch(old_answer_id)
+    assert old_snapshot.usage_start_index == 0
+    assert estimate_context_tokens(old_snapshot, _MODEL).total_tokens == 5100
+    await restarted_session.branch(first_compaction_id)
+    following_id = await restarted_session.append_message(UserMessage("压缩后继续"))
+    assert (
+        estimate_context_tokens(await restarted_session.context_snapshot(), _MODEL).last_usage_index
+        is None
+    )
+    new_answer = AssistantMessage(
+        (TextBlock("新回答"),),
+        LlmStopReason.STOP,
+        provider=_MODEL.provider,
+        model=_MODEL.model,
+        usage=LlmUsage(300, 30),
+    )
+    await restarted_session.append_message(new_answer)
+    snapshot = await restarted_session.context_snapshot()
+    assert estimate_context_tokens(snapshot, _MODEL).total_tokens == 330
+    assert estimate_context_tokens(snapshot, _MODEL).last_usage_index == 4
+
+    snapshot = await restarted_session.compact("第二次摘要", following_id, snapshot=snapshot)
+    assert snapshot.usage_start_index == len(snapshot.nodes) == 3
+    assert estimate_context_tokens(snapshot, _MODEL).last_usage_index is None
+    await restarted_session.append_message(new_answer)
+    snapshot = await SessionManager(JsonlSessionStorage(tmp_path)).bind("usage").context_snapshot()
+    assert snapshot.usage_start_index == 3
+    assert estimate_context_tokens(snapshot, _MODEL).last_usage_index == 3
+    assert estimate_context_tokens(snapshot, _MODEL).total_tokens == 330
+    payload = (session_manager.directory("usage") / "session.jsonl").read_text("utf-8")
+    assert "usage_start_index" not in payload and "usageStartIndex" not in payload
 
 
 async def test_changed_branch_rejects_old_compaction_plan_without_writing(tmp_path) -> None:
