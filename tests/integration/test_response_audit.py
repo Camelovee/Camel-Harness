@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -97,7 +98,8 @@ async def test_model_usage_and_large_result_reference_survive_restart(tmp_path) 
     assert reference["size_bytes"] == len(path.read_bytes())
     assert reference["original_chars"] == len(path.read_text("utf-8"))
     assert reference["preview_chars"] == 5
-    assert path.read_text("utf-8") == "1: 大结果中文内容"
+    revision = hashlib.sha256("大结果中文内容".encode()).hexdigest()
+    assert path.read_text("utf-8") == f"文件版本：{revision}\n1: 大结果中文内容"
     assert (await restarted.context_snapshot()).messages == messages
     for event in events:
         if event.type == "message_end" and event.message.role in {"assistant", "toolResult"}:

@@ -154,3 +154,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 @media (max-width: 900px) { body { min-width: 0; }.app-shell { grid-template-columns: 240px minmax(0, 1fr); }.main-header { padding: 0 18px; }.messages-inner, .approval-message, .composer-box, .composer-hint { width: calc(100% - 32px); } }
 .settings-config { border: 1px solid #dfe3eb; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
 .settings-config-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.approval-execution { margin: 10px 0; min-width: 0; }
+.approval-execution strong { font-size: 11px; }
+.approval-execution pre { margin: 5px 0 12px; padding: 8px 10px; border-radius: 5px; background: rgba(255, 255, 255, .65); color: #7d6b59; font: 11px/1.55 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

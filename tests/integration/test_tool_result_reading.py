@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -55,11 +56,14 @@ async def test_read_file_pages_registered_result_and_preserves_workspace_access(
         ),
         context,
     )
-    assert result.content == "2: 第二行"
+    revision = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert result.content == f"文件版本：{revision}\n2: 第二行"
+    assert result.metadata["file_revision"] == revision
     (context.workspace / "normal.txt").write_text("正常文件", encoding="utf-8")
+    normal_revision = hashlib.sha256("正常文件".encode()).hexdigest()
     assert (
         await tool.execute(ToolCall("read", "read_file", {"path": "normal.txt"}), context)
-    ).content == "1: 正常文件"
+    ).content == f"文件版本：{normal_revision}\n1: 正常文件"
     with pytest.raises(ValueError, match="工作区"):
         await ReadFileTool().execute(ToolCall("read", "read_file", {"path": str(path)}), context)
 
@@ -121,11 +125,12 @@ async def test_parent_child_sibling_references_are_isolated(tmp_path):
         child_paths.append(Path(result.metadata["content_ref"]["path"]))
     tool_context = ToolContext("child", context.workspace)
     tool = ReadFileTool(store.resolve_read_path)
+    revision = hashlib.sha256(child_paths[0].read_bytes()).hexdigest()
     assert (
         await tool.execute(
             ToolCall("read", "read_file", {"path": str(child_paths[0])}), tool_context
         )
-    ).content == "1: 子会话完整输出"
+    ).content == f"文件版本：{revision}\n1: 子会话完整输出"
     for reader, target in [
         (context, child_paths[0]),
         (tool_context, parent_path),

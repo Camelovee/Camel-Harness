@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
+from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
 
 _mutations: dict[Path, tuple[asyncio.Lock, int]] = {}
 
@@ -69,7 +70,7 @@ def resolve_in_workspace(workspace: Path, raw_path: str) -> Path:
     try:
         candidate.relative_to(workspace.resolve())
     except ValueError as exc:
-        raise ValueError("路径超出工作区") from exc
+        raise ToolNotExecutedError("路径超出工作区") from exc
     return candidate
 
 
@@ -77,14 +78,18 @@ def _check_memory_write(workspace: Path, path: Path) -> None:
     """通用文件工具不能绕过记忆审批，包含符号链接的规范路径别名。"""
     roots = (workspace.resolve() / ".camel" / "memory", Path.home() / ".camel" / "memory")
     if any(path.is_relative_to(root.resolve()) for root in roots):
-        raise ValueError("记忆目录只能通过需审批的 save_memory/delete_memory 修改")
+        raise ToolNotExecutedError("记忆目录只能通过需审批的 save_memory/delete_memory 修改")
 
 
 class ReadFileTool(Tool):
     """读取工作区内 UTF-8 文本文件。"""
 
     name = "read_file"
-    description = "读取工作区文件或当前会话已登记的工具结果引用，可指定起始行和最大行数。"
+    description = (
+        "读取工作区文件或当前会话已登记的工具结果引用，可指定起始行和最大行数。"
+        "返回完整文件原始字节的 SHA-256 版本，write_file 覆盖前必须读取并理解已有内容。"
+        "分页版本对应完整文件，不代表已展示全部正文。"
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -112,11 +117,18 @@ class ReadFileTool(Tool):
             path = await self._result_path_resolver(tool_context.session_id, raw_path)
         start = int(tool_call.arguments.get("start_line", 1))
         limit = int(tool_call.arguments.get("max_lines", 400))
-        text = await asyncio.to_thread(path.read_text, "utf-8")
+        data = await asyncio.to_thread(path.read_bytes)
+        revision = hashlib.sha256(data).hexdigest()
+        text = data.decode("utf-8")
         lines = text.splitlines()
         selected = lines[start - 1 : start - 1 + limit]
         numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(selected, start=start))
-        return ToolResult(tool_call.call_id, tool_call.name, numbered)
+        return ToolResult(
+            tool_call.call_id,
+            tool_call.name,
+            f"文件版本：{revision}\n{numbered}",
+            metadata={"file_revision": revision},
+        )
 
 
 class WriteFileTool(Tool):
@@ -126,6 +138,8 @@ class WriteFileTool(Tool):
     description = (
         "创建或完整覆盖工作区内 UTF-8 文件，自动创建父目录。"
         "仅用于新文件或完整重写；局部修改优先使用 edit_file。"
+        "新建使用 expected_revision='0'；覆盖前读取并理解原文件，携带读取到的 SHA-256 版本。"
+        "版本冲突时重新读取并决定修改，不自动重复覆盖。"
         "content 必须完整且适合单次输出额度，大文件请分阶段构建，禁止省略内容。"
     )
     parameters = {
@@ -133,8 +147,9 @@ class WriteFileTool(Tool):
         "properties": {
             "path": {"type": "string", "minLength": 1},
             "content": {"type": "string"},
+            "expected_revision": {"type": "string", "pattern": "^(0|[a-f0-9]{64})$"},
         },
-        "required": ["path", "content"],
+        "required": ["path", "content", "expected_revision"],
         "additionalProperties": False,
     }
     capabilities = frozenset({"filesystem.write"})
@@ -145,11 +160,29 @@ class WriteFileTool(Tool):
         _check_memory_write(tool_context.workspace, path)
         content = str(tool_call.arguments["content"])
 
-        size = await _mutate_file(path, lambda: _atomic_write(path, content))
+        expected_revision = tool_call.arguments.get("expected_revision")
+        if not isinstance(expected_revision, str):
+            raise ToolNotExecutedError("覆盖校验缺少 expected_revision；请先读取文件版本")
+
+        def write() -> int:
+            try:
+                current_revision = hashlib.sha256(path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                current_revision = "0"
+            if current_revision != expected_revision:
+                raise ToolNotExecutedError(
+                    "文件版本冲突：文件已变化，请重新读取并决定修改，未执行覆盖"
+                )
+            return _atomic_write(path, content)
+
+        size = await _mutate_file(path, write)
+        revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return ToolResult(
             tool_call.call_id,
             tool_call.name,
-            f"已写入 {path.relative_to(tool_context.workspace)}（{size} 字节）",
+            f"已写入 {path.relative_to(tool_context.workspace)}（{size} 字节）\n"
+            f"文件版本：{revision}",
+            metadata={"file_revision": revision},
         )
 
 

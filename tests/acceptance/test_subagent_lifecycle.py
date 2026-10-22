@@ -273,7 +273,9 @@ async def test_child_reads_its_own_archived_result(tmp_path):
                 assert isinstance(result, ToolResultMessage)
                 path = result.details["content_ref"]["path"]
                 yield ToolCallCompleted(
-                    ToolUseBlock("reference", "read_file", {"path": path, "max_lines": 1})
+                    ToolUseBlock(
+                        "reference", "read_file", {"path": path, "start_line": 2, "max_lines": 1}
+                    )
                 )
                 yield MessageCompleted(LlmStopReason.TOOL_USE)
             else:

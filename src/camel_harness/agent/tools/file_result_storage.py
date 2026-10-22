@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from ..platform_io import is_link
-from .types import ToolContext, ToolResult
+from .types import UNKNOWN_EXECUTION_NOTICE, ToolContext, ToolExecutionStatus, ToolResult
 
 _SAFE_PART = re.compile(r"[^A-Za-z0-9_-]+")
 
@@ -63,7 +63,11 @@ class FileToolResultStorage:
         except Exception as exc:
             raise ToolResultStorageError(f"工具结果归档失败：{exc}") from exc
         reference = str(path)
-        preview = tool_result.content[: self._max_inline_chars]
+        preview_chars = self._max_inline_chars
+        if tool_result.metadata.get("execution_status") == ToolExecutionStatus.UNKNOWN:
+            # 未知结果的核验说明必须完整保留，即使配置的预览上限更小。
+            preview_chars = max(preview_chars, len(UNKNOWN_EXECUTION_NOTICE))
+        preview = tool_result.content[:preview_chars]
         metadata = {
             **tool_result.metadata,
             "content_ref": {

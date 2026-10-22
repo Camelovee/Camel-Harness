@@ -756,6 +756,7 @@ class Agent:
                         risk=permission_request.risk,
                         arguments=permission_request.arguments,
                         reason=reason,
+                        execution_context=dict(permission_request.execution_context),
                     )
                 )
 

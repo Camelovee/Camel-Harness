@@ -176,6 +176,7 @@ class ApprovalRequestedEvent(TurnEventBase):
     risk: str
     arguments: dict[str, Any]
     reason: str
+    execution_context: dict[str, str] = field(default_factory=dict)
     type: Literal["approval_requested"] = field(default="approval_requested", init=False)
 
 

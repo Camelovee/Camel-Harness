@@ -166,6 +166,7 @@ function projectApproval(
     risk: event.risk,
     arguments: event.arguments,
     reason: event.reason,
+    execution_context: event.execution_context,
     status: "pending",
   };
   context.setMessages((current) =>

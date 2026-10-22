@@ -12,7 +12,15 @@ from typing import BinaryIO, cast
 
 from ..platform_io import IS_WINDOWS
 from .file_result_storage import FileToolResultStorage
-from .types import Tool, ToolCall, ToolContext, ToolResult, ToolRisk
+from .types import (
+    Tool,
+    ToolCall,
+    ToolContext,
+    ToolExecutionStatus,
+    ToolNotExecutedError,
+    ToolResult,
+    ToolRisk,
+)
 
 _DANGEROUS_SHELL_PATTERNS = (
     re.compile(r"(^|[;&|]\s*)rm\s+(-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r)\b"),
@@ -48,38 +56,48 @@ class RunShellTool(Tool):
     def __init__(self, tool_result_storage: FileToolResultStorage | None = None) -> None:
         self._tool_result_storage = tool_result_storage
 
+    def approval_context(self, tool_call: ToolCall, tool_context: ToolContext) -> dict[str, str]:
+        """审批与执行使用相同目录和命令构造逻辑。"""
+
+        return {
+            "working_directory": str(tool_context.workspace.resolve()),
+            "command": _build_shell_command(str(tool_call.arguments["command"])),
+        }
+
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         command = str(tool_call.arguments["command"])
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
             return ToolResult(
                 tool_call.call_id, tool_call.name, "危险命令已被安全规则阻止", is_error=True
-            )
+            ).with_execution_status(ToolExecutionStatus.NOT_EXECUTED)
         timeout = float(tool_call.arguments.get("timeout_seconds", 30))
         with tempfile.TemporaryFile() as output_file:
             output = cast(BinaryIO, output_file)
             environment = os.environ.copy()
             if IS_WINDOWS:
                 # cmd 和 Python 子进程输出统一 UTF-8，结果归档无需猜测本机代码页。
-                command = f"chcp 65001 >nul & {command}"
                 environment["PYTHONIOENCODING"] = "utf-8"
-            process = await asyncio.create_subprocess_shell(
-                command,
-                cwd=tool_context.workspace,
-                stdout=output,
-                stderr=asyncio.subprocess.STDOUT,
-                env=environment,
-                start_new_session=not IS_WINDOWS,
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                if IS_WINDOWS
-                else 0,
-            )
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    _build_shell_command(command),
+                    cwd=tool_context.workspace.resolve(),
+                    stdout=output,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=environment,
+                    start_new_session=not IS_WINDOWS,
+                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                    if IS_WINDOWS
+                    else 0,
+                )
+            except OSError as exc:
+                raise ToolNotExecutedError(f"Shell 启动失败：{exc}") from exc
             try:
                 await asyncio.wait_for(process.wait(), timeout=timeout)
             except TimeoutError:
                 await _stop_process_group(process)
                 return ToolResult(
                     tool_call.call_id, tool_call.name, "Shell 命令执行超时", is_error=True
-                )
+                ).with_execution_status(ToolExecutionStatus.UNKNOWN)
             except asyncio.CancelledError:
                 await _stop_process_group(process)
                 raise
@@ -108,7 +126,17 @@ class RunShellTool(Tool):
                     "argv_preview": _command_preview(str(tool_call.arguments["command"])),
                     "exit_code": process.returncode,
                 },
+            ).with_execution_status(
+                ToolExecutionStatus.SUCCEEDED
+                if process.returncode == 0
+                else ToolExecutionStatus.FAILED
             )
+
+
+def _build_shell_command(command: str) -> str:
+    """保留完整用户命令及 Windows 实际执行的 UTF-8 初始化前缀。"""
+
+    return f"chcp 65001 >nul & {command}" if IS_WINDOWS else command
 
 
 async def _stop_process_group(process: asyncio.subprocess.Process) -> None:

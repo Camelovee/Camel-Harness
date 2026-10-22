@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -28,6 +28,7 @@ class PermissionRequest:
     mode: PermissionMode
     request_id: str = ""
     session_id: str = ""
+    execution_context: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class PendingApproval:
     arguments: dict[str, Any]
     reason: str
     session_id: str = ""
+    execution_context: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

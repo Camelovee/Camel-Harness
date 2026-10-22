@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import threading
 from pathlib import Path
 
@@ -12,14 +13,26 @@ async def test_write_reports_utf8_bytes_and_preserves_permissions(tmp_path):
     path = tmp_path / "nested" / "sample.txt"
     tool_context = ToolContext("session", tmp_path)
     result = await WriteFileTool().execute(
-        ToolCall("write", "write_file", {"path": "nested/sample.txt", "content": "中文"}),
+        ToolCall(
+            "write",
+            "write_file",
+            {"path": "nested/sample.txt", "content": "中文", "expected_revision": "0"},
+        ),
         tool_context,
     )
     assert "6 字节" in result.content
     assert path.read_text() == "中文"
     path.chmod(0o754)
     await WriteFileTool().execute(
-        ToolCall("write-again", "write_file", {"path": "nested/sample.txt", "content": "新内容"}),
+        ToolCall(
+            "write-again",
+            "write_file",
+            {
+                "path": "nested/sample.txt",
+                "content": "新内容",
+                "expected_revision": hashlib.sha256("中文".encode()).hexdigest(),
+            },
+        ),
         tool_context,
     )
     assert path.stat().st_mode & 0o777 == 0o754
@@ -36,7 +49,15 @@ async def test_replace_failure_preserves_original_and_cleans_temporary(tmp_path,
     monkeypatch.setattr(Path, "replace", fail_replace)
     with pytest.raises(OSError, match="替换失败"):
         await WriteFileTool().execute(
-            ToolCall("write", "write_file", {"path": path.name, "content": "新内容"}),
+            ToolCall(
+                "write",
+                "write_file",
+                {
+                    "path": path.name,
+                    "content": "新内容",
+                    "expected_revision": hashlib.sha256("原始内容".encode()).hexdigest(),
+                },
+            ),
             ToolContext("session", tmp_path),
         )
     assert path.read_text() == "原始内容"
@@ -84,7 +105,11 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
     tool = WriteFileTool()
     first = asyncio.create_task(
         tool.execute(
-            ToolCall("first", "write_file", {"path": "sample.txt", "content": "第一份"}),
+            ToolCall(
+                "first",
+                "write_file",
+                {"path": "sample.txt", "content": "第一份", "expected_revision": "0"},
+            ),
             tool_context,
         )
     )
@@ -94,7 +119,15 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
         first.cancel()
         second = asyncio.create_task(
             tool.execute(
-                ToolCall("second", "write_file", {"path": "./sample.txt", "content": "第二份"}),
+                ToolCall(
+                    "second",
+                    "write_file",
+                    {
+                        "path": "./sample.txt",
+                        "content": "第二份",
+                        "expected_revision": hashlib.sha256("第一份".encode()).hexdigest(),
+                    },
+                ),
                 tool_context,
             )
         )
@@ -128,13 +161,22 @@ async def test_cancelled_queued_write_never_modifies_file(tmp_path, monkeypatch)
     tool = WriteFileTool()
     first = asyncio.create_task(
         tool.execute(
-            ToolCall("first", "write_file", {"path": "sample.txt", "content": "保留"}), tool_context
+            ToolCall(
+                "first",
+                "write_file",
+                {"path": "sample.txt", "content": "保留", "expected_revision": "0"},
+            ),
+            tool_context,
         )
     )
     assert await asyncio.to_thread(started.wait, 2)
     second = asyncio.create_task(
         tool.execute(
-            ToolCall("second", "write_file", {"path": "sample.txt", "content": "不能写入"}),
+            ToolCall(
+                "second",
+                "write_file",
+                {"path": "sample.txt", "content": "不能写入", "expected_revision": "0"},
+            ),
             tool_context,
         )
     )

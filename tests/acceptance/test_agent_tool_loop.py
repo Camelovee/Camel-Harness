@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 
 import pytest
@@ -80,7 +81,11 @@ class ApprovalFakeLlm(LlmAdapter):
         if self.calls == 1:
             yield TextDelta(text="我准备写入文件。")
             yield ToolCallCompleted(
-                ToolUseBlock("write-call", "write_file", {"path": "sample.txt", "content": "内容"})
+                ToolUseBlock(
+                    "write-call",
+                    "write_file",
+                    {"path": "sample.txt", "content": "内容", "expected_revision": "0"},
+                )
             )
             yield MessageCompleted(LlmStopReason.TOOL_USE, model=None)
             return
@@ -102,7 +107,7 @@ class TruncatedToolLlm(LlmAdapter):
             ToolUseBlock(
                 "truncated-write",
                 self.tool_name,
-                {"path": "should-not-exist.txt", "content": "不应写入"},
+                {"path": "should-not-exist.txt", "content": "不应写入", "expected_revision": "0"},
             )
         )
         yield MessageCompleted(LlmStopReason.LENGTH, model=None)
@@ -298,7 +303,10 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     results = list((session_manager.directory(result.session_id) / "tool-results").glob("*.txt"))
     if len(content) > 20_000:
         assert len(results) == 2
-        assert all(path.read_text("utf-8") == f"1: {content}" for path in results)
+        revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        assert all(
+            path.read_text("utf-8") == f"文件版本：{revision}\n1: {content}" for path in results
+        )
         assert all(path.parent.parent.parent.name == "subagents" for path in results)
     else:
         assert not results
@@ -437,7 +445,9 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
                 assert llm_request.messages[-1].is_error
                 yield ToolCallCompleted(
                     ToolUseBlock(
-                        "small-write", "write_file", {"path": "small.txt", "content": "完整"}
+                        "small-write",
+                        "write_file",
+                        {"path": "small.txt", "content": "完整", "expected_revision": "0"},
                     )
                 )
                 yield MessageCompleted(LlmStopReason.TOOL_USE)

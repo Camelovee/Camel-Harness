@@ -17,6 +17,8 @@ from .types import (
     Tool,
     ToolCall,
     ToolContext,
+    ToolExecutionStatus,
+    ToolNotExecutedError,
     ToolResult,
     ToolRisk,
 )
@@ -34,6 +36,8 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ToolContext",
+    "ToolExecutionStatus",
+    "ToolNotExecutedError",
     "ToolExecutor",
     "ToolProvider",
     "ToolResult",

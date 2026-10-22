@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,25 @@ class ToolRisk(StrEnum):
     WRITE = "write"
     EXECUTE = "execute"
     EXTERNAL = "external"
+
+
+class ToolExecutionStatus(StrEnum):
+    """描述已知执行结果；失败不代表没有部分副作用。"""
+
+    NOT_EXECUTED = "not_executed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
+UNKNOWN_EXECUTION_NOTICE = (
+    "执行结果未知：操作可能已经产生副作用。请先通过只读方式核验实际状态，"
+    "再决定是否重试，不要直接重复原操作。\n"
+)
+
+
+class ToolNotExecutedError(ValueError):
+    """明确在实际操作前拒绝，可安全报告未执行。"""
 
 
 class PermissionMode(StrEnum):
@@ -45,6 +64,21 @@ class ToolResult:
     content: str
     is_error: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def with_execution_status(self, status: ToolExecutionStatus) -> ToolResult:
+        """同时提供结构化状态和模型可见的未知结果说明。"""
+
+        content = self.content
+        if status is ToolExecutionStatus.UNKNOWN and not content.startswith(
+            UNKNOWN_EXECUTION_NOTICE
+        ):
+            content = UNKNOWN_EXECUTION_NOTICE + content
+        return replace(
+            self,
+            content=content,
+            is_error=status is not ToolExecutionStatus.SUCCEEDED,
+            metadata={**self.metadata, "execution_status": status.value},
+        )
 
     def to_message(self) -> ToolResultMessage:
         """投影模型可见的结果并复制附加信息，保存时机仍由 Agent 决定。"""
@@ -97,6 +131,11 @@ class Tool(ABC):
             description=self.description,
             input_schema=self.parameters,
         )
+
+    def approval_context(self, tool_call: ToolCall, tool_context: ToolContext) -> dict[str, str]:
+        """返回由实现生成的审批展示信息，不执行操作。"""
+
+        return {}
 
     @abstractmethod
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:

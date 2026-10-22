@@ -49,7 +49,11 @@ async def test_executor_default_permissions_do_not_bypass_plan_mode(tmp_path):
     tool_registry = ToolRegistry()
     await tool_registry.register_provider(BuiltinToolProvider())
     tool_result = await ToolExecutor(tool_registry=tool_registry).execute(
-        ToolCall("write", "write_file", {"path": "blocked.txt", "content": "不能写入"}),
+        ToolCall(
+            "write",
+            "write_file",
+            {"path": "blocked.txt", "content": "不能写入", "expected_revision": "0"},
+        ),
         ToolContext("session", tmp_path, PermissionMode.PLAN),
     )
     assert tool_result.is_error

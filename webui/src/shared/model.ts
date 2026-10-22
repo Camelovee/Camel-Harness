@@ -48,7 +48,11 @@ export type Workspace = {
   sessions: Session[];
 };
 
+export type ToolExecutionStatus = "not_executed" | "succeeded" | "failed" | "unknown";
+
 export type ToolResultDetails = {
+  execution_status?: ToolExecutionStatus;
+  file_revision?: string;
   content_ref?: {
     path: string;
     mime_type: string;
@@ -97,6 +101,7 @@ export type Approval = {
   arguments?: Record<string, unknown>;
   reason?: string;
   status: ApprovalStatus;
+  execution_context?: Record<string, string>;
 };
 
 export type Message = AssistantAudit & {
@@ -185,6 +190,7 @@ export type AgentEvent =
         name: string;
         content: string;
         is_error: boolean;
+        metadata?: ToolResultDetails;
       };
     })
   | (TurnEventBase & {
@@ -196,6 +202,7 @@ export type AgentEvent =
       risk: string;
       arguments: Record<string, unknown>;
       reason: string;
+      execution_context?: Record<string, string>;
     });
 
 export type PermissionMode = "default" | "accept_edits" | "plan" | "yolo";

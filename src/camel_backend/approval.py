@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -38,7 +39,8 @@ class WebApproval(ApprovalHandler):
             tool_name=permission_request.tool_name,
             capabilities=permission_request.capabilities,
             risk=permission_request.risk,
-            arguments=dict(permission_request.arguments),
+            arguments=deepcopy(permission_request.arguments),
+            execution_context=dict(permission_request.execution_context),
             reason=reason,
             session_id=permission_request.session_id,
         )

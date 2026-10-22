@@ -214,13 +214,18 @@ function ThinkingMessage({
 
 function ToolMessage({ message }: { message: Message }) {
   const block = message.content[0];
+  const statusLabels = {
+    not_executed: "未执行", succeeded: "已完成", failed: "执行失败", unknown: "结果未知",
+  };
+  const executionStatus = block?.details?.execution_status;
+  const statusLabel = executionStatus ? statusLabels[executionStatus] : block?.is_error ? "失败" : "已完成";
   return (
     <details className={`tool-message ${block?.is_error ? "error" : ""}`}>
       <summary>
         <span className="tool-chevron">›</span>
         <span className="tool-symbol">⌁</span>
         <strong>{block?.name ?? "工具调用"}</strong>
-        <span className="tool-state">{block?.is_error ? "失败" : "已完成"}</span>
+        <span className="tool-state">{statusLabel}</span>
       </summary>
       <div className="tool-detail">{block?.content ?? "无结果"}</div>
       {block?.details?.content_ref && (
@@ -262,6 +267,14 @@ function ApprovalMessage({
         <span className="approval-message-status">{statusLabel[approval.status]}</span>
       </div>
       <p>{approval.reason || "该工具可能修改当前环境"}</p>
+      {approval.execution_context?.command !== undefined && (
+        <div className="approval-execution">
+          <strong>工作目录</strong>
+          <pre>{approval.execution_context.working_directory}</pre>
+          <strong>完整命令</strong>
+          <pre>{approval.execution_context.command}</pre>
+        </div>
+      )}
       <details className="approval-arguments">
         <summary>查看调用参数</summary>
         <pre>{JSON.stringify(approval.arguments ?? {}, null, 2)}</pre>

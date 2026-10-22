@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
+from dataclasses import replace
 from uuid import uuid4
 
 from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
@@ -17,9 +19,13 @@ from .permissions import (
 )
 from .registry import ToolRegistry
 from .types import (
+    Tool,
     ToolCall,
     ToolContext,
+    ToolExecutionStatus,
+    ToolNotExecutedError,
     ToolResult,
+    ToolRisk,
 )
 
 ResultNormalizer = Callable[[ToolResult, ToolContext], Awaitable[ToolResult]]
@@ -59,51 +65,82 @@ class ToolExecutor:
         tool_context: ToolContext,
         on_approval: ApprovalPendingListener | None = None,
     ) -> ToolResult:
+        tool_call = replace(tool_call, arguments=deepcopy(tool_call.arguments))
         try:
+            tool_context = replace(tool_context, workspace=tool_context.workspace.resolve())
             tool = self._tool_registry.resolve(tool_call.name)
-        except KeyError as exc:
-            return ToolResult(tool_call.call_id, tool_call.name, str(exc), is_error=True)
+        except Exception as exc:
+            return _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
 
         try:
             errors = validate_tool_arguments(tool.to_definition(), tool_call.arguments)
+            if errors:
+                return _error_result(tool_call, "；".join(errors), ToolExecutionStatus.NOT_EXECUTED)
+            execution_context = tool.approval_context(tool_call, tool_context)
         except Exception as exc:
-            return ToolResult(
-                tool_call.call_id, tool_call.name, f"工具参数校验失败：{exc}", is_error=True
+            return _error_result(
+                tool_call, f"工具参数或执行上下文校验失败：{exc}", ToolExecutionStatus.NOT_EXECUTED
             )
-        if errors:
-            return ToolResult(tool_call.call_id, tool_call.name, "；".join(errors), is_error=True)
         permission_request = PermissionRequest(
             tool_name=tool_call.name,
             capabilities=tool.capabilities,
             risk=tool.risk.value,
-            arguments=tool_call.arguments,
+            arguments=deepcopy(tool_call.arguments),
             mode=tool_context.permission_mode,
             request_id=uuid4().hex,
             session_id=tool_context.session_id,
+            execution_context=execution_context,
         )
         try:
             decision = await self._permission_service.authorize(permission_request, on_approval)
         except Exception as exc:
-            return ToolResult(
-                tool_call.call_id, tool_call.name, f"工具审批失败：{exc}", is_error=True
+            return _error_result(
+                tool_call, f"工具审批失败：{exc}", ToolExecutionStatus.NOT_EXECUTED
             )
         if decision.action is PermissionAction.DENY:
-            return ToolResult(
-                tool_call.call_id, tool_call.name, f"权限拒绝：{decision.reason}", is_error=True
+            return _error_result(
+                tool_call, f"权限拒绝：{decision.reason}", ToolExecutionStatus.NOT_EXECUTED
             )
+        return await self._execute_authorized(tool, tool_call, tool_context)
+
+    async def _execute_authorized(
+        self, tool: Tool, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
+        """执行后无法确认的副作用保守标记未知，取消与归档故障继续传播。"""
+
         try:
             result = await asyncio.wait_for(
                 tool.execute(tool_call, tool_context), timeout=tool.timeout_seconds
             )
+        except ToolNotExecutedError as exc:
+            result = _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
         except TimeoutError:
-            return ToolResult(tool_call.call_id, tool_call.name, "工具执行超时", is_error=True)
+            result = _error_result(tool_call, "工具执行超时", ToolExecutionStatus.UNKNOWN)
         except ToolResultStorageError:
             raise
         except Exception as exc:
-            return ToolResult(
-                tool_call.call_id, tool_call.name, f"工具执行失败：{exc}", is_error=True
+            status = (
+                ToolExecutionStatus.FAILED
+                if tool.risk is ToolRisk.READ
+                else ToolExecutionStatus.UNKNOWN
             )
+            result = _error_result(tool_call, f"工具执行失败：{exc}", status)
+        status = ToolExecutionStatus(
+            result.metadata.get(
+                "execution_status",
+                ToolExecutionStatus.FAILED if result.is_error else ToolExecutionStatus.SUCCEEDED,
+            )
+        )
+        result = result.with_execution_status(status)
         # 执行可能已产生副作用；归档失败属于基础设施故障，不让模型误以为工具未执行。
         if self._normalize_result is not None:
             result = await self._normalize_result(result, tool_context)
         return result
+
+
+def _error_result(tool_call: ToolCall, content: str, status: ToolExecutionStatus) -> ToolResult:
+    """所有拒绝和异常都保留执行状态，未知结果带明确核验提示。"""
+
+    return ToolResult(
+        tool_call.call_id, tool_call.name, content, is_error=True
+    ).with_execution_status(status)
