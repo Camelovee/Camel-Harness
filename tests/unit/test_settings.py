@@ -129,11 +129,18 @@ def test_validation_error_does_not_expose_key(tmp_path: Path) -> None:
 def test_nested_compaction_is_independent_and_validated(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
-        json.dumps({"max_output_tokens": 100, "compaction": {"max_output_tokens": 8192}}),
+        json.dumps(
+            {
+                "max_output_tokens": 100,
+                "compaction": {"max_output_tokens": 8192},
+                "models": [{"id": "m", "name": "模型", "provider": "openai", "model": "m"}],
+            }
+        ),
         encoding="utf-8",
     )
     agent_settings = AgentSettings.load(path)
-    assert agent_settings.max_output_tokens == 100
+    assert agent_settings.models[0].max_output_tokens == 100
+    assert "max_output_tokens" not in agent_settings.model_dump()
     assert agent_settings.compaction.max_output_tokens == 8192
     path.write_text('{"compaction":{"retry_max_output_tokens":0}}', encoding="utf-8")
     with pytest.raises(ValueError, match="compaction.retry_max_output_tokens"):

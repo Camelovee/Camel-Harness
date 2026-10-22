@@ -444,8 +444,8 @@ async def test_new_run_gets_fresh_recovery_allowance(tmp_path):
 @pytest.mark.parametrize(
     "steps",
     [
-        ["truncated_tool", "overflow", "truncated_tool"],
-        ["overflow", "truncated_tool", "truncated_tool"],
+        ["truncated_tool", "overflow", "truncated_tool", "truncated_tool"],
+        ["overflow", "truncated_tool", "truncated_tool", "truncated_tool"],
     ],
 )
 async def test_length_and_overflow_recoveries_have_independent_run_allowances(
@@ -456,15 +456,15 @@ async def test_length_and_overflow_recoveries_have_independent_run_allowances(
     events = []
     agent.subscribe(events.append)
 
-    await agent.run("继续任务", max_turns=3, model=_MODEL)
+    await agent.run("继续任务", max_turns=4, model=_MODEL)
 
     _assert_terminal(events, "failed", StopReason.MODEL_LENGTH)
-    assert len(adapter.requests) == 3
+    assert len(adapter.requests) == 4
     assert len(adapter.summaries) == 1
     tool_results = [
         message for message in await session.messages() if isinstance(message, ToolResultMessage)
     ]
-    assert len(tool_results) == 2
+    assert len(tool_results) == 3
     assert all(message.is_error for message in tool_results)
     assert not (tmp_path / "marker.txt").exists()
 
@@ -531,3 +531,76 @@ async def test_stale_recovery_plan_is_rejected_without_retrying_provider(tmp_pat
     assert len(adapter.requests) == len(adapter.summaries) == 1
     assert not any(isinstance(entry, SessionCompactionEvent) for entry in await session.entries())
     assert (await session.messages())[-1] == UserMessage("并发新增消息")
+
+
+async def test_successful_tool_turn_resets_consecutive_length_recovery(tmp_path: Path) -> None:
+    adapter = RecoveryLlm(
+        [
+            "truncated_tool",
+            "truncated_tool",
+            "tool",
+            "truncated_tool",
+            "truncated_tool",
+            "complete",
+        ]
+    )
+    agent, session = await _build(tmp_path, adapter)
+    events = []
+    agent.subscribe(events.append)
+    try:
+        await agent.run("完成任务", max_turns=6, model=_MODEL, permission_mode=PermissionMode.YOLO)
+    finally:
+        await agent.close()
+    _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
+    assert len(adapter.requests) == 6
+    assert (tmp_path / "marker.txt").read_text() == "执行一次\n"
+    results = [
+        message for message in await session.messages() if isinstance(message, ToolResultMessage)
+    ]
+    assert len(results) == 5
+    assert sum(not result.is_error for result in results) == 1
+    assert all(
+        result.details["execution_status"] == "not_executed"
+        for result in results
+        if result.is_error
+    )
+
+
+async def test_text_length_reports_budget_and_usage_without_continuation(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    adapter = RecoveryLlm(["length"])
+    agent, session = await _build(tmp_path, adapter)
+    events = []
+    agent.subscribe(events.append)
+    model = replace(_MODEL, max_output_tokens=8192, context_window_tokens=262144)
+    try:
+        await agent.run("回答", model=model)
+    finally:
+        await agent.close()
+    _assert_terminal(events, "failed", StopReason.MODEL_LENGTH)
+    assert len(adapter.requests) == 1
+    assert adapter.requests[0].max_output_tokens == 8192
+    assert "纯文本内容未完整生成" in events[-1].error
+    assert "请求预算=8192" in events[-1].error
+    assert "输出用量=5" in events[-1].error and "思考用量=未知" in events[-1].error
+    assert "连续恢复次数=0" in events[-1].error
+    messages = await session.messages()
+    assert isinstance(messages[-1], AssistantMessage)
+    assert messages[-1].stop_reason is LlmStopReason.LENGTH
+
+
+async def test_capacity_rejection_makes_no_provider_request(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    adapter = RecoveryLlm([])
+    agent, session = await _build(tmp_path, adapter, enabled=False)
+    events = []
+    agent.subscribe(events.append)
+    try:
+        await agent.run("长" * 20000, model=replace(_MODEL, context_window_tokens=32768))
+    finally:
+        await agent.close()
+    _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
+    assert not adapter.requests and not adapter.summaries
+    assert isinstance((await session.messages())[-1], UserMessage)

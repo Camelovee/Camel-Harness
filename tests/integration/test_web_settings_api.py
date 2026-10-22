@@ -80,12 +80,18 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
                 "provider": "openai",
                 "model": "gpt-test",
                 "api_key": "private-test-key",
+                "context_window_tokens": 262144,
+                "max_output_tokens": 32768,
+                "thinking_mode": "openai_reasoning",
             },
         )
         assert created.status_code == 201
         assert "private-test-key" not in created.text
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
         profile_id = created.json()["models"][1]["id"]
+        assert created.json()["models"][1]["context_window_tokens"] == 262144
+        assert created.json()["models"][1]["max_output_tokens"] == 32768
+        assert created.json()["models"][1]["thinking_mode"] == "openai_reasoning"
         # 已有可用默认模型，不自动改绑
         assert created.json()["default_model_id"] == "m1"
         assert AgentSettings.load(path).models[1].api_key == "private-test-key"
@@ -93,13 +99,24 @@ async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
         # 编辑普通字段不能抹掉未回显的密钥
         updated = await client.put(
             f"/api/settings/models/{profile_id}",
-            json={"name": "OpenAI 改名", "provider": "openai", "model": "gpt-test-2"},
+            json={
+                "name": "OpenAI 改名",
+                "provider": "openai",
+                "model": "gpt-test-2",
+                "context_window_tokens": 128000,
+                "max_output_tokens": 8192,
+                "thinking_mode": "provider_default",
+            },
         )
         assert updated.status_code == 200
         assert updated.json()["models"][1]["name"] == "OpenAI 改名"
         assert AgentSettings.load(path).models[1].api_key == "private-test-key"
         assert AgentSettings.load(path).models[1].model == "gpt-test-2"
 
+        resolved = await settings_store.resolve(profile_id)
+        assert resolved.context_window_tokens == 128000
+        assert resolved.max_output_tokens == 8192
+        assert resolved.thinking_mode.value == "provider_default"
         before = path.read_bytes()
         invalid = await client.put(
             f"/api/settings/models/{profile_id}",

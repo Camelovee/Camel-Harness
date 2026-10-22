@@ -4,11 +4,20 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
-from camel_harness.llm import LlmModel
+from camel_harness.llm import LlmModel, LlmThinkingMode
 
 Provider = Literal["anthropic", "openai"]
 
@@ -19,7 +28,6 @@ class CompactionSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = True
-    context_window_tokens: int = Field(default=128_000, gt=0)
     reserve_tokens: int = Field(default=16_384, gt=0)
     keep_recent_tokens: int = Field(default=20_000, gt=0)
     min_messages: int = Field(default=8, ge=2)
@@ -30,12 +38,6 @@ class CompactionSettings(BaseModel):
     def validate_budgets(self) -> CompactionSettings:
         if self.retry_max_output_tokens < self.max_output_tokens:
             raise ValueError("压缩重试预算不能小于首次摘要预算")
-        if self.reserve_tokens >= self.context_window_tokens:
-            raise ValueError("压缩预留预算必须小于模型上下文窗口")
-        if self.keep_recent_tokens + self.retry_max_output_tokens >= (
-            self.context_window_tokens - self.reserve_tokens
-        ):
-            raise ValueError("近期历史与摘要预算必须留出足够的上下文空间")
         return self
 
 
@@ -49,26 +51,46 @@ class MemorySettings(BaseModel):
     context_tokens: int = Field(default=2000, gt=0)
 
 
-class ModelProfile(BaseModel):
+class ModelCapabilities(BaseModel):
+    """模型能力由用户显式确认，不根据模型名称或接口地址推测。"""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: Provider
+    context_window_tokens: int = Field(default=128_000, gt=0)
+    max_output_tokens: int = Field(default=16_384, gt=0)
+    thinking_mode: LlmThinkingMode = LlmThinkingMode.PROVIDER_DEFAULT
+
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> ModelCapabilities:
+        if self.context_window_tokens <= self.max_output_tokens + 4096:
+            raise ValueError("模型窗口必须大于输出预算与 4096 Token 安全余量之和")
+        if (
+            self.thinking_mode is not LlmThinkingMode.PROVIDER_DEFAULT
+            and self.thinking_mode.value.split("_")[0] != self.provider
+        ):
+            raise ValueError("思考模式与 Provider 不匹配")
+        return self
+
+
+class ModelProfile(ModelCapabilities):
     """持久化的模型配置；密钥仅存在于本机配置文件。"""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     id: str
     name: str
-    provider: Provider
     model: str
     base_url: str | None = None
     api_key: str | None = Field(default=None, repr=False)
 
 
-class ModelInput(BaseModel):
+class ModelInput(ModelCapabilities):
     """用户可编辑的模型连接参数；空密钥表示更新时保留旧值。"""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: str = Field(min_length=1, max_length=80)
-    provider: Provider
     model: str = Field(min_length=1, max_length=160)
     base_url: str | None = Field(default=None, max_length=500)
     api_key: str | None = Field(default=None, max_length=4_096)
@@ -98,7 +120,6 @@ class AgentSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    max_output_tokens: int = Field(default=4096, gt=0)
     compaction: CompactionSettings = Field(default_factory=CompactionSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     max_duration_seconds: float = Field(default=900, gt=0)
@@ -108,6 +129,38 @@ class AgentSettings(BaseModel):
     mcp_config: str = ".mcp.json"
     models: list[ModelProfile] = Field(default_factory=list)
     default_model_id: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_model_budgets(cls, value: Any) -> Any:
+        """仅在读取边界迁移旧全局字段；保存不再产生旧字段。"""
+        if not isinstance(value, dict):
+            return value
+        settings_data = dict(value)
+        legacy_output = TypeAdapter(PositiveInt).validate_python(
+            settings_data.pop("max_output_tokens", 16_384)
+        )
+        compaction_data = settings_data.get("compaction", {})
+        legacy_window = 128_000
+        if isinstance(compaction_data, dict):
+            compaction_data = dict(compaction_data)
+            legacy_window = TypeAdapter(PositiveInt).validate_python(
+                compaction_data.pop("context_window_tokens", 128_000)
+            )
+            settings_data["compaction"] = compaction_data
+        profiles = settings_data.get("models", [])
+        if isinstance(profiles, list):
+            settings_data["models"] = [
+                {
+                    "max_output_tokens": legacy_output,
+                    "context_window_tokens": legacy_window,
+                    **profile,
+                }
+                if isinstance(profile, dict)
+                else profile
+                for profile in profiles
+            ]
+        return settings_data
 
     @classmethod
     def load(cls, path: Path | None = None) -> AgentSettings:
@@ -211,4 +264,7 @@ class AgentSettings(BaseModel):
             profile.model,
             api_key=profile.api_key,
             base_url=profile.base_url,
+            context_window_tokens=profile.context_window_tokens,
+            max_output_tokens=profile.max_output_tokens,
+            thinking_mode=profile.thinking_mode,
         )

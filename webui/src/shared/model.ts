@@ -16,12 +16,17 @@ export type SessionIndicator = {
   cancelled: boolean;
 };
 
+export type ThinkingMode = "provider_default" | "anthropic_adaptive" | "openai_reasoning";
+
 export type ModelProfile = {
   id: string;
   name: string;
   provider: "anthropic" | "openai";
   model: string;
   base_url: string | null;
+  context_window_tokens: number;
+  max_output_tokens: number;
+  thinking_mode: ThinkingMode;
   configured: boolean;
   has_api_key: boolean;
 };
@@ -40,6 +45,9 @@ export type ModelInput = {
   base_url: string;
   api_key: string;
   clear_api_key: boolean;
+  context_window_tokens: number;
+  max_output_tokens: number;
+  thinking_mode: ThinkingMode;
 };
 
 export type Workspace = {

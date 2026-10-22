@@ -48,6 +48,9 @@ class SettingsStore:
                         "provider": profile.provider,
                         "model": profile.model,
                         "base_url": profile.base_url,
+                        "context_window_tokens": profile.context_window_tokens,
+                        "max_output_tokens": profile.max_output_tokens,
+                        "thinking_mode": profile.thinking_mode.value,
                         "configured": bool(profile.api_key),
                         "has_api_key": bool(profile.api_key),
                     }
@@ -65,6 +68,9 @@ class SettingsStore:
                 provider=body.provider,
                 model=body.model,
                 base_url=body.base_url,
+                context_window_tokens=body.context_window_tokens,
+                max_output_tokens=body.max_output_tokens,
+                thinking_mode=body.thinking_mode,
                 api_key=body.api_key.strip() if body.api_key else None,
             )
             agent_settings.models.append(profile)
@@ -83,6 +89,9 @@ class SettingsStore:
             profile.provider = body.provider
             profile.model = body.model
             profile.base_url = body.base_url
+            profile.context_window_tokens = body.context_window_tokens
+            profile.max_output_tokens = body.max_output_tokens
+            profile.thinking_mode = body.thinking_mode
             if body.clear_api_key:
                 profile.api_key = None
             elif body.api_key and body.api_key.strip():

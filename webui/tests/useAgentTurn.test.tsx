@@ -250,3 +250,27 @@ describe("按会话隔离并行运行", () => {
     expect(result.current.indicators.a.running).toBe(true);
   });
 });
+
+it.each([
+  ["model_length", "输出截断"],
+  ["max_turns", "Turn 耗尽"],
+  ["context_failed", "上下文容量或压缩失败"],
+])("按结束原因显示 %s 且保留完整落盘的部分输出", async (reason, label) => {
+  const { result } = harness();
+  await act(async () => { await result.current.sendPrompt("任务", "default", false, "model"); });
+  histories.set("a", [{ id: "assistant-saved", role: "assistant", content: [{ type: "text", text: "已收到的内容" }] }]);
+  await act(async () => {
+    streams.get("a")!.emit(event("a", 2, {
+      type: "message_end", message_id: "saved", message: {
+        role: "assistant", content: [{ type: "text", text: "已收到的内容" }], stop_reason: "length",
+      },
+    }));
+    streams.get("a")!.emit(event("a", 3, {
+      type: "agent_end", status: "failed", stop_reason: reason, total_tokens: 100, error: "诊断信息",
+    }));
+    streams.get("a")!.finish();
+  });
+  expect(result.current.status).toBe(label);
+  expect(result.current.error).toBe("诊断信息");
+  expect(result.current.messages.some((message) => message.content[0]?.text === "已收到的内容")).toBe(true);
+});

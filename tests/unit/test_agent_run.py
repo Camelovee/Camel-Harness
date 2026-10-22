@@ -17,10 +17,7 @@ def test_agent_run_enforces_turn_limit() -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (
-        ("max_output_tokens", 0),
-        ("max_duration_seconds", 0),
-    ),
+    (("max_duration_seconds", 0),),
 )
 def test_agent_options_reject_invalid_values(field: str, value: str | int) -> None:
     """AgentOptions 在进入运行循环前拒绝无效预算配置。"""

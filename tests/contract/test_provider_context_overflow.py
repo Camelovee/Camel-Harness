@@ -148,3 +148,41 @@ def test_openai_failed_response_preserves_known_usage_and_generic_error():
         UsageUpdated(LlmUsage(10, 2)),
         StreamFailed("服务失败"),
     ]
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_sdk_thinking_parameters_require_explicit_model_capability(
+    provider: str, explicit: bool
+) -> None:
+    from camel_harness.llm import LlmThinkingEffort, LlmThinkingMode
+
+    bodies: list[dict[str, object]] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"message": "受控测试结束"}})
+
+    mode = LlmThinkingMode.PROVIDER_DEFAULT
+    if explicit:
+        mode = LlmThinkingMode(
+            f"{provider}_{'adaptive' if provider == 'anthropic' else 'reasoning'}"
+        )
+    model = LlmModel(provider, "fake", api_key="test", thinking_mode=mode)
+    events = [
+        event
+        async for event in _adapter(provider, capture).stream(
+            LlmRequest(model, (), max_output_tokens=16384, effort=LlmThinkingEffort.MAX)
+        )
+    ]
+    assert len(events) == 1 and isinstance(events[0], StreamFailed)
+    assert len(bodies) == 1
+    body = bodies[0]
+    assert body["max_tokens" if provider == "anthropic" else "max_output_tokens"] == 16384
+    if not explicit:
+        assert not {"thinking", "output_config", "reasoning"} & body.keys()
+    elif provider == "anthropic":
+        assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
+        assert body["output_config"] == {"effort": "max"}
+    else:
+        assert body["reasoning"] == {"effort": "xhigh", "summary": "auto"}

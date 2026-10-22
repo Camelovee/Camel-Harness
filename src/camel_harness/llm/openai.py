@@ -21,6 +21,7 @@ from .protocol import (
     LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
+    LlmThinkingMode,
     MessageCompleted,
     ReasoningDelta,
     StreamFailed,
@@ -95,12 +96,13 @@ class OpenAiLlmAdapter(LlmAdapter):
             request_parameters["tools"] = tool_definitions
         if llm_request.temperature is not None:
             request_parameters["temperature"] = llm_request.temperature
-        effort = {
-            "low": "low",
-            "high": "high",
-            "max": "xhigh",
-        }[llm_request.effort.value]
-        request_parameters["reasoning"] = {"effort": effort, "summary": "auto"}
+        if llm_request.model.thinking_mode is LlmThinkingMode.OPENAI_REASONING:
+            effort = {
+                "low": "low",
+                "high": "high",
+                "max": "xhigh",
+            }[llm_request.effort.value]
+            request_parameters["reasoning"] = {"effort": effort, "summary": "auto"}
 
         tool_calls_by_item_id: dict[str, dict[str, str]] = {}
         completion_state = {"has_tool_call": False}

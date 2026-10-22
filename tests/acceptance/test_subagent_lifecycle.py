@@ -37,7 +37,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-_MODEL = LlmModel("fake", "fake-model")
+_MODEL = LlmModel("fake", "fake-model", context_window_tokens=262144, max_output_tokens=8192)
 
 
 @pytest.mark.parametrize("memory_enabled", [False, True])
@@ -161,6 +161,8 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
 
     resource_sections = set()
     for task, llm_request in adapter.requests_by_task.items():
+        assert llm_request.model == _MODEL
+        assert llm_request.max_output_tokens == 8192
         system_prompt = llm_request.system_prompt
         assert system_prompt is not None
         base_prompt = expected_prompts_by_task[task]

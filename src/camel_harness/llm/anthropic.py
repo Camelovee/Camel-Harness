@@ -22,6 +22,7 @@ from .protocol import (
     LlmErrorCode,
     LlmRequest,
     LlmStreamEvent,
+    LlmThinkingMode,
     MessageCompleted,
     ReasoningDelta,
     StreamFailed,
@@ -92,9 +93,9 @@ class AnthropicLlmAdapter(LlmAdapter):
             request_parameters["tools"] = tool_definitions
         if llm_request.temperature is not None:
             request_parameters["temperature"] = llm_request.temperature
-        # 当前模型使用自适应思考与强度档位；budget_tokens 形态已被官方废弃。
-        request_parameters["thinking"] = {"type": "adaptive", "display": "summarized"}
-        request_parameters["output_config"] = {"effort": llm_request.effort.value}
+        if llm_request.model.thinking_mode is LlmThinkingMode.ANTHROPIC_ADAPTIVE:
+            request_parameters["thinking"] = {"type": "adaptive", "display": "summarized"}
+            request_parameters["output_config"] = {"effort": llm_request.effort.value}
 
         tool_blocks_by_index: dict[int, dict[str, str]] = {}
         completion: dict[str, LlmStopReason] = {}

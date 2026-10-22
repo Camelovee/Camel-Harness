@@ -109,7 +109,12 @@ export function projectAgentEvent(
     }
     if (event.status === "failed") {
       context.onError(event.error || "Agent 运行失败");
-      context.onStatus("运行失败");
+      const labels: Record<string, string> = {
+        model_length: "输出截断",
+        max_turns: "Turn 耗尽",
+        context_failed: "上下文容量或压缩失败",
+      };
+      context.onStatus(labels[event.stop_reason ?? ""] ?? "运行失败");
     } else if (event.status === "cancelled") {
       context.onStatus("运行已取消");
     } else {

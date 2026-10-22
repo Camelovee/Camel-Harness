@@ -97,7 +97,6 @@ async def build_agent(
             normalize_result=tool_result_storage.normalize,
         )
         agent_options = AgentOptions(
-            max_output_tokens=agent_settings.max_output_tokens,
             max_duration_seconds=agent_settings.max_duration_seconds,
             max_steering_messages=agent_settings.max_steering_messages,
             max_steering_chars=agent_settings.max_steering_chars,

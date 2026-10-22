@@ -12,14 +12,11 @@ from camel_harness.llm import UserMessage
 class AgentOptions:
     """创建 Agent 时的稳定选项；模型与 per-run 输入由 run() 参数承担。"""
 
-    max_output_tokens: int = 4096
     max_duration_seconds: float = 900
     max_steering_messages: int = 32
     max_steering_chars: int = 100_000
 
     def __post_init__(self) -> None:
-        if self.max_output_tokens <= 0:
-            raise ValueError("Agent 最大输出 token 必须大于 0")
         if self.max_duration_seconds <= 0:
             raise ValueError("Agent 最大运行时间必须大于 0")
         if self.max_steering_messages <= 0:
@@ -67,7 +64,24 @@ class AgentRun:
     stop_reason: StopReason | None = None
     total_tokens: int = 0
     context_overflow_recovery_used: bool = False
-    length_recovery_used: bool = False
+    consecutive_length_recoveries: int = 0
+    last_output_budget: int = 0
+    last_output_tokens: int | None = None
+    last_reasoning_tokens: int | None = None
+
+    def length_error(self, *, has_tool_calls: bool) -> str:
+        """保留本次预算和服务端用量，未知值不伪装成零。"""
+        kind = "工具参数被截断，未执行" if has_tool_calls else "纯文本内容未完整生成"
+        output_tokens = self.last_output_tokens if self.last_output_tokens is not None else "未知"
+        reasoning_tokens = (
+            self.last_reasoning_tokens if self.last_reasoning_tokens is not None else "未知"
+        )
+        return (
+            f"模型输出达到长度上限：{kind}；请求预算={self.last_output_budget}，"
+            f"输出用量={output_tokens}，思考用量={reasoning_tokens}，"
+            f"连续恢复次数={self.consecutive_length_recoveries}。"
+            "请检查模型输出预算或拆分修改任务"
+        )
 
     def start(self) -> None:
         if self.status is not RunStatus.IDLE:

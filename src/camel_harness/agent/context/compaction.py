@@ -24,6 +24,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
+from .output_budget import ContextBudgetError, context_input_limit, resolve_output_budget
 from .token_counting import (
     estimate_context_tokens,
     estimate_message_tokens,
@@ -87,34 +88,32 @@ class CompactionEngine:
     ) -> CompactionResult | None:
         """达到压力后总结较早消息，并返回压缩计划。"""
 
+        input_limit = context_input_limit(model, self._compaction_settings.reserve_tokens)
+        if input_limit <= 0:
+            raise CompactionError("上下文容量不足：模型窗口无法容纳配置的输出与压缩预留")
         surface = snapshot.nodes
         estimated_tokens = estimate_context_tokens(
             snapshot, model, context_overhead_tokens=context_overhead_tokens
         ).total_tokens
         if not self._compaction_settings.enabled:
-            if (
-                trigger is CompactionTrigger.CONTEXT_OVERFLOW
-                or estimated_tokens
-                >= self._compaction_settings.context_window_tokens
-                - self._compaction_settings.reserve_tokens
-            ):
+            if trigger is CompactionTrigger.CONTEXT_OVERFLOW or estimated_tokens >= input_limit:
                 raise CompactionError("上下文超出安全预算且自动压缩未开启")
             return None
         if (
             len(surface) < self._compaction_settings.min_messages
             and trigger is not CompactionTrigger.CONTEXT_OVERFLOW
         ):
-            if estimated_tokens >= (
-                self._compaction_settings.context_window_tokens
-                - self._compaction_settings.reserve_tokens
-            ):
+            if estimated_tokens >= input_limit:
                 raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
             return None
-        if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < (
-            self._compaction_settings.context_window_tokens
-            - self._compaction_settings.reserve_tokens
-        ):
+        if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < input_limit:
             return None
+        if (
+            self._compaction_settings.keep_recent_tokens
+            + min(self._compaction_settings.retry_max_output_tokens, model.max_output_tokens)
+            >= input_limit
+        ):
+            raise CompactionError("近期历史与摘要预算必须留出足够的上下文空间")
         result = await self._compact(
             snapshot,
             model,
@@ -172,9 +171,8 @@ class CompactionEngine:
         tokens_before = sum(estimate_message_tokens(node.message) for node in surface)
         if require_reduction and projected_tokens >= tokens_before:
             raise CompactionError("上下文溢出压缩未缩小历史，未提交摘要；请减少输入或调整压缩预算")
-        if projected_tokens + context_overhead_tokens >= (
-            self._compaction_settings.context_window_tokens
-            - self._compaction_settings.reserve_tokens
+        if projected_tokens + context_overhead_tokens >= context_input_limit(
+            model, self._compaction_settings.reserve_tokens
         ):
             raise CompactionError("压缩后的上下文仍超过安全预算，未提交摘要；请调整近期保留预算")
         return CompactionResult(
@@ -208,16 +206,19 @@ class CompactionEngine:
                 on_usage(usage)
 
         estimated_input = estimate_text_tokens(transcript) + 512
+        previous_output_budget = 0
         for attempt, maximum in enumerate(
             (
                 self._compaction_settings.max_output_tokens,
                 self._compaction_settings.retry_max_output_tokens,
             )
         ):
-            available = self._compaction_settings.context_window_tokens - estimated_input
-            if available <= 0:
-                raise CompactionError("摘要输入超过模型上下文窗口，未修改历史")
-            output_budget = min(maximum, available)
+            try:
+                output_budget = resolve_output_budget(
+                    model, estimated_input + estimate_text_tokens(_SUMMARY_SYSTEM_PROMPT), maximum
+                )
+            except ContextBudgetError as exc:
+                raise CompactionError(f"摘要输入超过模型安全上下文预算，未修改历史：{exc}") from exc
             prompt = _SUMMARY_SYSTEM_PROMPT + (
                 f"\n摘要目标不超过约 {max(1, output_budget // 2)} token。"
                 "优先保留继续任务必需的信息。"
@@ -226,6 +227,15 @@ class CompactionEngine:
                 prompt += "\n首条为之前的历史摘要，请结合新增历史更新它，保留仍有效的约束和待办。"
             if attempt:
                 prompt += "\n上次摘要超过输出上限；这次进一步删去过程细节，不续写上次摘要。"
+            try:
+                output_budget = resolve_output_budget(
+                    model, estimated_input + estimate_text_tokens(prompt), maximum
+                )
+            except ContextBudgetError as exc:
+                raise CompactionError(f"摘要输入超过模型安全上下文预算，未修改历史：{exc}") from exc
+            if attempt and output_budget <= previous_output_budget:
+                raise CompactionError("摘要重试预算没有增长空间，未修改历史")
+            previous_output_budget = output_budget
             llm_request = LlmRequest(
                 model=model,
                 messages=(UserMessage(transcript),),

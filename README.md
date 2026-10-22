@@ -78,15 +78,21 @@ Windows 对应 `%USERPROFILE%\.camel\config.json`；会话和用户记忆也位�
       "name": "主模型",
       "provider": "anthropic",
       "model": "claude-sonnet-4-6",
-      "api_key": "填写你的密钥"
+      "api_key": "填写你的密钥",
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "thinking_mode": "provider_default"
     }
   ],
-  "default_model_id": "main",
-  "max_output_tokens": 4096
+  "default_model_id": "main"
 }
 ```
 
-OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `base_url`。`default_model_id` 指定默认模型，WebUI 可在会话间随时切换。完整字段见 [配置示例](config.example.json)。`compaction` 单独配置压缩窗口、近期保留量及摘要输出预算；`max_output_tokens` 只限制单次输出，用量累计仅用于审计。
+OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `base_url`。`default_model_id` 指定默认模型，WebUI 可在会话间随时切换。完整字段见 [配置示例](config.example.json)。每个模型单独维护上下文窗口、单次输出预算和思考模式，需按服务商能力确认。输出预算包含服务商计入的思考 Token；`provider_default` 省略思考参数，不等于关闭思考。`anthropic_adaptive` 与 `openai_reasoning` 仅适用于对应 Provider 且支持这些参数的模型。
+
+旧版全局输出预算和压缩窗口读取时迁入缺少字段的模型，已有显式值优先，保存只写新结构。`compaction` 仅维护压缩策略及摘要预算，窗口跟随当前模型；主请求与摘要额外保留 4096 Token 安全余量，压缩预留至少覆盖主输出预算与安全余量。Token 读数仍是 usage 优先、估算兜底的近似值。
+
+工具参数截断后最多连续重新规划两次，正常响应清零；纯文本截断保留内容并提示未完成，不自动续写。
 
 ## 长期记忆
 

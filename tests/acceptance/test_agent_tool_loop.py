@@ -498,6 +498,8 @@ async def test_agent_does_not_execute_tool_calls_from_truncated_output(tmp_path,
         "toolResult",
         "assistant",
         "toolResult",
+        "assistant",
+        "toolResult",
     ]
     assert isinstance(messages[1], AssistantMessage)
     assert messages[1].stop_reason is LlmStopReason.LENGTH
@@ -636,11 +638,14 @@ async def test_run_model_selects_adapter_per_run(tmp_path) -> None:
         ),
     )
 
-    await agent.run("第一次", model=LlmModel("one", "m-a"))
-    await agent.run("第二次", model=LlmModel("two", "m-b"))
+    await agent.run("第一次", model=LlmModel("one", "m-a", max_output_tokens=8192))
+    await agent.run("第二次", model=LlmModel("two", "m-b", context_window_tokens=262144))
 
     assert [request.model.model for request in first.requests] == ["m-a"]
     assert [request.model.model for request in second.requests] == ["m-b"]
+    assert first.requests[0].max_output_tokens == 8192
+    assert second.requests[0].max_output_tokens == 16384
+    assert second.requests[0].model.context_window_tokens == 262144
 
 
 async def test_subagent_follows_parent_run_model(tmp_path) -> None:

@@ -1,5 +1,4 @@
 {
-  "max_output_tokens": 4096,
   "max_duration_seconds": 900,
   "max_steering_messages": 32,
   "max_steering_chars": 100000,
@@ -10,7 +9,10 @@
       "provider": "anthropic",
       "model": "claude-sonnet-4-6",
       "base_url": null,
-      "api_key": null
+      "api_key": null,
+      "context_window_tokens": 128000,
+      "max_output_tokens": 16384,
+      "thinking_mode": "provider_default"
     }
   ],
   "default_model_id": "main",
@@ -21,7 +23,6 @@
   },
   "compaction": {
     "enabled": true,
-    "context_window_tokens": 128000,
     "reserve_tokens": 16384,
     "keep_recent_tokens": 20000,
     "min_messages": 8,

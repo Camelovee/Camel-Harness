@@ -362,14 +362,14 @@ class Agent:
                     if agent_run.status is not RunStatus.RUNNING:
                         continue
                     if turn_reason is LlmStopReason.LENGTH:
-                        # 只让模型重新规划一次，不执行或重试历史残缺参数。
-                        if agent_run.length_recovery_used or not has_tool_calls:
+                        # 截断参数始终拒绝执行；连续失败只允许两次重新规划。
+                        if agent_run.consecutive_length_recoveries >= 2 or not has_tool_calls:
                             agent_run.fail(StopReason.MODEL_LENGTH)
-                            error = (
-                                "模型输出达到长度上限；请提高 max_output_tokens 或拆分文件修改任务"
-                            )
+                            error = agent_run.length_error(has_tool_calls=has_tool_calls)
                             continue
-                        agent_run.length_recovery_used = True
+                        agent_run.consecutive_length_recoveries += 1
+                    else:
+                        agent_run.consecutive_length_recoveries = 0
                     queued = await self._next_steering(run_control, turn_reason)
                     if queued is not None:
                         pending_user = queued.message
@@ -502,7 +502,7 @@ class Agent:
         if user_message is not None:
             await self._emit_complete_message(agent_run, turn_id, user_message)
         tool_definitions = self._tool_executor.llm_definitions()
-        system_prompt, history = await self._prepare_context(
+        system_prompt, history, output_budget = await self._prepare_context(
             agent_run, model, context_query, tool_definitions
         )
         llm_request = LlmRequest(
@@ -510,7 +510,7 @@ class Agent:
             messages=history,
             system_prompt=system_prompt,
             tools=tool_definitions,
-            max_output_tokens=self._agent_options.max_output_tokens,
+            max_output_tokens=output_budget,
             effort=effort,
         )
         assistant_message_id = uuid4().hex
@@ -542,17 +542,26 @@ class Agent:
                     ) from exc
                 # 同一 Turn 只重发尚未生成内容的模型请求，不重存输入或重跑工具。
                 agent_run.context_overflow_recovery_used = True
-                system_prompt, history = await self._prepare_context(
+                system_prompt, history, output_budget = await self._prepare_context(
                     agent_run,
                     model,
                     context_query,
                     tool_definitions,
                     trigger=CompactionTrigger.CONTEXT_OVERFLOW,
                 )
-                llm_request = replace(llm_request, messages=history, system_prompt=system_prompt)
+                llm_request = replace(
+                    llm_request,
+                    messages=history,
+                    system_prompt=system_prompt,
+                    max_output_tokens=output_budget,
+                )
             except Exception:
                 agent_run.fail(StopReason.PROVIDER_FAILED)
                 raise
+        agent_run.last_output_budget = llm_request.max_output_tokens
+        usage = assistant_message.usage
+        agent_run.last_output_tokens = usage.output_tokens if usage else None
+        agent_run.last_reasoning_tokens = usage.reasoning_tokens if usage else None
         await self._finish_message(agent_run, turn_id, assistant_message_id, assistant_message)
 
         tool_results: tuple[ToolResultMessage, ...] = ()
@@ -636,7 +645,7 @@ class Agent:
         tool_definitions: tuple[ToolDefinition, ...],
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
-    ) -> tuple[str, tuple[Message, ...]]:
+    ) -> tuple[str, tuple[Message, ...], int]:
         """协调只读上下文准备与会话提交，不实现资源组装或压缩策略。"""
 
         try:
@@ -678,7 +687,14 @@ class Agent:
             except Exception:
                 agent_run.fail(StopReason.SESSION_FAILED)
                 raise
-        return prepared.system_prompt, snapshot.messages
+        try:
+            output_budget = self._context_manager.output_budget(
+                snapshot, model, prepared.system_prompt, tool_definitions
+            )
+        except Exception:
+            agent_run.fail(StopReason.CONTEXT_FAILED)
+            raise
+        return prepared.system_prompt, snapshot.messages, output_budget
 
     async def _reject_truncated_calls(
         self,
@@ -707,6 +723,7 @@ class Agent:
                 "模型输出达到长度上限，工具参数可能被截断，未执行该调用。"
                 "请重新生成完整且更小的参数，不要重复输出同一份超长内容。",
                 is_error=True,
+                metadata={"execution_status": "not_executed"},
             )
             tool_results.append(await self._record_tool_result(agent_run, turn_id, tool_result))
 

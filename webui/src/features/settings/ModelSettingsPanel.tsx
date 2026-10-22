@@ -20,6 +20,9 @@ const newDraft = (): Draft => ({
   base_url: "",
   api_key: "",
   clear_api_key: false,
+  context_window_tokens: 128000,
+  max_output_tokens: 16384,
+  thinking_mode: "provider_default",
 });
 
 export function ModelSettingsPanel({
@@ -45,6 +48,9 @@ export function ModelSettingsPanel({
       provider: profile.provider,
       model: profile.model,
       base_url: profile.base_url ?? "",
+      context_window_tokens: profile.context_window_tokens,
+      max_output_tokens: profile.max_output_tokens,
+      thinking_mode: profile.thinking_mode,
       api_key: "",
       clear_api_key: false,
     });
@@ -127,9 +133,15 @@ export function ModelSettingsPanel({
           </div>
           <label className="settings-field"><span>显示名称</span><input required maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：我的 Sonnet" /></label>
           <div className="settings-form-grid">
-            <label className="settings-field"><span>Provider</span><select value={draft.provider} onChange={(event) => setDraft({ ...draft, provider: event.target.value as ModelInput["provider"] })}><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
+            <label className="settings-field"><span>Provider</span><select value={draft.provider} onChange={(event) => setDraft({ ...draft, provider: event.target.value as ModelInput["provider"], thinking_mode: "provider_default" })}><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
             <label className="settings-field"><span>模型 ID</span><input required maxLength={160} value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="模型提供商的准确 ID" /></label>
           </div>
+          <div className="settings-form-grid">
+            <label className="settings-field"><span>上下文窗口 Token</span><input type="number" required min={draft.max_output_tokens + 4097} step={1} value={draft.context_window_tokens} onChange={(event) => setDraft({ ...draft, context_window_tokens: Number(event.target.value) })} /></label>
+            <label className="settings-field"><span>最大输出 Token</span><input type="number" required min={1} max={draft.context_window_tokens - 4097} step={1} value={draft.max_output_tokens} onChange={(event) => setDraft({ ...draft, max_output_tokens: Number(event.target.value) })} /></label>
+          </div>
+          <label className="settings-field"><span>思考参数模式</span><select value={draft.thinking_mode} onChange={(event) => setDraft({ ...draft, thinking_mode: event.target.value as ModelInput["thinking_mode"] })}><option value="provider_default">服务端默认（省略参数）</option>{draft.provider === "anthropic" ? <option value="anthropic_adaptive">Anthropic adaptive</option> : <option value="openai_reasoning">OpenAI reasoning</option>}</select></label>
+          <p className="settings-footnote">请按服务商确认窗口、输出上限和思考能力。输出预算包含服务商计入的思考 Token；省略参数不代表关闭思考。</p>
           <label className="settings-field"><span>API Key</span><input type="password" autoComplete="new-password" value={draft.api_key} onChange={(event) => setDraft({ ...draft, api_key: event.target.value, clear_api_key: false })} placeholder={draft.id ? "留空保留现有密钥或使用配置文件" : "留空则使用配置文件中对应 Provider 的密钥"} /></label>
           {draft.id && settings.models.find((profile) => profile.id === draft.id)?.has_api_key && (
             <label className="settings-clear-key"><input type="checkbox" checked={draft.clear_api_key} onChange={(event) => setDraft({ ...draft, clear_api_key: event.target.checked, api_key: "" })} />清除已保存的 API Key</label>

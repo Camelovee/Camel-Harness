@@ -136,8 +136,7 @@ async def test_role_prompt_is_counted_in_shared_compaction_budget(tmp_path: Path
         compaction_engine=CompactionEngine(
             llm_client=LlmClient(adapter),
             compaction_settings=CompactionSettings(
-                context_window_tokens=4096,
-                reserve_tokens=2048,
+                reserve_tokens=128_000 - 2048,
                 keep_recent_tokens=128,
                 max_output_tokens=64,
                 retry_max_output_tokens=128,
@@ -202,8 +201,7 @@ def _compaction_engine(
     return CompactionEngine(
         llm_client=llm_client,
         compaction_settings=CompactionSettings(
-            context_window_tokens=max(4096, threshold + 128),
-            reserve_tokens=max(4096, threshold + 128) - threshold,
+            reserve_tokens=128_000 - threshold,
             keep_recent_tokens=140,
             max_output_tokens=64,
             retry_max_output_tokens=128,
@@ -277,8 +275,7 @@ async def test_usage_guards_capacity_with_compression_disabled_or_short_history(
         llm_client=LlmClient(SummaryLlm()),
         compaction_settings=CompactionSettings(
             enabled=enabled,
-            context_window_tokens=4096,
-            reserve_tokens=2048,
+            reserve_tokens=128_000 - 2048,
             keep_recent_tokens=128,
             max_output_tokens=64,
             retry_max_output_tokens=128,
@@ -372,14 +369,12 @@ async def test_basic_compaction_does_not_reinject_reasoning() -> None:
 
 
 def test_basic_compaction_rejects_invalid_options() -> None:
-    with pytest.raises(ValueError, match="context_window_tokens"):
-        CompactionSettings(context_window_tokens=0)
+    with pytest.raises(ValueError, match="模型窗口"):
+        LlmModel("fake", "m", context_window_tokens=0)
     with pytest.raises(ValueError, match="min_messages"):
         CompactionSettings(min_messages=1)
     with pytest.raises(ValueError, match="重试预算"):
         CompactionSettings(max_output_tokens=8192, retry_max_output_tokens=4096)
-    with pytest.raises(ValueError, match="上下文空间"):
-        CompactionSettings(keep_recent_tokens=120_000)
 
 
 async def test_context_manager_loads_workspace_rules(tmp_path) -> None:
@@ -512,16 +507,19 @@ async def test_failed_summary_never_returns_a_commit_plan(reasons, text, error) 
 async def test_compaction_rejects_summary_input_larger_than_context_window() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
     compaction_settings = CompactionSettings(
-        context_window_tokens=512,
         reserve_tokens=128,
         keep_recent_tokens=140,
         max_output_tokens=64,
         retry_max_output_tokens=128,
     )
-    with pytest.raises(CompactionError, match="上下文窗口"):
+    with pytest.raises(CompactionError, match="安全上下文预算"):
         await CompactionEngine(
             llm_client=LlmClient(adapter), compaction_settings=compaction_settings
-        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
+        ).compact_if_needed(
+            _context_snapshot(count=100),
+            replace(_MODEL, context_window_tokens=8192, max_output_tokens=128),
+            trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+        )
     assert adapter.requests == []
 
 
@@ -540,8 +538,7 @@ async def test_retry_budget_is_not_reduced_by_previous_request_usage() -> None:
 async def test_oversized_completed_summary_is_not_committed() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.STOP], "。" * 300)
     compaction_settings = CompactionSettings(
-        context_window_tokens=4096,
-        reserve_tokens=3712,
+        reserve_tokens=128_000 - 384,
         keep_recent_tokens=140,
         max_output_tokens=64,
         retry_max_output_tokens=128,
@@ -710,8 +707,7 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     llm_client = LlmClient(adapter)
     tool_registry = ToolRegistry()
     compaction_settings = CompactionSettings(
-        context_window_tokens=4096,
-        reserve_tokens=3712,
+        reserve_tokens=128_000 - 384,
         keep_recent_tokens=140,
         max_output_tokens=64,
         retry_max_output_tokens=128,
@@ -743,3 +739,22 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     assert terminal[0].stop_reason == "context_failed"
     assert len(adapter.requests) == 2
     await agent.close()
+
+
+async def test_recent_and_summary_budgets_are_validated_against_selected_model() -> None:
+    with pytest.raises(CompactionError, match="上下文空间"):
+        await CompactionEngine(
+            LlmClient(SummaryLlm()), CompactionSettings(keep_recent_tokens=120_000)
+        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
+
+
+async def test_summary_cannot_retry_with_identical_capped_budget() -> None:
+    adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
+    model = replace(_MODEL, max_output_tokens=128)
+    with pytest.raises(CompactionError, match="没有增长空间"):
+        await CompactionEngine(LlmClient(adapter)).compact_if_needed(
+            _context_snapshot(), model, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+        )
+    assert len(adapter.requests) == 1
+    assert adapter.requests[0].max_output_tokens == 128
+    assert adapter.requests[0].model == model

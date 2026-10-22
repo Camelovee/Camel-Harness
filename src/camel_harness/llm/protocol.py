@@ -26,6 +26,14 @@ class LlmThinkingEffort(StrEnum):
     MAX = "max"
 
 
+class LlmThinkingMode(StrEnum):
+    """显式模型能力；默认省略思考参数，交由服务端决定。"""
+
+    PROVIDER_DEFAULT = "provider_default"
+    ANTHROPIC_ADAPTIVE = "anthropic_adaptive"
+    OPENAI_REASONING = "openai_reasoning"
+
+
 @dataclass(frozen=True, slots=True)
 class LlmModel:
     """一次 LLM 调用的完整目标：Provider、模型与凭据；凭据不进入 repr。"""
@@ -34,8 +42,23 @@ class LlmModel:
     model: str
     api_key: str = field(default="", repr=False)
     base_url: str | None = None
+    context_window_tokens: int = 128_000
+    max_output_tokens: int = 16_384
+    thinking_mode: LlmThinkingMode = LlmThinkingMode.PROVIDER_DEFAULT
 
     def __post_init__(self) -> None:
+        if (
+            self.max_output_tokens <= 0
+            or self.context_window_tokens <= self.max_output_tokens + 4096
+        ):
+            raise ValueError("模型窗口必须大于输出预算与 4096 Token 安全余量之和")
+        if not isinstance(self.thinking_mode, LlmThinkingMode):
+            raise ValueError("思考模式必须使用 LlmThinkingMode")
+        if (
+            self.thinking_mode is not LlmThinkingMode.PROVIDER_DEFAULT
+            and self.thinking_mode.value.split("_")[0] != self.provider
+        ):
+            raise ValueError("思考模式与 Provider 不匹配")
         if not self.provider.strip():
             raise ValueError("Provider 不能为空")
         if not self.model.strip():
@@ -50,7 +73,7 @@ class LlmRequest:
     messages: tuple[Message, ...]
     system_prompt: str | None = None
     tools: tuple[ToolDefinition, ...] = ()
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 16_384
     temperature: float | None = None
     effort: LlmThinkingEffort = LlmThinkingEffort.LOW
 
