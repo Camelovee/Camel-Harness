@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -29,7 +28,7 @@ from camel_harness.agent.tools import (
     ToolRisk,
 )
 from camel_harness.agent.tools.file_result_storage import FileToolResultStorage
-from camel_harness.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from camel_harness.agent.tools.filesystem import WriteFileTool
 from camel_harness.agent.tools.mcp import McpRemoteTool
 from camel_harness.agent.tools.shell import RunShellTool
 from camel_harness.agent.tools.types import UNKNOWN_EXECUTION_NOTICE
@@ -63,52 +62,35 @@ async def _pending(approval: WebApproval) -> str:
     return pending[0].request_id
 
 
-async def test_file_revision_matches_raw_bytes_and_rejects_stale_overwrites(tmp_path: Path) -> None:
+async def test_concurrent_full_writes_are_serialized_without_version_checks(tmp_path: Path) -> None:
     path = tmp_path / "sample.txt"
-    original = "第一行\r\n第二行\r\n".encode()
-    path.write_bytes(original)
+    path.write_text("旧内容", encoding="utf-8")
     context = ToolContext("file", tmp_path, PermissionMode.YOLO)
-    read_result = await ReadFileTool().execute(
-        ToolCall("read", "read_file", {"path": path.name, "start_line": 2, "max_lines": 1}), context
-    )
-    revision = hashlib.sha256(original).hexdigest()
-    assert read_result.content == f"文件版本：{revision}\n2: 第二行"
-    assert read_result.metadata["file_revision"] == revision
     executor = _executor(WriteFileTool())
-    tool_call = ToolCall(
-        "write", "write_file", {"path": path.name, "content": "替换", "expected_revision": revision}
-    )
     results = await asyncio.gather(
-        executor.execute(tool_call, context), executor.execute(tool_call, context)
+        *(
+            executor.execute(
+                ToolCall(str(index), "write_file", {"path": path.name, "content": content}), context
+            )
+            for index, content in enumerate(("第一份", "第二份"))
+        )
     )
-    assert sorted(result.metadata["execution_status"] for result in results) == [
-        "not_executed",
-        "succeeded",
-    ]
-    assert path.read_text() == "替换"
-    conflict = next(result for result in results if result.is_error)
-    assert "版本冲突" in conflict.content
-    succeeded = next(result for result in results if not result.is_error)
-    assert succeeded.metadata["file_revision"] == hashlib.sha256("替换".encode()).hexdigest()
+    assert all(result.metadata["execution_status"] == "succeeded" for result in results)
+    assert path.read_text() == "第二份"
+    assert all("file_revision" not in result.metadata for result in results)
 
 
 @pytest.mark.parametrize("change", ["modified", "deleted", "created"])
-async def test_file_changes_during_approval_are_not_overwritten(
+async def test_approved_full_write_allows_overwrite_without_version_check(
     tmp_path: Path, change: str
 ) -> None:
     path = tmp_path / "sample.txt"
-    revision = "0"
     if change != "created":
         path.write_text("原文", encoding="utf-8")
-        revision = hashlib.sha256(path.read_bytes()).hexdigest()
     approval = WebApproval()
     task = asyncio.create_task(
         _executor(WriteFileTool(), approval).execute(
-            ToolCall(
-                "write",
-                "write_file",
-                {"path": path.name, "content": "不应覆盖", "expected_revision": revision},
-            ),
+            ToolCall("write", "write_file", {"path": path.name, "content": "批准的完整正文"}),
             ToolContext("file", tmp_path),
         )
     )
@@ -119,23 +101,16 @@ async def test_file_changes_during_approval_are_not_overwritten(
         path.write_text("用户修改", encoding="utf-8")
     assert await approval.resolve(request_id, True)
     result = await task
-    assert result.is_error and result.metadata["execution_status"] == "not_executed"
-    assert "版本冲突" in result.content
-    if change == "deleted":
-        assert not path.exists()
-    else:
-        assert path.read_text() == "用户修改"
+    assert not result.is_error and result.metadata["execution_status"] == "succeeded"
+    assert path.read_text() == "批准的完整正文"
 
 
-async def test_missing_revision_and_denied_calls_are_not_executed(tmp_path: Path) -> None:
+async def test_invalid_and_denied_calls_are_not_executed(tmp_path: Path) -> None:
     executor = _executor(WriteFileTool())
     for arguments, mode in [
-        ({"path": "sample.txt", "content": "正文"}, PermissionMode.YOLO),
-        (
-            {"path": "sample.txt", "content": "正文", "expected_revision": "0"},
-            PermissionMode.DEFAULT,
-        ),
-        ({"path": "sample.txt", "content": "正文", "expected_revision": "0"}, PermissionMode.PLAN),
+        ({"path": "sample.txt"}, PermissionMode.YOLO),
+        ({"path": "sample.txt", "content": "正文"}, PermissionMode.DEFAULT),
+        ({"path": "sample.txt", "content": "正文"}, PermissionMode.PLAN),
     ]:
         result = await executor.execute(
             ToolCall("write", "write_file", arguments), ToolContext("file", tmp_path, mode)
@@ -151,7 +126,7 @@ async def test_user_rejection_never_starts_the_write(tmp_path: Path) -> None:
             ToolCall(
                 "write",
                 "write_file",
-                {"path": "sample.txt", "content": "正文", "expected_revision": "0"},
+                {"path": "sample.txt", "content": "正文"},
             ),
             ToolContext("file", tmp_path),
         )

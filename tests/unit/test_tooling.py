@@ -52,7 +52,7 @@ async def test_executor_default_permissions_do_not_bypass_plan_mode(tmp_path):
         ToolCall(
             "write",
             "write_file",
-            {"path": "blocked.txt", "content": "不能写入", "expected_revision": "0"},
+            {"path": "blocked.txt", "content": "不能写入"},
         ),
         ToolContext("session", tmp_path, PermissionMode.PLAN),
     )

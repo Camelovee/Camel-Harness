@@ -52,7 +52,6 @@ export type ToolExecutionStatus = "not_executed" | "succeeded" | "failed" | "unk
 
 export type ToolResultDetails = {
   execution_status?: ToolExecutionStatus;
-  file_revision?: string;
   content_ref?: {
     path: string;
     mime_type: string;

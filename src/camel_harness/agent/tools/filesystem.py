@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from .text_edits import apply_text_edits
 from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
 
 _mutations: dict[Path, tuple[asyncio.Lock, int]] = {}
@@ -87,8 +87,8 @@ class ReadFileTool(Tool):
     name = "read_file"
     description = (
         "读取工作区文件或当前会话已登记的工具结果引用，可指定起始行和最大行数。"
-        "返回完整文件原始字节的 SHA-256 版本，write_file 覆盖前必须读取并理解已有内容。"
-        "分页版本对应完整文件，不代表已展示全部正文。"
+        "默认读取 400 行，最多 2000 行；带行号正文最多 16 KiB，只展示完整行。"
+        "返回行范围、总行数和续读 start_line；未完整展示时按提示继续，不把片段当作全文。"
     )
     parameters = {
         "type": "object",
@@ -118,17 +118,44 @@ class ReadFileTool(Tool):
         start = int(tool_call.arguments.get("start_line", 1))
         limit = int(tool_call.arguments.get("max_lines", 400))
         data = await asyncio.to_thread(path.read_bytes)
-        revision = hashlib.sha256(data).hexdigest()
-        text = data.decode("utf-8")
-        lines = text.splitlines()
-        selected = lines[start - 1 : start - 1 + limit]
-        numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(selected, start=start))
-        return ToolResult(
-            tool_call.call_id,
-            tool_call.name,
-            f"文件版本：{revision}\n{numbered}",
-            metadata={"file_revision": revision},
-        )
+        return _read_page(tool_call, data.decode("utf-8"), start, limit)
+
+
+def _read_page(tool_call: ToolCall, text: str, start: int, limit: int) -> ToolResult:
+    """按行与 UTF-8 字节双阈值分页，元信息不占正文额度。"""
+
+    lines = text.splitlines()
+    if start < 1 or not 1 <= limit <= 2000 or (start > len(lines) and (lines or start != 1)):
+        raise ToolNotExecutedError("读取行范围越界或 max_lines 不在 1–2000 内")
+    selected: list[str] = []
+    output_bytes = 0
+    for line_number in range(start, min(start + limit, len(lines) + 1)):
+        numbered = f"{line_number}: {lines[line_number - 1]}"
+        size = len(numbered.encode("utf-8")) + int(bool(selected))
+        if output_bytes + size > 16 * 1024:
+            break
+        selected.append(numbered)
+        output_bytes += size
+    end = start + len(selected) - 1 if selected else None
+    next_start = start + len(selected) if start + len(selected) <= len(lines) else None
+    metadata = {
+        "start_line": start if selected else None,
+        "end_line": end,
+        "total_lines": len(lines),
+        "next_start_line": next_start,
+        "output_bytes": output_bytes,
+    }
+    if not lines:
+        notice = "[空文件，共 0 行]"
+    elif not selected:
+        notice = f"[第 {start} 行超过 16 KiB 正文上限，无法完整展示。请使用更合适的方式检查该行。]"
+    else:
+        notice = f"[显示第 {start}–{end} 行，共 {len(lines)} 行]"
+    if next_start is not None and selected:
+        notice += f"\n[尚未读完，请使用 start_line={next_start} 继续读取。]"
+    return ToolResult(
+        tool_call.call_id, tool_call.name, "\n".join([*selected, notice]), metadata=metadata
+    )
 
 
 class WriteFileTool(Tool):
@@ -138,8 +165,7 @@ class WriteFileTool(Tool):
     description = (
         "创建或完整覆盖工作区内 UTF-8 文件，自动创建父目录。"
         "仅用于新文件或完整重写；局部修改优先使用 edit_file。"
-        "新建使用 expected_revision='0'；覆盖前读取并理解原文件，携带读取到的 SHA-256 版本。"
-        "版本冲突时重新读取并决定修改，不自动重复覆盖。"
+        "覆盖前先了解现有内容；覆盖不进行版本校验，不能防止基于旧内容覆盖其他修改。"
         "content 必须完整且适合单次输出额度，大文件请分阶段构建，禁止省略内容。"
     )
     parameters = {
@@ -147,9 +173,8 @@ class WriteFileTool(Tool):
         "properties": {
             "path": {"type": "string", "minLength": 1},
             "content": {"type": "string"},
-            "expected_revision": {"type": "string", "pattern": "^(0|[a-f0-9]{64})$"},
         },
-        "required": ["path", "content", "expected_revision"],
+        "required": ["path", "content"],
         "additionalProperties": False,
     }
     capabilities = frozenset({"filesystem.write"})
@@ -160,29 +185,11 @@ class WriteFileTool(Tool):
         _check_memory_write(tool_context.workspace, path)
         content = str(tool_call.arguments["content"])
 
-        expected_revision = tool_call.arguments.get("expected_revision")
-        if not isinstance(expected_revision, str):
-            raise ToolNotExecutedError("覆盖校验缺少 expected_revision；请先读取文件版本")
-
-        def write() -> int:
-            try:
-                current_revision = hashlib.sha256(path.read_bytes()).hexdigest()
-            except FileNotFoundError:
-                current_revision = "0"
-            if current_revision != expected_revision:
-                raise ToolNotExecutedError(
-                    "文件版本冲突：文件已变化，请重新读取并决定修改，未执行覆盖"
-                )
-            return _atomic_write(path, content)
-
-        size = await _mutate_file(path, write)
-        revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        size = await _mutate_file(path, lambda: _atomic_write(path, content))
         return ToolResult(
             tool_call.call_id,
             tool_call.name,
-            f"已写入 {path.relative_to(tool_context.workspace)}（{size} 字节）\n"
-            f"文件版本：{revision}",
-            metadata={"file_revision": revision},
+            f"已写入 {path.relative_to(tool_context.workspace)}（{size} 字节）",
         )
 
 
@@ -190,15 +197,30 @@ class EditFileTool(Tool):
     """通过唯一文本匹配执行可验证的精确编辑。"""
 
     name = "edit_file"
-    description = "将文件中唯一出现的 old_text 替换为 new_text。"
+    description = (
+        "一次精确替换同一文件的多个独立片段。每个 old_text 都匹配原始文件，必须唯一且互不重叠。"
+        "片段应尽量小而唯一，不复制行号；相邻或重叠修改合并为一项，不拼接大段无关内容。"
+        "不做模糊匹配，保留 BOM 和未修改区域原文，返回修改数量及 diff。"
+    )
     parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "minLength": 1},
-            "old_text": {"type": "string", "minLength": 1},
-            "new_text": {"type": "string"},
+            "edits": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "old_text": {"type": "string", "minLength": 1},
+                        "new_text": {"type": "string"},
+                    },
+                    "required": ["old_text", "new_text"],
+                    "additionalProperties": False,
+                },
+            },
         },
-        "required": ["path", "old_text", "new_text"],
+        "required": ["path", "edits"],
         "additionalProperties": False,
     }
     capabilities = frozenset({"filesystem.write"})
@@ -207,17 +229,20 @@ class EditFileTool(Tool):
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
         _check_memory_write(tool_context.workspace, path)
-        old_text = str(tool_call.arguments["old_text"])
-        new_text = str(tool_call.arguments["new_text"])
+        edits = tool_call.arguments["edits"]
+        diff = ""
 
         def edit() -> int:
-            content = path.read_text("utf-8")
-            count = content.count(old_text)
-            if count != 1:
-                raise ValueError(f"old_text 必须唯一匹配，当前匹配 {count} 次")
-            return _atomic_write(path, content.replace(old_text, new_text, 1))
+            nonlocal diff
+            content = path.read_bytes().decode("utf-8")
+            updated, diff = apply_text_edits(
+                content, edits, str(path.relative_to(tool_context.workspace))
+            )
+            return _atomic_write(path, updated)
 
         await _mutate_file(path, edit)
         return ToolResult(
-            tool_call.call_id, tool_call.name, f"已编辑 {path.relative_to(tool_context.workspace)}"
+            tool_call.call_id,
+            tool_call.name,
+            f"已编辑 {path.relative_to(tool_context.workspace)}（{len(edits)} 个片段）\n{diff}",
         )

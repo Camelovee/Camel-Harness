@@ -1,12 +1,13 @@
 import asyncio
-import hashlib
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
 from camel_backend.approval import WebApproval
 from camel_harness import Agent, AgentOptions, StopReason
 from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.context.system_prompt import DEFAULT_SYSTEM_PROMPT
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.subagent import (
@@ -39,6 +40,85 @@ from camel_harness.llm import (
 )
 
 _MODEL = LlmModel("fake", "fake-model")
+
+
+async def test_agent_reads_pages_then_performs_one_batch_edit(tmp_path: Path) -> None:
+    path = tmp_path / "batch.txt"
+    path.write_bytes(b"first\r\nsecond\r\n")
+
+    class BatchLlm(LlmAdapter):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @property
+        def provider_id(self) -> str:
+            return "fake"
+
+        async def stream(self, llm_request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+            self.calls += 1
+            assert llm_request.system_prompt == DEFAULT_SYSTEM_PROMPT
+            result = llm_request.messages[-1]
+            if self.calls == 1:
+                call = ToolUseBlock("page-1", "read_file", {"path": path.name, "max_lines": 1})
+            elif self.calls == 2:
+                assert isinstance(result, ToolResultMessage) and not result.is_error
+                assert result.details["next_start_line"] == 2
+                call = ToolUseBlock("page-2", "read_file", {"path": path.name, "start_line": 2})
+            elif self.calls == 3:
+                assert isinstance(result, ToolResultMessage) and not result.is_error
+                assert result.details["next_start_line"] is None
+                call = ToolUseBlock(
+                    "batch",
+                    "edit_file",
+                    {
+                        "path": path.name,
+                        "edits": [
+                            {"old_text": "first", "new_text": "一"},
+                            {"old_text": "second", "new_text": "二"},
+                        ],
+                    },
+                )
+            else:
+                assert isinstance(result, ToolResultMessage) and not result.is_error
+                assert "2 个片段" in result.content and "-first" in result.content
+                assert "+一" in result.content and "+二" in result.content
+                yield TextDelta("已完成批量编辑")
+                yield MessageCompleted(LlmStopReason.STOP)
+                return
+            yield ToolCallCompleted(call)
+            yield MessageCompleted(LlmStopReason.TOOL_USE)
+
+    manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await manager.create("batch", tmp_path, "批量编辑")
+    registry = ToolRegistry()
+    await registry.register_provider(BuiltinToolProvider())
+    adapter = BatchLlm()
+    client = LlmClient(adapter)
+    agent = Agent(
+        session=manager.bind("batch"),
+        workspace=tmp_path,
+        agent_options=AgentOptions(),
+        llm_client=client,
+        tool_executor=ToolExecutor(registry),
+        context_manager=ContextManager(
+            CompactionEngine(client), system_prompt=DEFAULT_SYSTEM_PROMPT
+        ),
+    )
+    try:
+        await agent.run(
+            "读取完整文件后修改两个位置", model=_MODEL, permission_mode=PermissionMode.YOLO
+        )
+    finally:
+        await agent.close()
+    assert adapter.calls == 4
+    assert path.read_bytes() == "一\r\n二\r\n".encode()
+    results = [
+        message
+        for message in await manager.bind("batch").messages()
+        if isinstance(message, ToolResultMessage)
+    ]
+    assert [result.name for result in results] == ["read_file", "read_file", "edit_file"]
+    assert all(not result.is_error for result in results)
 
 
 class FakeLlm(LlmAdapter):
@@ -84,7 +164,7 @@ class ApprovalFakeLlm(LlmAdapter):
                 ToolUseBlock(
                     "write-call",
                     "write_file",
-                    {"path": "sample.txt", "content": "内容", "expected_revision": "0"},
+                    {"path": "sample.txt", "content": "内容"},
                 )
             )
             yield MessageCompleted(LlmStopReason.TOOL_USE, model=None)
@@ -107,7 +187,7 @@ class TruncatedToolLlm(LlmAdapter):
             ToolUseBlock(
                 "truncated-write",
                 self.tool_name,
-                {"path": "should-not-exist.txt", "content": "不应写入", "expected_revision": "0"},
+                {"path": "should-not-exist.txt", "content": "不应写入"},
             )
         )
         yield MessageCompleted(LlmStopReason.LENGTH, model=None)
@@ -255,7 +335,7 @@ async def test_agent_completes_a_tool_loop(tmp_path) -> None:
     assert all(request.effort is LlmThinkingEffort.HIGH for request in runtime.requests)
 
 
-@pytest.mark.parametrize("content", ["内容", "内容" * 15_000], ids=["small", "large"])
+@pytest.mark.parametrize("content", ["内容", "内容\n" * 15_000], ids=["small", "large"])
 async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     (tmp_path / "sample.txt").write_text(content, encoding="utf-8")
 
@@ -301,15 +381,20 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     assert metadata.parent_session_id == "parent"
     assert metadata.parent_tool_call_id == "delegate-call"
     results = list((session_manager.directory(result.session_id) / "tool-results").glob("*.txt"))
-    if len(content) > 20_000:
-        assert len(results) == 2
-        revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        assert all(
-            path.read_text("utf-8") == f"文件版本：{revision}\n1: {content}" for path in results
-        )
-        assert all(path.parent.parent.parent.name == "subagents" for path in results)
-    else:
-        assert not results
+    assert results == []
+    messages = await session_manager.bind(result.session_id).messages()
+    tool_results = [message for message in messages if isinstance(message, ToolResultMessage)]
+    assert len(tool_results) == 2
+    assert all(not message.is_error for message in tool_results)
+    lines = content.splitlines()
+    for message, limit in zip(tool_results, (1, 400), strict=True):
+        count = min(limit, len(lines))
+        expected = "\n".join(f"{index + 1}: {line}" for index, line in enumerate(lines[:count]))
+        expected += f"\n[显示第 1–{count} 行，共 {len(lines)} 行]"
+        if count < len(lines):
+            expected += f"\n[尚未读完，请使用 start_line={count + 1} 继续读取。]"
+        assert message.content == expected
+        assert message.details["end_line"] == count
 
 
 async def test_agent_streams_approval_after_assistant_message(tmp_path) -> None:
@@ -447,7 +532,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
                     ToolUseBlock(
                         "small-write",
                         "write_file",
-                        {"path": "small.txt", "content": "完整", "expected_revision": "0"},
+                        {"path": "small.txt", "content": "完整"},
                     )
                 )
                 yield MessageCompleted(LlmStopReason.TOOL_USE)

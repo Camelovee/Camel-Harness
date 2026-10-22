@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -56,14 +55,16 @@ async def test_read_file_pages_registered_result_and_preserves_workspace_access(
         ),
         context,
     )
-    revision = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert result.content == f"文件版本：{revision}\n2: 第二行"
-    assert result.metadata["file_revision"] == revision
+    assert (
+        result.content
+        == "2: 第二行\n[显示第 2–2 行，共 3 行]\n[尚未读完，请使用 start_line=3 继续读取。]"
+    )
+    assert result.metadata["total_lines"] == 3
+    assert result.metadata["next_start_line"] == 3
     (context.workspace / "normal.txt").write_text("正常文件", encoding="utf-8")
-    normal_revision = hashlib.sha256("正常文件".encode()).hexdigest()
     assert (
         await tool.execute(ToolCall("read", "read_file", {"path": "normal.txt"}), context)
-    ).content == f"文件版本：{normal_revision}\n1: 正常文件"
+    ).content == "1: 正常文件\n[显示第 1–1 行，共 1 行]"
     with pytest.raises(ValueError, match="工作区"):
         await ReadFileTool().execute(ToolCall("read", "read_file", {"path": str(path)}), context)
 
@@ -125,12 +126,11 @@ async def test_parent_child_sibling_references_are_isolated(tmp_path):
         child_paths.append(Path(result.metadata["content_ref"]["path"]))
     tool_context = ToolContext("child", context.workspace)
     tool = ReadFileTool(store.resolve_read_path)
-    revision = hashlib.sha256(child_paths[0].read_bytes()).hexdigest()
     assert (
         await tool.execute(
             ToolCall("read", "read_file", {"path": str(child_paths[0])}), tool_context
         )
-    ).content == f"文件版本：{revision}\n1: 子会话完整输出"
+    ).content == "1: 子会话完整输出\n[显示第 1–1 行，共 1 行]"
     for reader, target in [
         (context, child_paths[0]),
         (tool_context, parent_path),
@@ -143,7 +143,11 @@ async def test_parent_child_sibling_references_are_isolated(tmp_path):
 @pytest.mark.parametrize("tool", [WriteFileTool(), EditFileTool()])
 async def test_result_read_permission_does_not_allow_external_mutations(tmp_path, tool):
     _, _, _, context, path, _ = await setup_result(tmp_path)
-    arguments = {"path": str(path), "content": "修改", "old_text": "第一行", "new_text": "修改"}
+    arguments = {
+        "path": str(path),
+        "content": "修改",
+        "edits": [{"old_text": "第一行", "new_text": "修改"}],
+    }
     with pytest.raises(ValueError, match="工作区"):
         await tool.execute(ToolCall("write", tool.name, arguments), context)
     assert path.read_text("utf-8").startswith("第一行")

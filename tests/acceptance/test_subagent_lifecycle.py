@@ -266,7 +266,7 @@ async def test_child_reads_its_own_archived_result(tmp_path):
         async def stream(self, llm_request):
             self.requests += 1
             if self.requests == 1:
-                yield ToolCallCompleted(ToolUseBlock("source", "read_file", {"path": "source.txt"}))
+                yield ToolCallCompleted(ToolUseBlock("source", "load_skill", {}))
                 yield MessageCompleted(LlmStopReason.TOOL_USE)
             elif self.requests == 2:
                 result = llm_request.messages[-1]
@@ -274,7 +274,7 @@ async def test_child_reads_its_own_archived_result(tmp_path):
                 path = result.details["content_ref"]["path"]
                 yield ToolCallCompleted(
                     ToolUseBlock(
-                        "reference", "read_file", {"path": path, "start_line": 2, "max_lines": 1}
+                        "reference", "read_file", {"path": path, "start_line": 1, "max_lines": 1}
                     )
                 )
                 yield MessageCompleted(LlmStopReason.TOOL_USE)
@@ -285,11 +285,20 @@ async def test_child_reads_its_own_archived_result(tmp_path):
                 yield TextDelta("已读取子会话引用")
                 yield MessageCompleted(LlmStopReason.STOP)
 
-    (tmp_path / "source.txt").write_text("第一行\n" + "内容" * 15000, encoding="utf-8")
+    from camel_harness.agent.tools import Tool, ToolCall, ToolContext, ToolResult
+
+    class LargeSkillTool(Tool):
+        name = "load_skill"
+        parameters = {"type": "object"}
+
+        async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+            return ToolResult(tool_call.call_id, tool_call.name, "第一行\n" + "内容" * 15000)
+
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await session_manager.create("parent", tmp_path, "父会话")
     tool_registry = ToolRegistry()
     await tool_registry.register_provider(BuiltinToolProvider())
+    tool_registry.register(LargeSkillTool())
     adapter = ReadingLlm()
     llm_client = LlmClient(adapter)
     subagent_runner = LocalSubagentRunner(

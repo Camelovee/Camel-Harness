@@ -477,8 +477,7 @@ async def test_file_tools_cannot_modify_managed_memory(tmp_path, monkeypatch, to
                 {
                     "path": str(path),
                     "content": "new",
-                    "old_text": "old",
-                    "new_text": "new",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
                 },
             ),
             ToolContext("s", tmp_path),

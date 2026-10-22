@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import threading
 from pathlib import Path
 
@@ -16,7 +15,7 @@ async def test_write_reports_utf8_bytes_and_preserves_permissions(tmp_path):
         ToolCall(
             "write",
             "write_file",
-            {"path": "nested/sample.txt", "content": "中文", "expected_revision": "0"},
+            {"path": "nested/sample.txt", "content": "中文"},
         ),
         tool_context,
     )
@@ -27,11 +26,7 @@ async def test_write_reports_utf8_bytes_and_preserves_permissions(tmp_path):
         ToolCall(
             "write-again",
             "write_file",
-            {
-                "path": "nested/sample.txt",
-                "content": "新内容",
-                "expected_revision": hashlib.sha256("中文".encode()).hexdigest(),
-            },
+            {"path": "nested/sample.txt", "content": "新内容"},
         ),
         tool_context,
     )
@@ -52,11 +47,7 @@ async def test_replace_failure_preserves_original_and_cleans_temporary(tmp_path,
             ToolCall(
                 "write",
                 "write_file",
-                {
-                    "path": path.name,
-                    "content": "新内容",
-                    "expected_revision": hashlib.sha256("原始内容".encode()).hexdigest(),
-                },
+                {"path": path.name, "content": "新内容"},
             ),
             ToolContext("session", tmp_path),
         )
@@ -71,13 +62,17 @@ async def test_concurrent_edits_do_not_lose_updates(tmp_path):
     await asyncio.gather(
         EditFileTool().execute(
             ToolCall(
-                "first", "edit_file", {"path": path.name, "old_text": "first", "new_text": "一"}
+                "first",
+                "edit_file",
+                {"path": path.name, "edits": [{"old_text": "first", "new_text": "一"}]},
             ),
             tool_context,
         ),
         EditFileTool().execute(
             ToolCall(
-                "second", "edit_file", {"path": path.name, "old_text": "second", "new_text": "二"}
+                "second",
+                "edit_file",
+                {"path": path.name, "edits": [{"old_text": "second", "new_text": "二"}]},
             ),
             tool_context,
         ),
@@ -108,7 +103,7 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
             ToolCall(
                 "first",
                 "write_file",
-                {"path": "sample.txt", "content": "第一份", "expected_revision": "0"},
+                {"path": "sample.txt", "content": "第一份"},
             ),
             tool_context,
         )
@@ -122,11 +117,7 @@ async def test_cancelled_write_keeps_queue_until_thread_finishes(tmp_path, monke
                 ToolCall(
                     "second",
                     "write_file",
-                    {
-                        "path": "./sample.txt",
-                        "content": "第二份",
-                        "expected_revision": hashlib.sha256("第一份".encode()).hexdigest(),
-                    },
+                    {"path": "./sample.txt", "content": "第二份"},
                 ),
                 tool_context,
             )
@@ -164,7 +155,7 @@ async def test_cancelled_queued_write_never_modifies_file(tmp_path, monkeypatch)
             ToolCall(
                 "first",
                 "write_file",
-                {"path": "sample.txt", "content": "保留", "expected_revision": "0"},
+                {"path": "sample.txt", "content": "保留"},
             ),
             tool_context,
         )
@@ -175,7 +166,7 @@ async def test_cancelled_queued_write_never_modifies_file(tmp_path, monkeypatch)
             ToolCall(
                 "second",
                 "write_file",
-                {"path": "sample.txt", "content": "不能写入", "expected_revision": "0"},
+                {"path": "sample.txt", "content": "不能写入"},
             ),
             tool_context,
         )
