@@ -644,3 +644,25 @@ async def test_main_request_keeps_full_output_budget_or_rejects_before_execution
         assert "动态项目规则" in request.system_prompt
         assert request.tools
     assert not adapter.summaries
+
+
+async def test_context_snapshot_read_failure_keeps_session_failure_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = RecoveryLlm([])
+    agent, session = await _build(tmp_path, adapter)
+    events = []
+    agent.subscribe(events.append)
+
+    async def fail_snapshot() -> None:
+        raise OSError("快照不可读")
+
+    monkeypatch.setattr(session, "context_snapshot", fail_snapshot)
+    try:
+        await agent.run("保存后读取快照", model=_MODEL)
+    finally:
+        await agent.close()
+    _assert_terminal(events, "failed", StopReason.SESSION_FAILED)
+    assert events[-1].error == "快照不可读"
+    assert not adapter.requests and not adapter.summaries
+    assert (await session.messages())[-1] == UserMessage("保存后读取快照")

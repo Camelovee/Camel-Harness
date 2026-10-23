@@ -24,7 +24,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-from .context import CompactionTrigger, ContextManager, ContextResourceError
+from .context import CompactionTrigger, ContextManager, ContextResourceError, ContextSessionError
 from .events import (
     AgentEndEvent,
     AgentEndStatus,
@@ -645,16 +645,10 @@ class Agent:
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> tuple[str, tuple[Message, ...]]:
-        """协调只读上下文准备与会话提交，不实现资源组装或压缩策略。"""
-
-        try:
-            snapshot = await self._session.context_snapshot()
-        except Exception:
-            agent_run.fail(StopReason.SESSION_FAILED)
-            raise
+        """为上下文准备接入运行用量与故障分类，不编排会话提交。"""
         try:
             prepared = await self._context_manager.prepare(
-                snapshot,
+                self._session,
                 model,
                 query=query,
                 workspace=self._workspace,
@@ -664,29 +658,16 @@ class Agent:
                 tool_definitions=tool_definitions,
                 trigger=trigger,
             )
+        except ContextSessionError:
+            agent_run.fail(StopReason.SESSION_FAILED)
+            raise
         except ContextResourceError:
             agent_run.fail(StopReason.RESOURCE_FAILED)
             raise
         except Exception:
             agent_run.fail(StopReason.CONTEXT_FAILED)
             raise
-        compacted = prepared.compaction
-        if compacted is None and trigger is CompactionTrigger.CONTEXT_OVERFLOW:
-            agent_run.fail(StopReason.CONTEXT_FAILED)
-            raise RuntimeError("上下文溢出恢复未生成安全压缩计划，未重发请求")
-        if compacted is not None:
-            try:
-                snapshot = await self._session.compact(
-                    compacted.summary,
-                    compacted.first_kept_entry_id,
-                    snapshot=snapshot,
-                    tokens_before=compacted.tokens_before,
-                    usage=compacted.usage,
-                )
-            except Exception:
-                agent_run.fail(StopReason.SESSION_FAILED)
-                raise
-        return prepared.system_prompt, snapshot.messages
+        return prepared.system_prompt, prepared.messages
 
     async def _reject_truncated_calls(
         self,

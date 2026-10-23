@@ -93,11 +93,16 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "上下文不得依赖会话存储实现或运行状态"
+name = "上下文不得直接依赖会话存储实现"
 type = "forbidden"
 source_modules = ["camel_harness.agent.context"]
 forbidden_modules = [
-  "camel_harness.agent.session.manager",
   "camel_harness.agent.session.jsonl",
-  "camel_harness.agent.state",
 ]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "上下文不得依赖运行状态"
+type = "forbidden"
+source_modules = ["camel_harness.agent.context"]
+forbidden_modules = ["camel_harness.agent.state"]

@@ -9,7 +9,8 @@ from camel_harness.llm import LlmModel, LlmUsage, Message, ToolDefinition, UserM
 from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session.events import ContextSnapshot
-from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
+from ..session.manager import Session
+from .compaction import CompactionEngine, CompactionError, CompactionResult, CompactionTrigger
 from .token_counting import (
     estimate_context_overhead_tokens,
     estimate_text_tokens,
@@ -20,12 +21,16 @@ class ContextResourceError(RuntimeError):
     """动态资源加载失败，与压缩失败保持独立错误边界。"""
 
 
+class ContextSessionError(RuntimeError):
+    """上下文准备期间读取或提交会话失败，不混同资源与摘要错误。"""
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedContext:
-    """提示和可选压缩计划；只有 Session 提交后才能使用新的历史投影。"""
+    """准备完成的系统提示与消息；必要的压缩已由 Session 提交。"""
 
     system_prompt: str
-    compaction: CompactionResult | None
+    messages: tuple[Message, ...]
 
 
 class ContextManager:
@@ -79,7 +84,7 @@ class ContextManager:
 
     async def prepare(
         self,
-        snapshot: ContextSnapshot,
+        session: Session,
         model: LlmModel,
         *,
         query: str,
@@ -88,15 +93,12 @@ class ContextManager:
         on_usage: Callable[[LlmUsage], None] | None = None,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> PreparedContext:
-        """每 Turn 从基础提示组装资源并生成计划，不读取或提交会话日志。"""
-
+        """按次借用 Session 准备上下文；压缩提交成功后才返回请求内容。"""
         try:
-            dynamic_context = await self.build_system_context(query, workspace)
+            snapshot = await session.context_snapshot()
         except Exception as exc:
-            raise ContextResourceError(str(exc)) from exc
-        system_prompt = self._system_prompt
-        if dynamic_context:
-            system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+            raise ContextSessionError(str(exc)) from exc
+        system_prompt = await self._build_system_prompt(query, workspace)
         compacted = await self.compact_if_needed(
             snapshot,
             model,
@@ -105,7 +107,37 @@ class ContextManager:
             system_prompt=system_prompt,
             tool_definitions=tool_definitions,
         )
-        return PreparedContext(system_prompt, compacted)
+        if compacted is None and trigger is CompactionTrigger.CONTEXT_OVERFLOW:
+            raise CompactionError("上下文溢出恢复未生成安全压缩计划，未重发请求")
+        if compacted is not None:
+            snapshot = await self._commit_compaction(session, snapshot, compacted)
+        return PreparedContext(system_prompt, snapshot.messages)
+
+    async def _build_system_prompt(self, query: str, workspace: Path) -> str:
+        """始终从基础提示组装资源，保留独立的资源故障边界。"""
+        try:
+            dynamic_context = await self.build_system_context(query, workspace)
+        except Exception as exc:
+            raise ContextResourceError(str(exc)) from exc
+        if dynamic_context:
+            return f"{self._system_prompt}\n\n{dynamic_context}"
+        return self._system_prompt
+
+    @staticmethod
+    async def _commit_compaction(
+        session: Session, snapshot: ContextSnapshot, compacted: CompactionResult
+    ) -> ContextSnapshot:
+        """提交一致性和在途取消语义仍由 Session 保证。"""
+        try:
+            return await session.compact(
+                compacted.summary,
+                compacted.first_kept_entry_id,
+                snapshot=snapshot,
+                tokens_before=compacted.tokens_before,
+                usage=compacted.usage,
+            )
+        except Exception as exc:
+            raise ContextSessionError(str(exc)) from exc
 
     async def build_system_context(self, prompt: str, workspace: Path) -> str:
         """组装项目规则、Skill 索引和与当前任务相关的 Memory。"""
