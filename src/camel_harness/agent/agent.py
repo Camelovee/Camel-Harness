@@ -502,7 +502,7 @@ class Agent:
         if user_message is not None:
             await self._emit_complete_message(agent_run, turn_id, user_message)
         tool_definitions = self._tool_executor.llm_definitions()
-        system_prompt, history, output_budget = await self._prepare_context(
+        system_prompt, history = await self._prepare_context(
             agent_run, model, context_query, tool_definitions
         )
         llm_request = LlmRequest(
@@ -510,7 +510,7 @@ class Agent:
             messages=history,
             system_prompt=system_prompt,
             tools=tool_definitions,
-            max_output_tokens=output_budget,
+            max_output_tokens=model.max_output_tokens,
             effort=effort,
         )
         assistant_message_id = uuid4().hex
@@ -542,7 +542,7 @@ class Agent:
                     ) from exc
                 # 同一 Turn 只重发尚未生成内容的模型请求，不重存输入或重跑工具。
                 agent_run.context_overflow_recovery_used = True
-                system_prompt, history, output_budget = await self._prepare_context(
+                system_prompt, history = await self._prepare_context(
                     agent_run,
                     model,
                     context_query,
@@ -553,7 +553,6 @@ class Agent:
                     llm_request,
                     messages=history,
                     system_prompt=system_prompt,
-                    max_output_tokens=output_budget,
                 )
             except Exception:
                 agent_run.fail(StopReason.PROVIDER_FAILED)
@@ -645,7 +644,7 @@ class Agent:
         tool_definitions: tuple[ToolDefinition, ...],
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
-    ) -> tuple[str, tuple[Message, ...], int]:
+    ) -> tuple[str, tuple[Message, ...]]:
         """协调只读上下文准备与会话提交，不实现资源组装或压缩策略。"""
 
         try:
@@ -687,14 +686,7 @@ class Agent:
             except Exception:
                 agent_run.fail(StopReason.SESSION_FAILED)
                 raise
-        try:
-            output_budget = self._context_manager.output_budget(
-                snapshot, model, prepared.system_prompt, tool_definitions
-            )
-        except Exception:
-            agent_run.fail(StopReason.CONTEXT_FAILED)
-            raise
-        return prepared.system_prompt, snapshot.messages, output_budget
+        return prepared.system_prompt, snapshot.messages
 
     async def _reject_truncated_calls(
         self,

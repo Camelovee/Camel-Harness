@@ -10,10 +10,8 @@ from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session.events import ContextSnapshot
 from .compaction import CompactionEngine, CompactionResult, CompactionTrigger
-from .output_budget import resolve_output_budget
 from .token_counting import (
     estimate_context_overhead_tokens,
-    estimate_context_tokens,
     estimate_text_tokens,
 )
 
@@ -165,18 +163,6 @@ class ContextManager:
                     included = True
                     break
         return memory_context if included else ""
-
-    @staticmethod
-    def output_budget(
-        snapshot: ContextSnapshot,
-        model: LlmModel,
-        system_prompt: str,
-        tool_definitions: tuple[ToolDefinition, ...],
-    ) -> int:
-        """在压缩提交后的真实历史投影上重新计算本次请求预算。"""
-        overhead = estimate_context_overhead_tokens(system_prompt, tool_definitions)
-        estimate = estimate_context_tokens(snapshot, model, context_overhead_tokens=overhead)
-        return resolve_output_budget(model, estimate.total_tokens)
 
     async def compact_if_needed(
         self,

@@ -6,30 +6,21 @@ from pathlib import Path
 import pytest
 
 from camel_harness.agent.config import AgentSettings, ModelInput, ModelProfile
-from camel_harness.agent.context import CompactionEngine, ContextManager
+from camel_harness.agent.context import CompactionEngine
 from camel_harness.agent.context.output_budget import (
     ContextBudgetError,
     context_input_limit,
     resolve_output_budget,
 )
-from camel_harness.agent.context.token_counting import (
-    estimate_context_overhead_tokens,
-    estimate_context_tokens,
-)
 from camel_harness.agent.session import ContextNode, ContextSnapshot
 from camel_harness.llm import (
-    AssistantMessage,
     LlmAdapter,
     LlmClient,
     LlmModel,
     LlmRequest,
-    LlmStopReason,
     LlmStreamEvent,
     LlmThinkingMode,
-    LlmUsage,
     StreamFailed,
-    TextBlock,
-    ToolDefinition,
     UserMessage,
 )
 
@@ -104,31 +95,6 @@ def test_output_budget_caps_reserves_and_rejects_exhaustion() -> None:
     assert context_input_limit(model, 24000) == 8768
     with pytest.raises(ValueError, match="安全余量"):
         replace(model, context_window_tokens=20480)
-
-
-def test_context_budget_uses_usage_and_content_fallback() -> None:
-    model = LlmModel("fake", "m", context_window_tokens=32768, max_output_tokens=16384)
-    answer = AssistantMessage(
-        (TextBlock("短回复"),),
-        LlmStopReason.STOP,
-        provider="fake",
-        model="m",
-        usage=LlmUsage(19000, 1000),
-    )
-    snapshot = ContextSnapshot(
-        nodes=(ContextNode("a", answer), ContextNode("u", UserMessage("继续")))
-    )
-    definitions = (ToolDefinition("t", "工具", {"type": "object"}),)
-    prompt = "动态资源" * 100
-    overhead = estimate_context_overhead_tokens(prompt, definitions)
-    tokens = estimate_context_tokens(snapshot, model, context_overhead_tokens=overhead).total_tokens
-    assert (
-        ContextManager.output_budget(snapshot, model, prompt, definitions) == 32768 - 4096 - tokens
-    )
-    no_usage = replace(snapshot, usage_start_index=1)
-    assert ContextManager.output_budget(no_usage, model, prompt, definitions) == 16384
-    with pytest.raises(ContextBudgetError):
-        ContextManager.output_budget(no_usage, model, "长" * 40000, definitions)
 
 
 async def test_selected_model_controls_capacity_even_when_compaction_disabled() -> None:

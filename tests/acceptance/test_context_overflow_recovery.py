@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,7 @@ async def test_overflow_compacts_short_history_and_retries_in_same_turn(tmp_path
     assert len(retry.messages) < len(first.messages)
     assert retry.model == first.model
     assert retry.tools == first.tools
-    assert retry.max_output_tokens == first.max_output_tokens
+    assert retry.max_output_tokens == first.max_output_tokens == _MODEL.max_output_tokens
     assert retry.effort == first.effort is LlmThinkingEffort.HIGH
     assert retry.system_prompt == first.system_prompt
     assert retry.system_prompt.count("基础提示") == 1
@@ -567,8 +568,6 @@ async def test_successful_tool_turn_resets_consecutive_length_recovery(tmp_path:
 
 
 async def test_text_length_reports_budget_and_usage_without_continuation(tmp_path: Path) -> None:
-    from dataclasses import replace
-
     adapter = RecoveryLlm(["length"])
     agent, session = await _build(tmp_path, adapter)
     events = []
@@ -591,8 +590,6 @@ async def test_text_length_reports_budget_and_usage_without_continuation(tmp_pat
 
 
 async def test_capacity_rejection_makes_no_provider_request(tmp_path: Path) -> None:
-    from dataclasses import replace
-
     adapter = RecoveryLlm([])
     agent, session = await _build(tmp_path, adapter, enabled=False)
     events = []
@@ -604,3 +601,46 @@ async def test_capacity_rejection_makes_no_provider_request(tmp_path: Path) -> N
     _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
     assert not adapter.requests and not adapter.summaries
     assert isinstance((await session.messages())[-1], UserMessage)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("has_usage", [False, True])
+@pytest.mark.parametrize("over_capacity", [False, True])
+async def test_main_request_keeps_full_output_budget_or_rejects_before_execution(
+    tmp_path: Path, enabled: bool, has_usage: bool, over_capacity: bool
+) -> None:
+    """容量不足时拒绝主请求，不以缩小输出额度代替容量检查。"""
+    (tmp_path / "AGENTS.md").write_text("动态项目规则" * 100, encoding="utf-8")
+    adapter = RecoveryLlm(["complete"])
+    agent, session = await _build(tmp_path, adapter, history_count=0, enabled=enabled)
+    model = replace(_MODEL, context_window_tokens=32768)
+    input_tokens = 20000 if over_capacity else 10000
+    if has_usage:
+        await session.append_message(
+            AssistantMessage(
+                (TextBlock("短回复"),),
+                LlmStopReason.STOP,
+                provider=model.provider,
+                model=model.model,
+                usage=LlmUsage(input_tokens, 100),
+            )
+        )
+    else:
+        await session.append_message(UserMessage("文" * input_tokens))
+    events = []
+    agent.subscribe(events.append)
+    try:
+        await agent.run("继续", model=model)
+    finally:
+        await agent.close()
+    if over_capacity:
+        _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
+        assert not adapter.requests
+    else:
+        _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
+        assert len(adapter.requests) == 1
+        request = adapter.requests[0]
+        assert request.max_output_tokens == model.max_output_tokens == 16384
+        assert "动态项目规则" in request.system_prompt
+        assert request.tools
+    assert not adapter.summaries
