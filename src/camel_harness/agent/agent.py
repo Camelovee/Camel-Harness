@@ -340,22 +340,12 @@ class Agent:
                 pending_user: UserMessage | None = None
                 if prompt is not None:
                     pending_user = UserMessage(prompt)
-                    context_query = prompt
-                else:
-                    try:
-                        context_query = self._context_manager.resolve_query(
-                            await self._session.messages()
-                        )
-                    except Exception:
-                        agent_run.fail(StopReason.SESSION_FAILED)
-                        raise
                 while agent_run.status is RunStatus.RUNNING:
                     turn_reason, has_tool_calls = await self._run_turn(
                         agent_run=agent_run,
                         model=model,
                         permission_mode=permission_mode,
                         effort=effort,
-                        context_query=context_query,
                         user_message=pending_user,
                     )
                     pending_user = None
@@ -373,7 +363,6 @@ class Agent:
                     queued = await self._next_steering(run_control, turn_reason)
                     if queued is not None:
                         pending_user = queued.message
-                        context_query = queued.message.content
                     elif turn_reason is LlmStopReason.STOP:
                         agent_run.complete()
         except TimeoutError as exc:
@@ -483,7 +472,6 @@ class Agent:
         model: LlmModel,
         permission_mode: PermissionMode,
         effort: LlmThinkingEffort,
-        context_query: str,
         user_message: UserMessage | None,
     ) -> tuple[LlmStopReason, bool]:
         """执行一次 assistant 响应及其产生的全部工具调用。"""
@@ -502,9 +490,7 @@ class Agent:
         if user_message is not None:
             await self._emit_complete_message(agent_run, turn_id, user_message)
         tool_definitions = self._tool_executor.llm_definitions()
-        system_prompt, history = await self._prepare_context(
-            agent_run, model, context_query, tool_definitions
-        )
+        system_prompt, history = await self._prepare_context(agent_run, model, tool_definitions)
         llm_request = LlmRequest(
             model=model,
             messages=history,
@@ -545,7 +531,6 @@ class Agent:
                 system_prompt, history = await self._prepare_context(
                     agent_run,
                     model,
-                    context_query,
                     tool_definitions,
                     trigger=CompactionTrigger.CONTEXT_OVERFLOW,
                 )
@@ -640,7 +625,6 @@ class Agent:
         self,
         agent_run: AgentRun,
         model: LlmModel,
-        query: str,
         tool_definitions: tuple[ToolDefinition, ...],
         *,
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
@@ -650,7 +634,6 @@ class Agent:
             prepared = await self._context_manager.prepare(
                 self._session,
                 model,
-                query=query,
                 workspace=self._workspace,
                 on_usage=lambda usage: agent_run.record_tokens(
                     usage.input_tokens or 0, usage.output_tokens or 0

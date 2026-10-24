@@ -74,7 +74,7 @@ async def test_shared_context_prepares_and_commits_independent_sessions_concurre
     prepared_contexts = await asyncio.wait_for(
         asyncio.gather(
             *(
-                context_manager.prepare(session, model, query=name, workspace=tmp_path)
+                context_manager.prepare(session, model, workspace=tmp_path)
                 for name, session in zip(names, sessions, strict=True)
             )
         ),

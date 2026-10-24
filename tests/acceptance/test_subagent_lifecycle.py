@@ -11,7 +11,7 @@ from camel_harness.agent.context.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     SUBAGENT_SYSTEM_PROMPTS,
 )
-from camel_harness.agent.resources import MemoryEntry, MemoryStore, ProjectRules, Skills
+from camel_harness.agent.resources import MemoryStore, ProjectRules, Skills
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.subagent import (
@@ -52,13 +52,14 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         "---\nname: shared-context\ndescription: 共享技能索引\n---\n技能正文按需加载\n",
         encoding="utf-8",
     )
-    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
+    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
     for index in range(2):
-        await memory_store.save(
-            MemoryEntry(f"language-{index}", "中文注释", f"记忆正文{index}"),
-            expected_revision="0",
-            session_id="seed",
-            tool_call_id="seed",
+        await memory_store.add("memory", f"记忆正文{index}")
+    if not memory_enabled:
+        memory_store = MemoryStore(
+            tmp_path,
+            MemorySettings(enabled=False),
+            user_root=tmp_path / "user-memory",
         )
 
     class ConcurrentRoleLlm(LlmAdapter):
@@ -91,7 +92,6 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         skills=Skills(tmp_path, user_root=tmp_path / "user-skills"),
         memory_store=memory_store,
         max_rules_chars=len(rules),
-        memory_settings=MemorySettings(enabled=memory_enabled, max_entries=1, context_tokens=600),
     )
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await session_manager.create("parent", tmp_path, "父会话")
@@ -172,7 +172,7 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         assert rules in system_prompt and "不应注入额外规则" not in system_prompt
         assert "shared-context (project)" in system_prompt and "共享技能索引" in system_prompt
         assert "技能正文按需加载" not in system_prompt
-        assert system_prompt.count("记忆正文") == int(memory_enabled)
+        assert system_prompt.count("记忆正文") == 2 * int(memory_enabled)
         resource_sections.add(system_prompt.removeprefix(base_prompt + "\n\n"))
     assert len(resource_sections) == 1
 
@@ -339,17 +339,12 @@ async def test_child_reads_its_own_archived_result(tmp_path):
 
 
 @pytest.mark.parametrize("kind", list(SubagentType))
-async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_path, kind):
-    from camel_harness.agent.resources import MemoryEntry, MemoryStore
+async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind):
+    from camel_harness.agent.resources import MemoryStore
     from camel_harness.agent.tools.memory_tools import MemoryToolProvider
 
-    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
-    await memory_store.save(
-        MemoryEntry("language", "中文注释", "中文说明"),
-        expected_revision="0",
-        session_id="seed",
-        tool_call_id="seed",
-    )
+    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    await memory_store.add("memory", "中文说明")
 
     class MemoryLlm(LlmAdapter):
         requests = 0
@@ -361,40 +356,29 @@ async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_
         async def stream(self, llm_request):
             self.requests += 1
             names = {tool.name for tool in llm_request.tools}
-            assert {"search_memory", "read_memory"} <= names
-            assert not {"save_memory", "delete_memory"} & names
+            assert (
+                not {
+                    "memory",
+                    "search_memory",
+                    "read_memory",
+                    "save_memory",
+                    "delete_memory",
+                }
+                & names
+            )
             assert "中文说明" in llm_request.system_prompt
             if self.requests == 1:
                 yield ToolCallCompleted(
                     ToolUseBlock(
-                        "read",
-                        "read_memory",
-                        {
-                            "scope": "project",
-                            "name": "language",
-                        },
-                    )
-                )
-                yield MessageCompleted(LlmStopReason.TOOL_USE)
-            elif self.requests == 2:
-                assert "中文说明" in llm_request.messages[-1].content
-                yield ToolCallCompleted(
-                    ToolUseBlock(
                         "write",
-                        "save_memory",
-                        {
-                            "scope": "user",
-                            "name": "unauthorized",
-                            "description": "禁止",
-                            "content": "不应写入",
-                            "expected_revision": "0",
-                        },
+                        "memory",
+                        {"action": "add", "target": "user", "content": "不应写入"},
                     )
                 )
                 yield MessageCompleted(LlmStopReason.TOOL_USE)
             else:
                 assert llm_request.messages[-1].is_error
-                yield TextDelta("仅完成只读记忆查询")
+                yield TextDelta("仅收到注入的只读记忆")
                 yield MessageCompleted(LlmStopReason.STOP)
 
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
@@ -426,6 +410,6 @@ async def test_child_memory_tools_are_read_only_and_do_not_close_shared_llm(tmp_
             _MODEL,
         )
     )
-    assert result.succeeded and result.content == "仅完成只读记忆查询"
-    assert adapter.requests == 3
-    assert await memory_store.get("unauthorized", "user") is None
+    assert result.succeeded and result.content == "仅收到注入的只读记忆"
+    assert adapter.requests == 2
+    assert (await memory_store.snapshot("user")).entries == ()

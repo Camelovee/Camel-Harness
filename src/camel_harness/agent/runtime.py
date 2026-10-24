@@ -110,7 +110,6 @@ async def build_agent(
             project_rules=ProjectRules(),
             skills=agent_extensions.skills,
             memory_store=agent_extensions.memories,
-            memory_settings=agent_settings.memory,
         )
         if agent_extensions.subagent_provider is not None:
             subagent_runner = LocalSubagentRunner(

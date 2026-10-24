@@ -158,16 +158,23 @@ def test_resolve_model_errors_are_actionable(tmp_path: Path) -> None:
         agent_settings.resolve_model("a")
 
 
-@pytest.mark.parametrize("field", ["max_entries", "context_tokens"])
-def test_memory_budget_validation_and_defaults(tmp_path: Path, field: str) -> None:
+def test_memory_defaults_and_legacy_field_migration(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     agent_settings = AgentSettings.load(path)
     assert agent_settings.memory.enabled
-    assert agent_settings.memory.max_entries == 5
-    assert agent_settings.memory.context_tokens == 2000
-    path.write_text(json.dumps({"memory": {field: 0}}), encoding="utf-8")
-    with pytest.raises(ValueError, match=f"memory.{field}"):
+    assert agent_settings.memory.user_profile_enabled
+    assert agent_settings.memory.memory_char_limit == 2200
+    assert agent_settings.memory.user_char_limit == 1375
+
+    path.write_text(json.dumps({"memory": {"memory_char_limit": 0}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="memory.memory_char_limit"):
         AgentSettings.load(path)
-    path.write_text('{"memory":{"enabled":false,"context_tokens":300}}', encoding="utf-8")
-    assert not AgentSettings.load(path).memory.enabled
-    assert AgentSettings.load(path).memory.context_tokens == 300
+
+    path.write_text(
+        json.dumps({"memory": {"enabled": False, "max_entries": 3, "context_tokens": 300}}),
+        encoding="utf-8",
+    )
+    legacy = AgentSettings.load(path)
+    assert not legacy.memory.enabled
+    assert legacy.memory.memory_char_limit == 2200
+    assert legacy.memory.user_char_limit == 1375

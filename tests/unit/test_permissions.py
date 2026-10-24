@@ -23,3 +23,14 @@ def test_accept_edits_still_asks_for_shell() -> None:
 def test_yolo_allows_execute() -> None:
     decision = default_permission_decision(_request("execute", PermissionMode.YOLO))
     assert decision.action is PermissionAction.ALLOW
+
+
+def test_memory_writes_are_auto_allowed_except_plan() -> None:
+    def memory_request(mode: PermissionMode) -> PermissionRequest:
+        return PermissionRequest("memory", frozenset({"memory.write"}), "write", {}, mode)
+
+    for mode in (PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS, PermissionMode.YOLO):
+        assert default_permission_decision(memory_request(mode)).action is PermissionAction.ALLOW
+    assert default_permission_decision(memory_request(PermissionMode.PLAN)).action is (
+        PermissionAction.DENY
+    )

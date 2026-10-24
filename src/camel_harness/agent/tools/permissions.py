@@ -76,8 +76,8 @@ def default_permission_decision(permission_request: PermissionRequest) -> Permis
         if permission_request.mode is PermissionMode.PLAN:
             return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止修改长期记忆")
         return PermissionDecision(
-            PermissionAction.ASK,
-            "长期记忆修改必须确认层级和实际内容；用户级记忆影响其他项目",
+            PermissionAction.ALLOW,
+            "记忆由 Agent 自主维护，无需审批；用户级记忆影响其他项目",
         )
     if permission_request.mode is PermissionMode.YOLO:
         return PermissionDecision(PermissionAction.ALLOW, "YOLO 模式允许所有已注册工具")

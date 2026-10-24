@@ -107,7 +107,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
 ) -> None:
     from camel_harness.agent.config import MemorySettings
-    from camel_harness.agent.resources import MemoryEntry, MemoryStore
+    from camel_harness.agent.resources import MemoryStore
     from camel_harness.agent.tools.memory_tools import MemoryToolProvider
     from camel_harness.llm import (
         LlmAdapter,
@@ -121,13 +121,10 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
 
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
-    memory_store = MemoryStore(tmp_path)
-    await memory_store.save(
-        MemoryEntry("language", "中文注释", "只有公开 API 需要 docstring"),
-        expected_revision="0",
-        session_id="source",
-        tool_call_id="seed",
-    )
+    memory_settings = MemorySettings(enabled=enabled)
+    memory_store = MemoryStore(tmp_path, memory_settings)
+    seed_store = MemoryStore(tmp_path, MemorySettings())
+    await seed_store.add("memory", "只有公开 API 需要 docstring")
     requests: list[LlmRequest] = []
 
     class Adapter(LlmAdapter):
@@ -160,9 +157,11 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     try:
         await agent.run("中文注释", model=_MODEL)
         await agent.run("继续检查中文注释", model=_MODEL)
+        await seed_store.add("memory", "新增的跨会话约定")
+        await agent.run("再次检查", model=_MODEL)
     finally:
         await agent.close()
-    assert len(requests) == 2
+    assert len(requests) == 3
     for llm_request in requests:
         assert llm_request.system_prompt is not None
         assert llm_request.system_prompt.startswith(DEFAULT_SYSTEM_PROMPT)
@@ -170,9 +169,13 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
         if not enabled:
             assert llm_request.system_prompt == DEFAULT_SYSTEM_PROMPT
     assert requests[0].system_prompt == requests[1].system_prompt
+    assert (requests[2].system_prompt != requests[0].system_prompt) is enabled
     names = {tool.name for tool in requests[0].tools}
-    memory_names = {"search_memory", "read_memory", "save_memory", "delete_memory"}
-    assert names & memory_names == (memory_names if enabled else set())
+    assert names & {"memory"} == ({"memory"} if enabled else set())
     assert ("只有公开 API 需要 docstring" in requests[0].system_prompt) is enabled
-    assert [entry.name for entry in await memory_store.list()] == ["language"]
+    assert ("新增的跨会话约定" in requests[2].system_prompt) is enabled
+    assert (await seed_store.snapshot("memory")).entries == (
+        "只有公开 API 需要 docstring",
+        "新增的跨会话约定",
+    )
     assert not (home / ".camel").exists()

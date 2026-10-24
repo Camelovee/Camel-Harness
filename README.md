@@ -8,7 +8,7 @@
 - 流式 ReAct：规范生命周期事件，支持运行中追加输入、取消与恢复。
 - 模型：使用官方 SDK 接入 Anthropic / OpenAI，默认 Anthropic。
 - 工具：读、写、编辑、Shell；支持权限审批、MCP 与子 Agent 委派。
-- 上下文：动态项目规则、Memory、Skill 三层按需加载、历史压缩与超限后的有界恢复。
+- 上下文：动态项目规则、有界长期记忆、Skill 三层按需加载、历史压缩与超限后的有界恢复。
 - 会话：本地 JSONL 历史树，保存完整消息、模型和用量，子会话与大工具结果归属对应会话。
 
 ## 界面预览
@@ -96,11 +96,13 @@ OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `ba
 
 ## 长期记忆
 
-项目记忆存于工作区 `.camel/memory/`，用户记忆存于 `~/.camel/memory/`，同名项目优先。可要求 Agent“记住这个项目约定”或“保存为跨项目偏好”；模型通过 `save_memory` 提交实际内容，用户批准后才保存，YOLO 也不跳过审批。查询、分页读取和删除分别使用 `search_memory`、`read_memory`、`delete_memory`；修改需携带读取的版本，冲突后重新读取并审批。
+项目记忆存于 `<workspace>/.camel/memory/MEMORY.md`，用户档案存于 `~/.camel/memory/USER.md`；两者都是纯文本，条目以单独一行 `§` 分隔，分别受 2200 / 1375 字符上限约束。记忆在每个 Turn 完整注入系统提示，条目始终可见。
 
-`config.json` 的 `memory` 默认值为 `{"enabled": true, "max_entries": 5, "context_tokens": 2000}`。每 Turn 只注入预算内的相关记忆，放不下正文时提示按需读取；设 `enabled=false` 可关闭注入和工具，不删除文件。修改配置后重启生效。
+Agent 通过单个 `memory` 工具主动维护：`add` 追加条目，`replace` / `remove` 用唯一子串定位条目。写入不需要审批（PLAN 模式仍禁止），超过上限时先整合再添加。可要求 Agent“记住这个项目约定”或“保存为跨项目偏好”；用户档案影响所有工作区。
 
-记忆不是会话摘要或项目规则，不自动提取、不保存秘密。旧 `name/description/content/kind` 格式不兼容，原文件不会被自动迁移或覆盖；工作区即主目录时项目层级回落到用户层级（同一目录，同名覆盖语义不变）。Shell 不是沙箱，不能承诺阻止绕过。设计与验收见 [记忆系统设计](docs/方案设计/记忆系统设计.md)。
+`config.json` 的 `memory` 默认值为 `{"enabled": true, "user_profile_enabled": true, "memory_char_limit": 2200, "user_char_limit": 1375}`。设 `enabled=false` 可关闭注入和工具，`user_profile_enabled=false` 只关闭用户档案；两者都不删除文件。修改配置后重启生效。
+
+运行时不再读取旧 `*.json` 条目；升级后运行 `scripts/migrate_memory.py --workspace <工作区>` 预览，确认后加 `--apply` 迁移，旧文件保留。记忆不是会话摘要或项目规则，不自动提取、不保存秘密。自动允许写入意味着模型可能把外部内容持久化，残余风险见设计文档。Shell 不是沙箱，不能承诺阻止绕过。设计与验收见 [记忆系统设计](docs/方案设计/记忆系统设计.md)。
 
 默认会话目录为 `~/.camel/sessions/<id>/`，子会话递归放在父目录的 `subagents/` 下，大工具结果放在所属会话的 `tool-results/` 下。相对 `session_dir` 按用户主目录解析，不是当前项目目录。
 

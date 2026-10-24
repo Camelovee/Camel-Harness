@@ -1,6 +1,7 @@
 import pytest
 
-from camel_harness.agent.resources import MemoryEntry, MemoryStore, Skills, SkillSource
+from camel_harness.agent.config import MemorySettings
+from camel_harness.agent.resources import MemoryStore, Skills, SkillSource
 from camel_harness.agent.tools import ToolCall, ToolContext, ToolExecutor, ToolRegistry
 from camel_harness.agent.tools.skill_loader import SkillToolProvider
 
@@ -121,14 +122,16 @@ async def test_skill_discovery_does_not_read_body(tmp_path) -> None:
 
 
 async def test_memory_is_isolated_under_workspace(tmp_path) -> None:
-    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
-    saved = await memory_store.save(
-        MemoryEntry("decision", "架构决策", "使用 JSONL"),
-        expected_revision="0",
-        session_id="session-1",
-        tool_call_id="call-1",
+    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    mutation = await memory_store.add("memory", "使用 JSONL")
+    assert mutation.changed
+    document = await memory_store.snapshot("memory")
+    assert document.entries == ("使用 JSONL",)
+    assert (tmp_path / ".camel" / "memory" / "MEMORY.md").exists()
+
+    other_store = MemoryStore(
+        tmp_path / "other-workspace",
+        MemorySettings(),
+        user_root=tmp_path / "user-memory",
     )
-    assert (await memory_store.get("decision")) == saved
-    assert saved.content == "使用 JSONL"
-    assert saved.source == {"session_id": "session-1", "tool_call_id": "call-1"}
-    assert [item.name for item in await memory_store.list()] == ["decision"]
+    assert (await other_store.snapshot("memory")).entries == ()

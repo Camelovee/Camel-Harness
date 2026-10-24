@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from camel_harness.agent.config import CompactionSettings
+from camel_harness.agent.config import CompactionSettings, MemorySettings
 from camel_harness.agent.context import (
     CompactionEngine,
     CompactionResult,
@@ -17,7 +17,6 @@ from camel_harness.agent.context import (
 from camel_harness.agent.context.compaction import CompactionError
 from camel_harness.agent.context.token_counting import estimate_message_tokens
 from camel_harness.agent.resources import (
-    MemoryEntry,
     MemoryStore,
     ProjectRules,
     Skills,
@@ -67,9 +66,9 @@ async def test_context_prepare_returns_committed_messages_and_keeps_original_sna
     )
     calls: list[tuple[ContextSnapshot, LlmModel, int]] = []
 
-    async def build_context(query: str, workspace: Path) -> str:
+    async def build_context(workspace: Path) -> str:
         assert workspace == tmp_path
-        return f"资源：{query}"
+        return "资源"
 
     async def plan_compaction(
         current: ContextSnapshot, model: LlmModel, *, context_overhead_tokens: int, **kwargs: object
@@ -80,17 +79,16 @@ async def test_context_prepare_returns_committed_messages_and_keeps_original_sna
     monkeypatch.setattr(context_manager, "build_system_context", build_context)
     monkeypatch.setattr(compaction_engine, "compact", plan_compaction)
     tool_definitions = (ToolDefinition("read_file", "读取", {"type": "object"}),)
-    for query in ("第一次", "第二次"):
+    for _ in range(2):
         session = _session_with_snapshot(snapshot)
         session.compact.return_value = committed
         prepared = await context_manager.prepare(
             session,
             _MODEL,
-            query=query,
             workspace=tmp_path,
             tool_definitions=tool_definitions,
         )
-        assert prepared.system_prompt == f"基础\n\n资源：{query}"
+        assert prepared.system_prompt == "基础\n\n资源"
         assert prepared.messages == committed.messages
         session.context_snapshot.assert_awaited_once_with()
         session.compact.assert_awaited_once_with(
@@ -119,18 +117,14 @@ async def test_context_prepare_keeps_resource_errors_distinct_and_propagates_can
 
     monkeypatch.setattr(context_manager, "build_system_context", fail)
     with pytest.raises(ContextResourceError, match="规则读取失败"):
-        await context_manager.prepare(
-            _session_with_snapshot(), _MODEL, query="任务", workspace=tmp_path
-        )
+        await context_manager.prepare(_session_with_snapshot(), _MODEL, workspace=tmp_path)
 
     async def cancel(*args: object) -> None:
         raise asyncio.CancelledError
 
     monkeypatch.setattr(context_manager, "build_system_context", cancel)
     with pytest.raises(asyncio.CancelledError):
-        await context_manager.prepare(
-            _session_with_snapshot(), _MODEL, query="任务", workspace=tmp_path
-        )
+        await context_manager.prepare(_session_with_snapshot(), _MODEL, workspace=tmp_path)
 
 
 @pytest.mark.parametrize("system_prompt", ["", " ", "\n\t", "\u3000"])
@@ -149,9 +143,7 @@ async def test_context_uses_trimmed_base_prompt_without_resources(tmp_path: Path
         compaction_engine=_compaction_engine(input_limit=100_000), system_prompt=" \n基础提示\t "
     )
 
-    prepared = await context_manager.prepare(
-        _session_with_snapshot(), _MODEL, query="任务", workspace=tmp_path
-    )
+    prepared = await context_manager.prepare(_session_with_snapshot(), _MODEL, workspace=tmp_path)
 
     assert prepared.system_prompt == "基础提示"
     assert prepared.messages == _context_snapshot().messages
@@ -173,33 +165,22 @@ async def test_role_prompt_is_counted_in_shared_compaction_budget(tmp_path: Path
     )
     snapshot = _context_snapshot(count=2)
     prepared = await context_manager.prepare(
-        _session_with_snapshot(snapshot), _MODEL, query="任务", workspace=tmp_path
+        _session_with_snapshot(snapshot), _MODEL, workspace=tmp_path
     )
     assert prepared.messages == snapshot.messages
 
     child_context_manager = context_manager.with_system_prompt("子角色" * 3000)
     with pytest.raises(CompactionError, match="没有足够的完整消息"):
         await child_context_manager.prepare(
-            _session_with_snapshot(snapshot), _MODEL, query="任务", workspace=tmp_path
+            _session_with_snapshot(snapshot), _MODEL, workspace=tmp_path
         )
 
     prepared = await context_manager.prepare(
-        _session_with_snapshot(snapshot), _MODEL, query="任务", workspace=tmp_path
+        _session_with_snapshot(snapshot), _MODEL, workspace=tmp_path
     )
     assert prepared.system_prompt == "父角色"
     assert prepared.messages == snapshot.messages
     assert not adapter.requests
-
-
-def test_context_query_resolution_uses_latest_original_user_message():
-    assert ContextManager.resolve_query(()) == "继续当前任务"
-    assert ContextManager.resolve_query((UserMessage("先分析"), UserMessage("再测试"))) == "再测试"
-    assert (
-        ContextManager.resolve_query(
-            (UserMessage("原始任务"), AssistantMessage((TextBlock("回复"),), LlmStopReason.STOP))
-        )
-        == "原始任务"
-    )
 
 
 class SummaryLlm(LlmAdapter):
@@ -441,7 +422,7 @@ async def test_context_manager_loads_workspace_rules(tmp_path) -> None:
         project_rules=ProjectRules(),
     )
 
-    result = await context_manager.build_system_context("继续实现", tmp_path)
+    result = await context_manager.build_system_context(tmp_path)
 
     assert "# 项目规则" in result
     assert "只修改工作区内文件" in result
@@ -455,13 +436,8 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
         "---\nname: python-style\ndescription: Python style\n---\n使用类型注解\n",
         encoding="utf-8",
     )
-    memory_store = MemoryStore(tmp_path, tmp_path / "user-memory")
-    await memory_store.save(
-        MemoryEntry("architecture", "architecture decision", "保持线性会话"),
-        expected_revision="0",
-        session_id="test",
-        tool_call_id="call",
-    )
+    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    await memory_store.add("memory", "保持线性会话")
     context_manager = ContextManager(
         system_prompt="测试提示",
         compaction_engine=CompactionEngine(llm_client=LlmClient(SummaryLlm())),
@@ -469,7 +445,7 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
         memory_store=memory_store,
     )
 
-    result = await context_manager.build_system_context("review architecture decision", tmp_path)
+    result = await context_manager.build_system_context(tmp_path)
 
     assert "python-style" in result
     assert "python-style (project)" in result
@@ -831,7 +807,7 @@ async def test_context_prepare_preserves_session_error_boundary(
     compact = AsyncMock(return_value=plan)
     monkeypatch.setattr(context_manager, "compact_if_needed", compact)
     with pytest.raises(ContextSessionError, match="会话操作失败") as caught:
-        await context_manager.prepare(session, _MODEL, query="任务", workspace=tmp_path)
+        await context_manager.prepare(session, _MODEL, workspace=tmp_path)
     assert caught.value.__cause__ is failure
     if stage == "snapshot":
         compact.assert_not_awaited()
@@ -858,7 +834,7 @@ async def test_context_prepare_does_not_wrap_cancellation(
     }
     operations[stage].side_effect = asyncio.CancelledError
     with pytest.raises(asyncio.CancelledError):
-        await context_manager.prepare(session, _MODEL, query="任务", workspace=tmp_path)
+        await context_manager.prepare(session, _MODEL, workspace=tmp_path)
     if stage != "commit":
         session.compact.assert_not_awaited()
 
@@ -869,7 +845,7 @@ async def test_context_prepare_without_compaction_never_writes_session(
     snapshot = _context_snapshot()
     session = _session_with_snapshot(snapshot)
     context_manager = ContextManager(_compaction_engine(input_limit=100_000), system_prompt="基础")
-    prepared = await context_manager.prepare(session, _MODEL, query="任务", workspace=tmp_path)
+    prepared = await context_manager.prepare(session, _MODEL, workspace=tmp_path)
     assert prepared.messages == snapshot.messages
     session.compact.assert_not_awaited()
 
@@ -883,7 +859,6 @@ async def test_forced_context_prepare_without_compaction_plan_does_not_write_ses
         await context_manager.prepare(
             session,
             _MODEL,
-            query="任务",
             workspace=tmp_path,
             trigger=CompactionTrigger.CONTEXT_OVERFLOW,
         )

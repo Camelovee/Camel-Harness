@@ -127,8 +127,17 @@ def test_windows_safe_open_preserves_missing_file_semantics(monkeypatch, tmp_pat
     assert error.value.errno == errno.ENOENT
 
 
-@pytest.mark.parametrize("name", ["CON", "con", "NUL", "COM1", "LPT9"])
-async def test_windows_memory_names_cannot_open_reserved_devices(monkeypatch, tmp_path, name):
-    monkeypatch.setattr(memory, "IS_WINDOWS", True)
-    with pytest.raises(ValueError, match="不安全"):
-        await memory.MemoryStore(tmp_path / "project", tmp_path / "user").get(name)
+async def test_memory_uses_fixed_filenames_and_rejects_file_links(tmp_path):
+    from camel_harness.agent.config import MemorySettings
+
+    memory_store = memory.MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user")
+    await memory_store.add("memory", "内容")
+    path = tmp_path / ".camel" / "memory" / "MEMORY.md"
+    assert path.exists()
+
+    path.unlink()
+    outside = tmp_path / "outside.md"
+    outside.write_text("外部内容", encoding="utf-8")
+    path.symlink_to(outside)
+    with pytest.raises(ValueError, match="符号链接"):
+        await memory_store.snapshot("memory")

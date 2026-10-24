@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 from camel_backend.main import create_app
 from camel_harness.agent import platform_io
-from camel_harness.agent.config import AgentSettings
-from camel_harness.agent.resources import MemoryEntry, MemoryStore
+from camel_harness.agent.config import AgentSettings, MemorySettings
+from camel_harness.agent.resources import MemoryStore
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import ToolContext, ToolResult
@@ -30,24 +30,19 @@ def test_backend_starts_with_isolated_default_config_and_can_create_session(tmp_
 
 
 async def test_memory_native_create_update_read_delete(tmp_path):
-    memory_store = MemoryStore(tmp_path / "项目 with spaces", tmp_path / "user-memory")
-    initial = await memory_store.save(
-        MemoryEntry("rules", "中文说明", "保留中文和换行\n第二行"),
-        expected_revision="0",
-        session_id="s",
-        tool_call_id="call",
+    memory_store = MemoryStore(
+        tmp_path / "项目 with spaces",
+        MemorySettings(),
+        user_root=tmp_path / "user-memory",
     )
-    assert await memory_store.get("rules") == initial
-    updated = await memory_store.save(
-        MemoryEntry("rules", "说明", "新正文"),
-        expected_revision=initial.revision,
-        session_id="s",
-        tool_call_id="call2",
-    )
-    assert updated.revision != initial.revision
-    assert await memory_store.get("rules") == updated
-    assert await memory_store.delete("rules", "project", expected_revision=updated.revision)
-    assert await memory_store.get("rules") is None
+    assert (await memory_store.add("memory", "保留中文和换行\n第二行")).changed
+    assert (await memory_store.snapshot("memory")).entries == ("保留中文和换行\n第二行",)
+
+    assert (await memory_store.replace("memory", "第二行", "新正文")).changed
+    assert (await memory_store.snapshot("memory")).entries == ("新正文",)
+
+    assert (await memory_store.remove("memory", "新正文")).changed
+    assert (await memory_store.snapshot("memory")).entries == ()
 
 
 async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
@@ -67,7 +62,9 @@ async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
     try:
         assert platform_io.is_link(link)
         with pytest.raises(ValueError, match="符号链接"):
-            await MemoryStore(workspace, tmp_path / "user").get("rules")
+            await MemoryStore(workspace, MemorySettings(), user_root=tmp_path / "user").snapshot(
+                "memory"
+            )
         assert list(outside.iterdir()) == []
     finally:
         if sys.platform == "win32":

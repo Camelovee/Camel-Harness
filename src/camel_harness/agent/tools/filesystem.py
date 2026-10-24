@@ -78,7 +78,7 @@ def _check_memory_write(workspace: Path, path: Path) -> None:
     """通用文件工具不能绕过记忆审批，包含符号链接的规范路径别名。"""
     roots = (workspace.resolve() / ".camel" / "memory", Path.home() / ".camel" / "memory")
     if any(path.is_relative_to(root.resolve()) for root in roots):
-        raise ToolNotExecutedError("记忆目录只能通过需审批的 save_memory/delete_memory 修改")
+        raise ToolNotExecutedError("记忆目录只能通过 memory 工具维护")
 
 
 class ReadFileTool(Tool):

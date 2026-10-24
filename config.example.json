@@ -18,8 +18,9 @@
   "default_model_id": "main",
   "memory": {
     "enabled": true,
-    "max_entries": 5,
-    "context_tokens": 2000
+    "user_profile_enabled": true,
+    "memory_char_limit": 2200,
+    "user_char_limit": 1375
   },
   "compaction": {
     "enabled": true,

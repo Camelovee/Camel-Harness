@@ -42,13 +42,14 @@ class CompactionSettings(BaseModel):
 
 
 class MemorySettings(BaseModel):
-    """长期记忆的自动注入预算，与压缩及回答预算相互独立。"""
+    """长期记忆的目标开关与字符上限；注入内容随系统提示逐轮重建。"""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = True
-    max_entries: int = Field(default=5, gt=0)
-    context_tokens: int = Field(default=2000, gt=0)
+    user_profile_enabled: bool = True
+    memory_char_limit: int = Field(default=2_200, gt=0)
+    user_char_limit: int = Field(default=1_375, gt=0)
 
 
 class ModelCapabilities(BaseModel):
@@ -132,7 +133,7 @@ class AgentSettings(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_model_budgets(cls, value: Any) -> Any:
+    def migrate_legacy_fields(cls, value: Any) -> Any:
         """仅在读取边界迁移旧全局字段；保存不再产生旧字段。"""
         if not isinstance(value, dict):
             return value
@@ -140,6 +141,13 @@ class AgentSettings(BaseModel):
         legacy_output = TypeAdapter(PositiveInt).validate_python(
             settings_data.pop("max_output_tokens", 16_384)
         )
+        memory_data = settings_data.get("memory")
+        if isinstance(memory_data, dict):
+            memory_data = dict(memory_data)
+            # 旧检索预算已由双文件字符上限取代，读取时丢弃。
+            memory_data.pop("max_entries", None)
+            memory_data.pop("context_tokens", None)
+            settings_data["memory"] = memory_data
         compaction_data = settings_data.get("compaction", {})
         legacy_window = 128_000
         if isinstance(compaction_data, dict):

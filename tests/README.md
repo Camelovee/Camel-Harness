@@ -9,7 +9,7 @@
 | 模型协议 | `contract/test_provider_*`、`unit/test_llm_*` | 官方 SDK 的事件映射、用量、工具参数完整性和首事件前重试 |
 | Agent 运行 | `acceptance/` | steering、并发启动、取消与恢复、事件保存顺序、超限和截断恢复、子任务资源所有权 |
 | 文件与 Shell | `integration/test_file_mutations.py`、`test_shell_output.py`、`test_tool_storage_failure.py` | 原子替换、排队/在途取消、进程树清理及归档失败后不重复副作用 |
-| 会话与记忆 | `integration/test_session_*`、`test_jsonl_session_store.py`、`test_memory.py` | 分支重放、损坏日志、跨进程竞争、权限、路径边界和版本冲突 |
+| 会话与记忆 | `integration/test_session_*`、`test_jsonl_session_store.py`、`test_memory.py`、`test_migrate_memory.py` | 分支重放、损坏日志、跨进程竞争、记忆字符上限、权限、路径边界和旧数据迁移 |
 | Web 入口 | HTTP/SSE、设置与多会话测试，`webui/tests/` | 请求契约、断连取消、审批与并行会话隔离 |
 | 模块依赖 | `uv run lint-imports`、`unit/test_webui_architecture.py` | Python 单向依赖和前端 `app → features → shared` 边界 |
 

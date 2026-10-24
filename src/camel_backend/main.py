@@ -33,7 +33,9 @@ async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> A
     """Web 入口注入的本地可选能力：Skill、Memory、MCP 与子 Agent 委派。"""
 
     skills = Skills(workspace)
-    memory_store = MemoryStore(workspace) if agent_settings.memory.enabled else None
+    memory_store = (
+        MemoryStore(workspace, agent_settings.memory) if agent_settings.memory.enabled else None
+    )
     mcp_manager = McpManager(workspace, workspace / agent_settings.mcp_config)
     await mcp_manager.start()
     for error in mcp_manager.errors:

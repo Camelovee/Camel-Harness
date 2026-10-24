@@ -464,11 +464,11 @@ async def test_steering_refreshes_dynamic_context_without_accumulating_sections(
 ):
     runtime = SteerableLlm()
     agent, _ = await build_test_agent(tmp_path, "refresh-context", runtime)
-    queries: list[str] = []
+    builds: list[int] = []
 
-    async def build_context(prompt, workspace):
-        queries.append(prompt)
-        return f"动态上下文：{prompt}"
+    async def build_context(workspace):
+        builds.append(len(builds) + 1)
+        return f"动态上下文{len(builds)}"
 
     monkeypatch.setattr(agent._context_manager, "build_system_context", build_context)
     task = asyncio.create_task(agent.run("先分析", model=_MODEL))
@@ -476,9 +476,10 @@ async def test_steering_refreshes_dynamic_context_without_accumulating_sections(
     await agent.steer("改为测试")
     runtime.release.set()
     await task
-    assert queries == ["先分析", "改为测试"]
-    assert runtime.requests[0].system_prompt == "基础提示\n\n动态上下文：先分析"
-    assert runtime.requests[1].system_prompt == "基础提示\n\n动态上下文：改为测试"
+    assert builds == [1, 2]
+    assert runtime.requests[0].system_prompt == "基础提示\n\n动态上下文1"
+    assert runtime.requests[1].system_prompt == "基础提示\n\n动态上下文2"
+    assert all(request.system_prompt.count("动态上下文") == 1 for request in runtime.requests)
 
 
 async def test_resource_failure_is_not_classified_as_provider_failure(tmp_path, monkeypatch):
@@ -495,15 +496,13 @@ async def test_resource_failure_is_not_classified_as_provider_failure(tmp_path, 
     assert events[-1].error == "规则无法读取"
 
 
-async def test_new_prompt_does_not_read_raw_history_for_resource_query(tmp_path, monkeypatch):
+async def test_new_prompt_does_not_read_raw_history_before_first_request(tmp_path, monkeypatch):
     agent, session_manager = await build_test_agent(tmp_path, "new-query", CompletingLlm())
-    queries = []
 
     async def unexpected_read():
         raise AssertionError("新输入不应额外读取原始历史")
 
-    async def build_context(query, workspace):
-        queries.append(query)
+    async def build_context(workspace):
         return ""
 
     monkeypatch.setattr(agent._session, "messages", unexpected_read)
@@ -512,22 +511,7 @@ async def test_new_prompt_does_not_read_raw_history_for_resource_query(tmp_path,
     agent.subscribe(events.append)
     await agent.run("当前任务", model=_MODEL)
     assert events[-1].status == "completed"
-    assert queries == ["当前任务"]
     assert len(await session_manager.bind("new-query").messages()) == 2
-
-
-async def test_resume_uses_context_manager_to_select_last_user_query(tmp_path, monkeypatch):
-    agent, session_manager = await build_test_agent(tmp_path, "resume-query", CompletingLlm())
-    await session_manager.bind("resume-query").append_message(UserMessage("继续实现测试"))
-    queries = []
-
-    async def build_context(query, workspace):
-        queries.append(query)
-        return ""
-
-    monkeypatch.setattr(agent._context_manager, "build_system_context", build_context)
-    await agent.resume(model=_MODEL)
-    assert queries == ["继续实现测试"]
 
 
 async def test_close_failure_allows_cleanup_retry(tmp_path):

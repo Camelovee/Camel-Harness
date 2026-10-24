@@ -24,7 +24,7 @@ from ..tools import (
 from ..tools.file_result_storage import FileToolResultStorage
 from ..tools.filesystem import ReadFileTool
 
-_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill", "search_memory", "read_memory"})
+_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill"})
 _GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
 
 

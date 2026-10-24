@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 按 Hermes 方式改造长期记忆：使用 MEMORY.md / USER.md 两个有界文件（默认 2200 / 1375 字符）、单个 `memory` 工具以 add/replace/remove 和唯一子串维护条目，并在每个 Turn 完整注入系统提示。记忆写入在 PLAN 外自动允许，不再逐次审批；新增 `scripts/migrate_memory.py` 迁移旧 JSON 条目。原检索、分页读取、版本校验和审批接口移除，配置字段改为 `user_profile_enabled`、`memory_char_limit`、`user_char_limit`。
+
 - 分离上下文压缩决策与执行：ContextManager 依据压缩开关、最少消息、压力阈值和容量保护判断是否需要压缩；CompactionEngine 只负责选择安全切点、生成摘要并校验压缩结果，强制恢复仍要求历史严格缩小。压缩配置、错误分类、会话提交和持久化格式保持不变。
 
 - 上下文准备流程由 ContextManager 按次借用 Session 完成：读取快照、组装提示、生成并提交压缩计划，成功后返回系统提示和消息。Agent 只接入用量统计和故障分类；Session 继续负责存储一致性与在途取消。依赖约束允许公开 Session 接口，禁止直接操作存储及依赖运行状态。
