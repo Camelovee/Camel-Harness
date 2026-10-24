@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from camel_harness.llm import LlmModel, LlmUsage, Message, ToolDefinition, UserMessage
@@ -10,11 +11,20 @@ from ..config import MemorySettings
 from ..resources import MemoryStore, ProjectRules, Skills
 from ..session.events import ContextSnapshot
 from ..session.manager import Session
-from .compaction import CompactionEngine, CompactionError, CompactionResult, CompactionTrigger
+from .compaction import CompactionEngine, CompactionError, CompactionResult
+from .output_budget import context_input_limit
 from .token_counting import (
     estimate_context_overhead_tokens,
+    estimate_context_tokens,
     estimate_text_tokens,
 )
+
+
+class CompactionTrigger(StrEnum):
+    """触发上下文准备时压缩评估的原因。"""
+
+    PRESSURE = "pressure"
+    CONTEXT_OVERFLOW = "context_overflow"
 
 
 class ContextResourceError(RuntimeError):
@@ -107,8 +117,6 @@ class ContextManager:
             system_prompt=system_prompt,
             tool_definitions=tool_definitions,
         )
-        if compacted is None and trigger is CompactionTrigger.CONTEXT_OVERFLOW:
-            raise CompactionError("上下文溢出恢复未生成安全压缩计划，未重发请求")
         if compacted is not None:
             snapshot = await self._commit_compaction(session, snapshot, compacted)
         return PreparedContext(system_prompt, snapshot.messages)
@@ -206,13 +214,33 @@ class ContextManager:
         system_prompt: str = "",
         tool_definitions: tuple[ToolDefinition, ...] = (),
     ) -> CompactionResult | None:
-        """根据只读 ContextSnapshot 生成压缩计划，不执行会话持久化。"""
+        """判断是否需要压缩；需要时才生成计划，不执行会话持久化。"""
 
+        compaction_settings = self._compaction_engine.compaction_settings
+        input_limit = context_input_limit(model, compaction_settings.reserve_tokens)
+        if input_limit <= 0:
+            raise CompactionError("上下文容量不足：模型窗口无法容纳配置的输出与压缩预留")
         overhead = estimate_context_overhead_tokens(system_prompt, tool_definitions)
-        return await self._compaction_engine.compact_if_needed(
+        estimated_tokens = estimate_context_tokens(
+            snapshot, model, context_overhead_tokens=overhead
+        ).total_tokens
+        if not compaction_settings.enabled:
+            if trigger is CompactionTrigger.CONTEXT_OVERFLOW or estimated_tokens >= input_limit:
+                raise CompactionError("上下文超出安全预算且自动压缩未开启")
+            return None
+        if (
+            len(snapshot.nodes) < compaction_settings.min_messages
+            and trigger is not CompactionTrigger.CONTEXT_OVERFLOW
+        ):
+            if estimated_tokens >= input_limit:
+                raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
+            return None
+        if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < input_limit:
+            return None
+        return await self._compaction_engine.compact(
             snapshot,
             model,
-            trigger=trigger,
+            require_reduction=trigger is CompactionTrigger.CONTEXT_OVERFLOW,
             on_usage=on_usage,
             context_overhead_tokens=overhead,
         )

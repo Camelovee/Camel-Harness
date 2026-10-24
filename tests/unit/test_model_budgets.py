@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from camel_harness.agent.config import AgentSettings, ModelInput, ModelProfile
-from camel_harness.agent.context import CompactionEngine
 from camel_harness.agent.context.output_budget import (
     ContextBudgetError,
     context_input_limit,
@@ -99,6 +98,7 @@ def test_output_budget_caps_reserves_and_rejects_exhaustion() -> None:
 
 async def test_selected_model_controls_capacity_even_when_compaction_disabled() -> None:
     from camel_harness.agent.config import CompactionSettings
+    from camel_harness.agent.context import CompactionEngine, ContextManager
     from camel_harness.agent.context.compaction import CompactionError
 
     class NoRequestsLlm(LlmAdapter):
@@ -113,13 +113,16 @@ async def test_selected_model_controls_capacity_even_when_compaction_disabled() 
             yield StreamFailed("容量保护不应请求模型")
 
     adapter = NoRequestsLlm()
-    engine = CompactionEngine(LlmClient(adapter), CompactionSettings(enabled=False))
+    context_manager = ContextManager(
+        compaction_engine=CompactionEngine(LlmClient(adapter), CompactionSettings(enabled=False)),
+        system_prompt="基础",
+    )
     snapshot = ContextSnapshot(nodes=(ContextNode("u", UserMessage("长" * 20000)),))
     large = LlmModel("fake", "m", context_window_tokens=262144)
     small = replace(large, context_window_tokens=32768)
-    assert await engine.compact_if_needed(snapshot, large) is None
+    assert await context_manager.compact_if_needed(snapshot, large) is None
     with pytest.raises(CompactionError, match="未开启"):
-        await engine.compact_if_needed(snapshot, small)
+        await context_manager.compact_if_needed(snapshot, small)
     assert adapter.calls == 0
 
 

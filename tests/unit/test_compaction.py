@@ -55,7 +55,7 @@ def _session_with_snapshot(snapshot: ContextSnapshot | None = None) -> AsyncMock
 async def test_context_prepare_returns_committed_messages_and_keeps_original_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    compaction_engine = _compaction_engine(threshold=100_000)
+    compaction_engine = _compaction_engine()
     context_manager = ContextManager(
         system_prompt=" \n基础\t ", compaction_engine=compaction_engine
     )
@@ -78,7 +78,7 @@ async def test_context_prepare_returns_committed_messages_and_keeps_original_sna
         return plan
 
     monkeypatch.setattr(context_manager, "build_system_context", build_context)
-    monkeypatch.setattr(compaction_engine, "compact_if_needed", plan_compaction)
+    monkeypatch.setattr(compaction_engine, "compact", plan_compaction)
     tool_definitions = (ToolDefinition("read_file", "读取", {"type": "object"}),)
     for query in ("第一次", "第二次"):
         session = _session_with_snapshot(snapshot)
@@ -111,7 +111,7 @@ async def test_context_prepare_keeps_resource_errors_distinct_and_propagates_can
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     context_manager = ContextManager(
-        system_prompt="基础", compaction_engine=_compaction_engine(threshold=100_000)
+        system_prompt="基础", compaction_engine=_compaction_engine(input_limit=100_000)
     )
 
     async def fail(*args: object) -> None:
@@ -135,7 +135,7 @@ async def test_context_prepare_keeps_resource_errors_distinct_and_propagates_can
 
 @pytest.mark.parametrize("system_prompt", ["", " ", "\n\t", "\u3000"])
 def test_context_rejects_empty_base_prompt_and_role_prompt(system_prompt: str) -> None:
-    compaction_engine = _compaction_engine(threshold=100_000)
+    compaction_engine = _compaction_engine(input_limit=100_000)
     with pytest.raises(ValueError, match="系统提示不能为空"):
         ContextManager(compaction_engine=compaction_engine, system_prompt=system_prompt)
 
@@ -146,7 +146,7 @@ def test_context_rejects_empty_base_prompt_and_role_prompt(system_prompt: str) -
 
 async def test_context_uses_trimmed_base_prompt_without_resources(tmp_path: Path) -> None:
     context_manager = ContextManager(
-        compaction_engine=_compaction_engine(threshold=100_000), system_prompt=" \n基础提示\t "
+        compaction_engine=_compaction_engine(input_limit=100_000), system_prompt=" \n基础提示\t "
     )
 
     prepared = await context_manager.prepare(
@@ -226,20 +226,44 @@ class RecordingSummaryLlm(SummaryLlm):
             yield event
 
 
-def _compaction_engine(
-    threshold: int = 384,
+def _compaction_settings(
+    *,
+    input_limit: int = 384,
+    enabled: bool = True,
     min_messages: int = 8,
-) -> CompactionEngine:
-    llm_client = LlmClient(SummaryLlm())
+) -> CompactionSettings:
+    """用保留量反推输入上限，便于直接表达预算边界。"""
+    return CompactionSettings(
+        enabled=enabled,
+        reserve_tokens=128_000 - input_limit,
+        keep_recent_tokens=140,
+        max_output_tokens=64,
+        retry_max_output_tokens=128,
+        min_messages=min_messages,
+    )
+
+
+def _compaction_engine(*, input_limit: int = 384) -> CompactionEngine:
     return CompactionEngine(
-        llm_client=llm_client,
-        compaction_settings=CompactionSettings(
-            reserve_tokens=128_000 - threshold,
-            keep_recent_tokens=140,
-            max_output_tokens=64,
-            retry_max_output_tokens=128,
-            min_messages=min_messages,
+        llm_client=LlmClient(SummaryLlm()),
+        compaction_settings=_compaction_settings(input_limit=input_limit),
+    )
+
+
+def _context_manager(
+    *,
+    input_limit: int = 384,
+    enabled: bool = True,
+    min_messages: int = 8,
+) -> ContextManager:
+    return ContextManager(
+        compaction_engine=CompactionEngine(
+            llm_client=LlmClient(SummaryLlm()),
+            compaction_settings=_compaction_settings(
+                input_limit=input_limit, enabled=enabled, min_messages=min_messages
+            ),
         ),
+        system_prompt="基础",
     )
 
 
@@ -259,16 +283,15 @@ def _context_snapshot(count: int = 8) -> ContextSnapshot:
 async def test_compaction_keeps_recent_token_budget() -> None:
     compaction_engine = _compaction_engine()
 
-    result = await compaction_engine.compact_if_needed(_context_snapshot(), _MODEL)
+    result = await compaction_engine.compact(_context_snapshot(), _MODEL)
 
-    assert result is not None
     assert result.first_kept_entry_id == "entry-6"
     assert result.tokens_before > 0
     assert "保留目标、决策和待办。" in result.summary
 
 
-async def test_basic_compaction_skips_history_below_pressure() -> None:
-    result = await _compaction_engine(threshold=100_000).compact_if_needed(
+async def test_context_manager_skips_history_below_pressure() -> None:
+    result = await _context_manager(input_limit=100_000).compact_if_needed(
         _context_snapshot(), _MODEL
     )
 
@@ -283,15 +306,12 @@ async def test_usage_controls_pressure_but_cut_and_tokens_before_use_content_est
         last_message, provider=_MODEL.provider, model=_MODEL.model, usage=LlmUsage(100, 20)
     )
     snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
-    compaction_engine = _compaction_engine(threshold=600)
-    assert (
-        await compaction_engine.compact_if_needed(snapshot, _MODEL, context_overhead_tokens=500)
-        is None
-    )
+    context_manager = _context_manager(input_limit=600)
+    assert await context_manager.compact_if_needed(snapshot, _MODEL) is None
 
     last_message = replace(last_message, usage=LlmUsage(5000, 100))
     snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
-    result = await compaction_engine.compact_if_needed(snapshot, _MODEL)
+    result = await context_manager.compact_if_needed(snapshot, _MODEL)
     assert result is not None
     assert result.first_kept_entry_id == "entry-6"
     assert result.tokens_before == sum(
@@ -304,16 +324,7 @@ async def test_usage_controls_pressure_but_cut_and_tokens_before_use_content_est
 async def test_usage_guards_capacity_with_compression_disabled_or_short_history(
     enabled: bool,
 ) -> None:
-    compaction_engine = CompactionEngine(
-        llm_client=LlmClient(SummaryLlm()),
-        compaction_settings=CompactionSettings(
-            enabled=enabled,
-            reserve_tokens=128_000 - 2048,
-            keep_recent_tokens=128,
-            max_output_tokens=64,
-            retry_max_output_tokens=128,
-        ),
-    )
+    context_manager = _context_manager(input_limit=2048, enabled=enabled)
     answer = AssistantMessage(
         (TextBlock("结果"),),
         LlmStopReason.STOP,
@@ -323,11 +334,11 @@ async def test_usage_guards_capacity_with_compression_disabled_or_short_history(
     )
     snapshot = ContextSnapshot(nodes=(ContextNode("answer", answer),))
     with pytest.raises(CompactionError, match="安全预算|完整消息"):
-        await compaction_engine.compact_if_needed(snapshot, _MODEL)
+        await context_manager.compact_if_needed(snapshot, _MODEL)
     snapshot = replace(
         snapshot, nodes=(ContextNode("answer", replace(answer, usage=LlmUsage(100, 20))),)
     )
-    assert await compaction_engine.compact_if_needed(snapshot, _MODEL) is None
+    assert await context_manager.compact_if_needed(snapshot, _MODEL) is None
 
 
 async def test_projected_capacity_still_counts_current_prompt_after_usage_trigger() -> None:
@@ -339,32 +350,44 @@ async def test_projected_capacity_still_counts_current_prompt_after_usage_trigge
     )
     snapshot = replace(snapshot, nodes=(*snapshot.nodes[:-1], ContextNode("entry-7", last_message)))
     with pytest.raises(CompactionError, match="仍超过安全预算"):
-        await _compaction_engine().compact_if_needed(snapshot, _MODEL, context_overhead_tokens=384)
+        await _compaction_engine().compact(snapshot, _MODEL, context_overhead_tokens=384)
 
 
 async def test_short_history_cannot_bypass_context_capacity_check():
     snapshot = ContextSnapshot("entry", "entry", (ContextNode("entry", UserMessage("。" * 5000)),))
     with pytest.raises(CompactionError, match="没有足够"):
-        await _compaction_engine().compact_if_needed(snapshot, _MODEL)
+        await _context_manager().compact_if_needed(snapshot, _MODEL)
 
 
 async def test_disabled_compaction_does_not_disable_capacity_guard():
-    compaction_settings = CompactionSettings(enabled=False)
     snapshot = ContextSnapshot(
         "entry", "entry", (ContextNode("entry", UserMessage("。" * 130_000)),)
     )
     with pytest.raises(CompactionError, match="未开启"):
-        await CompactionEngine(
-            llm_client=LlmClient(SummaryLlm()), compaction_settings=compaction_settings
-        ).compact_if_needed(snapshot, _MODEL)
+        await _context_manager(enabled=False).compact_if_needed(snapshot, _MODEL)
 
 
 async def test_context_overflow_trigger_ignores_pressure_threshold() -> None:
-    result = await _compaction_engine(threshold=100_000).compact_if_needed(
+    result = await _context_manager(input_limit=100_000).compact_if_needed(
         _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
     )
 
     assert result is not None
+
+
+async def test_capacity_failure_precedes_disabled_compaction() -> None:
+    """容量不足必须先于压缩开关报告，保持原有错误顺序。"""
+    context_manager = ContextManager(
+        compaction_engine=CompactionEngine(
+            llm_client=LlmClient(SummaryLlm()),
+            compaction_settings=CompactionSettings(enabled=False, reserve_tokens=32_768),
+        ),
+        system_prompt="基础",
+    )
+    model = replace(_MODEL, context_window_tokens=32_768)
+
+    with pytest.raises(CompactionError, match="容量不足"):
+        await context_manager.compact_if_needed(_context_snapshot(), model)
 
 
 async def test_basic_compaction_does_not_reinject_reasoning() -> None:
@@ -388,10 +411,10 @@ async def test_basic_compaction_does_not_reinject_reasoning() -> None:
         ),
     )
 
-    await compaction_engine.compact_if_needed(
+    await compaction_engine.compact(
         context_snapshot,
         _MODEL,
-        trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+        require_reduction=True,
     )
 
     transcript = adapter.requests[0].messages[0]
@@ -502,10 +525,10 @@ async def test_length_retry_has_independent_budget_and_counts_both_requests() ->
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
     compaction_engine = CompactionEngine(llm_client=LlmClient(adapter))
     charged: list[LlmUsage] = []
-    result = await compaction_engine.compact_if_needed(
+    result = await compaction_engine.compact(
         _context_snapshot(),
         _MODEL,
-        trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+        require_reduction=True,
         on_usage=charged.append,
     )
     assert result is not None
@@ -530,8 +553,8 @@ async def test_failed_summary_never_returns_a_commit_plan(reasons, text, error) 
     snapshot = _context_snapshot()
     before = snapshot.nodes
     with pytest.raises(CompactionError, match=error):
-        await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
-            snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+        await CompactionEngine(llm_client=LlmClient(adapter)).compact(
+            snapshot, _MODEL, require_reduction=True
         )
     assert snapshot.nodes == before
     assert len(adapter.requests) == len(reasons)
@@ -548,10 +571,10 @@ async def test_compaction_rejects_summary_input_larger_than_context_window() -> 
     with pytest.raises(CompactionError, match="安全上下文预算"):
         await CompactionEngine(
             llm_client=LlmClient(adapter), compaction_settings=compaction_settings
-        ).compact_if_needed(
+        ).compact(
             _context_snapshot(count=100),
             replace(_MODEL, context_window_tokens=8192, max_output_tokens=128),
-            trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+            require_reduction=True,
         )
     assert adapter.requests == []
 
@@ -560,8 +583,8 @@ async def test_retry_budget_is_not_reduced_by_previous_request_usage() -> None:
     snapshot = _context_snapshot()
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
     charged: list[LlmUsage] = []
-    result = await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
-        snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW, on_usage=charged.append
+    result = await CompactionEngine(llm_client=LlmClient(adapter)).compact(
+        snapshot, _MODEL, require_reduction=True, on_usage=charged.append
     )
     assert result is not None
     assert [request.max_output_tokens for request in adapter.requests] == [8192, 16384]
@@ -579,7 +602,7 @@ async def test_oversized_completed_summary_is_not_committed() -> None:
     with pytest.raises(CompactionError, match="仍超过安全预算"):
         await CompactionEngine(
             llm_client=LlmClient(adapter), compaction_settings=compaction_settings
-        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
+        ).compact(_context_snapshot(), _MODEL, require_reduction=True)
     assert len(adapter.requests) == 1
 
 
@@ -594,10 +617,10 @@ async def test_cancelled_compaction_propagates_and_accounts_known_usage() -> Non
 
     charged: list[LlmUsage] = []
     task = asyncio.create_task(
-        CompactionEngine(llm_client=LlmClient(BlockingSummaryLlm())).compact_if_needed(
+        CompactionEngine(llm_client=LlmClient(BlockingSummaryLlm())).compact(
             _context_snapshot(),
             _MODEL,
-            trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+            require_reduction=True,
             on_usage=charged.append,
         )
     )
@@ -610,12 +633,16 @@ async def test_cancelled_compaction_propagates_and_accounts_known_usage() -> Non
 
 async def test_disabled_compaction_does_not_call_provider() -> None:
     adapter = RecordingSummaryLlm()
-    compaction_engine = CompactionEngine(
-        llm_client=LlmClient(adapter), compaction_settings=CompactionSettings(enabled=False)
+    context_manager = ContextManager(
+        compaction_engine=CompactionEngine(
+            llm_client=LlmClient(adapter),
+            compaction_settings=CompactionSettings(enabled=False),
+        ),
+        system_prompt="基础",
     )
-    assert await compaction_engine.compact_if_needed(_context_snapshot(), _MODEL) is None
+    assert await context_manager.compact_if_needed(_context_snapshot(), _MODEL) is None
     with pytest.raises(CompactionError, match="未开启"):
-        await compaction_engine.compact_if_needed(
+        await context_manager.compact_if_needed(
             _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
         )
     assert not adapter.requests
@@ -627,10 +654,10 @@ async def test_previous_summary_is_updated_with_new_history() -> None:
     nodes = (
         ContextNode("summary", UserMessage("[Compacted History]\n\n已有约束")),
     ) + snapshot.nodes
-    await CompactionEngine(llm_client=LlmClient(adapter)).compact_if_needed(
+    await CompactionEngine(llm_client=LlmClient(adapter)).compact(
         ContextSnapshot(snapshot.leaf_id, snapshot.revision, nodes),
         _MODEL,
-        trigger=CompactionTrigger.CONTEXT_OVERFLOW,
+        require_reduction=True,
     )
     assert "更新" in (adapter.requests[0].system_prompt or "")
     assert "已有约束" in adapter.requests[0].messages[0].content
@@ -647,8 +674,8 @@ async def test_compaction_timeout_never_retries() -> None:
 
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.05):
-            await CompactionEngine(llm_client=LlmClient(SlowSummaryLlm())).compact_if_needed(
-                _context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+            await CompactionEngine(llm_client=LlmClient(SlowSummaryLlm())).compact(
+                _context_snapshot(), _MODEL, require_reduction=True
             )
     assert len(requests) == 1
 
@@ -681,9 +708,7 @@ async def test_tool_boundary_is_not_split_by_recent_budget() -> None:
         llm_client=LlmClient(adapter),
         compaction_settings=CompactionSettings(min_messages=2, keep_recent_tokens=50),
     )
-    result = await compaction_engine.compact_if_needed(
-        snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
-    )
+    result = await compaction_engine.compact(snapshot, _MODEL, require_reduction=True)
     assert result is not None
     assert result.first_kept_entry_id == "last"
     transcript = adapter.requests[0].messages[0].content
@@ -711,9 +736,7 @@ async def test_overflow_retains_entire_final_multi_tool_interval() -> None:
         llm_client=LlmClient(adapter), compaction_settings=CompactionSettings(keep_recent_tokens=50)
     )
 
-    result = await compaction_engine.compact_if_needed(
-        snapshot, _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW
-    )
+    result = await compaction_engine.compact(snapshot, _MODEL, require_reduction=True)
 
     assert result is not None
     assert result.first_kept_entry_id == "calls"
@@ -778,15 +801,15 @@ async def test_recent_and_summary_budgets_are_validated_against_selected_model()
     with pytest.raises(CompactionError, match="上下文空间"):
         await CompactionEngine(
             LlmClient(SummaryLlm()), CompactionSettings(keep_recent_tokens=120_000)
-        ).compact_if_needed(_context_snapshot(), _MODEL, trigger=CompactionTrigger.CONTEXT_OVERFLOW)
+        ).compact(_context_snapshot(), _MODEL, require_reduction=True)
 
 
 async def test_summary_cannot_retry_with_identical_capped_budget() -> None:
     adapter = ScriptedSummaryLlm([LlmStopReason.LENGTH, LlmStopReason.STOP])
     model = replace(_MODEL, max_output_tokens=128)
     with pytest.raises(CompactionError, match="没有增长空间"):
-        await CompactionEngine(LlmClient(adapter)).compact_if_needed(
-            _context_snapshot(), model, trigger=CompactionTrigger.CONTEXT_OVERFLOW
+        await CompactionEngine(LlmClient(adapter)).compact(
+            _context_snapshot(), model, require_reduction=True
         )
     assert len(adapter.requests) == 1
     assert adapter.requests[0].max_output_tokens == 128
@@ -845,19 +868,18 @@ async def test_context_prepare_without_compaction_never_writes_session(
 ) -> None:
     snapshot = _context_snapshot()
     session = _session_with_snapshot(snapshot)
-    context_manager = ContextManager(_compaction_engine(threshold=100_000), system_prompt="基础")
+    context_manager = ContextManager(_compaction_engine(input_limit=100_000), system_prompt="基础")
     prepared = await context_manager.prepare(session, _MODEL, query="任务", workspace=tmp_path)
     assert prepared.messages == snapshot.messages
     session.compact.assert_not_awaited()
 
 
-async def test_forced_context_prepare_requires_a_compaction_plan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_forced_context_prepare_without_compaction_plan_does_not_write_session(
+    tmp_path: Path,
 ) -> None:
     session = _session_with_snapshot()
-    context_manager = ContextManager(_compaction_engine(), system_prompt="基础")
-    monkeypatch.setattr(context_manager, "compact_if_needed", AsyncMock(return_value=None))
-    with pytest.raises(CompactionError, match="未生成安全压缩计划"):
+    context_manager = _context_manager(enabled=False)
+    with pytest.raises(CompactionError, match="未开启"):
         await context_manager.prepare(
             session,
             _MODEL,
