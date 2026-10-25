@@ -25,6 +25,7 @@ class SessionCommitter:
     async def emit_message_start(self, turn_id: str, message_id: str, role: MessageKind) -> None:
         """发送消息开始事件；此时消息尚未生成或保存。"""
 
+        # MessageStart 表达“开始”，不是“已保存”；消费者不能据此假定消息可读取。
         await self._emit(
             MessageStartEvent(
                 session_id=self._agent_run.session_id,
@@ -42,6 +43,8 @@ class SessionCommitter:
         try:
             await self._session.append_message(message)
         except Exception:
+            # 只在仍 RUNNING 时标记，避免覆盖 Turn 内更精确的失败分类；
+            # 随后 re-raise，让上游走异常路径而不是发出一条“已保存”的假确认。
             if self._agent_run.status is RunStatus.RUNNING:
                 self._agent_run.fail(StopReason.SESSION_FAILED)
             raise

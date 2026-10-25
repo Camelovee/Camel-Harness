@@ -63,6 +63,7 @@ class AgentRun:
     sequence: int = 0
     stop_reason: StopReason | None = None
     total_tokens: int = 0
+    # 两个恢复计数器都是 Run 级状态：跨 Turn 累积，没有重置路径。
     context_overflow_recovery_used: bool = False
     consecutive_length_recoveries: int = 0
     last_output_budget: int = 0
@@ -92,6 +93,7 @@ class AgentRun:
         if self.status is not RunStatus.RUNNING:
             raise RuntimeError("只有运行中的 Agent 可以进入下一 Turn")
         if self.turn >= self.max_turns:
+            # 先落停止原因再抛错，避免异常路径掩盖真实终态。
             self.fail(StopReason.MAX_TURNS)
             raise RuntimeError("Agent 已达到最大 Turn 数")
         self.turn += 1
@@ -100,9 +102,12 @@ class AgentRun:
     def next_sequence(self) -> int:
         """返回当前 Run 内全局单调递增的事件序号。"""
 
+        # 序号在事件构造时分配，跨 Turn、跨事件类型共用同一计数器。
         self.sequence += 1
         return self.sequence
 
+    # 三个终态设置器都不加守卫、可互相覆盖；“终态只写一次”完全依赖调用点的
+    # `stop_reason is None` 判断，不能在这里补默认保护。
     def complete(self) -> None:
         self.status = RunStatus.COMPLETED
         self.stop_reason = StopReason.MODEL_COMPLETED
@@ -141,6 +146,8 @@ class SteerResult:
 class RunControl:
     """一个 Agent 当前唯一 Run 的瞬时控制状态。"""
 
+    # accepting_input / abort_requested 是 _run_lock 保护下的闩锁；
+    # done 表示终态事件已交付且清理完成，不等于刚刚进入终态。
     agent_run: AgentRun
     done: asyncio.Event
     owner_task: asyncio.Task[object] | None = None

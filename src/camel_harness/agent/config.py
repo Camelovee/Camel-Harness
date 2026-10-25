@@ -25,6 +25,7 @@ Provider = Literal["anthropic", "openai"]
 class CompactionSettings(BaseModel):
     """独立的压缩策略与摘要预算；窗口大小需与所选模型匹配。"""
 
+    # 校验错误不得回显输入，避免 API Key 等敏感值进入错误文本。
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = True
@@ -64,8 +65,10 @@ class ModelCapabilities(BaseModel):
 
     @model_validator(mode="after")
     def validate_capabilities(self) -> ModelCapabilities:
+        # 4096 是系统提示与压缩预留的最小安全余量，不是业务配置项。
         if self.context_window_tokens <= self.max_output_tokens + 4096:
             raise ValueError("模型窗口必须大于输出预算与 4096 Token 安全余量之和")
+        # 枚举值前缀必须与 provider 一致；改枚举名会同时破坏这条隐含约定。
         if (
             self.thinking_mode is not LlmThinkingMode.PROVIDER_DEFAULT
             and self.thinking_mode.value.split("_")[0] != self.provider
@@ -158,6 +161,7 @@ class AgentSettings(BaseModel):
             settings_data["compaction"] = compaction_data
         profiles = settings_data.get("models", [])
         if isinstance(profiles, list):
+            # {默认, **profile} 的顺序保证已有 profile 值优先，迁移不会覆盖用户配置。
             settings_data["models"] = [
                 {
                     "max_output_tokens": legacy_output,
@@ -215,6 +219,7 @@ class AgentSettings(BaseModel):
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
+                # 用 link 而不是 replace：并发启动时只有一个入口能发布，其他加载已发布的配置。
                 os.link(temporary, path)
             except FileExistsError:
                 # 另一个启动入口已经发布配置，加载它而不是覆盖。
@@ -250,6 +255,7 @@ class AgentSettings(BaseModel):
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
+            # 先设 0600 再替换，配置文件在任何时刻都不会短暂可读。
             os.chmod(temporary, 0o600)
             os.replace(temporary, config_path)
         finally:

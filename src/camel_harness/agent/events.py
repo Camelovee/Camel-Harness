@@ -44,6 +44,7 @@ class _EventDispatcher:
     async def emit(self, agent_event: AgentEvent) -> None:
         """有界背压不阻止真实 Run 取消；监听器自身取消只移除该监听器。"""
 
+        # 迭代 tuple 快照：emit 期间的订阅/退订只对后续事件生效。
         for listener_id, listener in tuple(self._listeners_by_id.items()):
             try:
                 async with asyncio.timeout(_LISTENER_TIMEOUT_SECONDS):
@@ -52,10 +53,12 @@ class _EventDispatcher:
                         await result
             except asyncio.CancelledError:
                 task = asyncio.current_task()
+                # task.cancelling() 区分 Run 被取消（必须继续抛）与监听器自己取消（只移除它）。
                 if task is not None and task.cancelling():
                     raise
                 self._listeners_by_id.pop(listener_id, None)
             except Exception as exc:
+                # 单监听器超过 5s 或抛异常即永久移除，避免慢消费者反复阻塞真实 Run。
                 self._listeners_by_id.pop(listener_id, None)
                 logger.warning("移除故障事件订阅者：%s", type(exc).__name__)
 

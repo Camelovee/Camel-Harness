@@ -113,6 +113,7 @@ async def build_agent(
             memory_manager=agent_extensions.memory_manager,
         )
         if agent_extensions.subagent_provider is not None:
+            # 子 Agent 与主 Agent 共享客户端、注册表、权限和上下文；所有权仍归组装层。
             subagent_runner = LocalSubagentRunner(
                 llm_client=llm_client,
                 session_manager=session_manager,
@@ -135,6 +136,8 @@ async def build_agent(
             on_close=close_resources,
         )
     except BaseException:
+        # 失败路径只关闭注入的扩展资源，不是全量回滚；已构造的 session/registry
+        # 等对象不在这里回收。
         try:
             await close_resources()
         except Exception as exc:
