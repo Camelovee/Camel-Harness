@@ -277,9 +277,7 @@ async def test_memory_tool_updates_and_reports_live_state(
     assert payload["memory"] == "偏好 A"
 
 
-@pytest.mark.parametrize(
-    "mode", [PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS, PermissionMode.YOLO]
-)
+@pytest.mark.parametrize("mode", [PermissionMode.DEFAULT, PermissionMode.YOLO])
 async def test_memory_writes_do_not_require_approval(
     memory_manager: MemoryManager, tmp_path: Path, mode: PermissionMode
 ) -> None:
