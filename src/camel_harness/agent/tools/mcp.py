@@ -32,11 +32,15 @@ class McpRemoteTool(Tool):
         self.namespace = f"mcp__{server_name}"
         self.name = remote_name
         self.description = description
-        self.parameters = input_schema
+        self._parameters = input_schema
         self.capabilities = frozenset({"external.mcp"})
         self.risk = ToolRisk.EXTERNAL
         # 远端调用没有独立超时，靠 executor 的 60s；超时只是取消协程，结果未知。
         self.timeout_seconds = 60
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._parameters
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         # Server 的 cwd 已在进程级固定为工作区，单次调用不再使用 tool_context。

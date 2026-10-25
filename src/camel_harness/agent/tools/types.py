@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Any
+
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 
 from camel_harness.llm import LlmModel, ToolDefinition, ToolResultMessage
 
@@ -102,20 +106,34 @@ class ToolContext:
     model: LlmModel | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedToolCall:
+    """绑定已校验参数与执行入口，审批后不再重新解析参数。"""
+
+    arguments: dict[str, Any]
+    execution_context: dict[str, str]
+    execute: Callable[[], Awaitable[ToolResult]]
+
+
 class Tool(ABC):
     """供内置工具、插件和 MCP 共同实现的轻量工具契约。
 
-    具体工具像 pi-agent 一样直接声明名称、描述和参数 schema；运行时仅在
-    构造模型请求时投影为 ``ToolDefinition``，避免嵌套定义对象。
+    原始 Schema 工具按 JSON Schema 校验；本地工具通过 PydanticTool 声明参数模型。
+    两者均在审批前绑定参数，执行器只负责授权、超时与结果归一化。
     """
 
     namespace = "builtin"
     name = ""
     description = ""
-    parameters: dict[str, Any] = {}
     capabilities: frozenset[str] = frozenset()
     risk = ToolRisk.READ
     timeout_seconds = 30.0
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        """返回模型可见的 JSON Schema。"""
+
+        return {}
 
     @property
     def qualified_name(self) -> str:
@@ -137,6 +155,22 @@ class Tool(ABC):
         """返回由实现生成的审批展示信息，不执行操作。"""
 
         return {}
+
+    def prepare_call(self, tool_call: ToolCall, tool_context: ToolContext) -> PreparedToolCall:
+        """按外部 Schema 校验并绑定一次调用，不产生副作用。"""
+
+        errors = Draft202012Validator(self.parameters).iter_errors(tool_call.arguments)
+        messages = tuple(
+            error.message
+            for error in sorted(errors, key=lambda error: tuple(str(part) for part in error.path))
+        )
+        if messages:
+            raise ToolNotExecutedError("工具参数校验失败：" + "；".join(messages))
+        return PreparedToolCall(
+            arguments=tool_call.arguments,
+            execution_context=self.approval_context(tool_call, tool_context),
+            execute=partial(self.execute, tool_call, tool_context),
+        )
 
     @abstractmethod
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:

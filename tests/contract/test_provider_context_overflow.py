@@ -186,3 +186,33 @@ async def test_sdk_thinking_parameters_require_explicit_model_capability(
         assert body["output_config"] == {"effort": "max"}
     else:
         assert body["reasoning"] == {"effort": "xhigh", "summary": "auto"}
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+async def test_generated_tool_schemas_reach_official_sdk_without_losing_refs(provider: str) -> None:
+    from camel_harness.agent.tools.builtin import BuiltinToolProvider
+
+    bodies: list[dict[str, object]] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"message": "离线请求检查"}})
+
+    tools = await BuiltinToolProvider().discover()
+    definitions = tuple(tool.to_definition() for tool in tools)
+    adapter = _adapter(provider, capture)
+    _ = [
+        event
+        async for event in adapter.stream(
+            LlmRequest(_model(provider), (UserMessage("检查工具参数"),), tools=definitions)
+        )
+    ]
+    assert len(bodies) == 1
+    schema_key = "input_schema" if provider == "anthropic" else "parameters"
+    sent_tools = bodies[0]["tools"]
+    assert len(sent_tools) == len(definitions)
+    for sent_tool, definition in zip(sent_tools, definitions, strict=True):
+        assert sent_tool[schema_key] == definition.input_schema
+    edit_schema = next(tool[schema_key] for tool in sent_tools if tool["name"] == "edit_file")
+    assert edit_schema["properties"]["edits"]["items"]["$ref"] == "#/$defs/TextEditArguments"
+    assert edit_schema["$defs"]["TextEditArguments"]["required"] == ["old_text", "new_text"]

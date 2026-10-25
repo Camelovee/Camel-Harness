@@ -145,8 +145,11 @@ async def test_result_read_permission_does_not_allow_external_mutations(tmp_path
     _, _, _, context, path, _ = await setup_result(tmp_path)
     arguments = {
         "path": str(path),
-        "content": "修改",
-        "edits": [{"old_text": "第一行", "new_text": "修改"}],
+        **(
+            {"content": "修改"}
+            if isinstance(tool, WriteFileTool)
+            else {"edits": [{"old_text": "第一行", "new_text": "修改"}]}
+        ),
     }
     with pytest.raises(ValueError, match="工作区"):
         await tool.execute(ToolCall("write", tool.name, arguments), context)

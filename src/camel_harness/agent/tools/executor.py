@@ -6,8 +6,6 @@ from copy import deepcopy
 from dataclasses import replace
 from uuid import uuid4
 
-from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
-
 from camel_harness.llm import ToolDefinition
 
 from .file_result_storage import ToolResultStorageError
@@ -19,6 +17,7 @@ from .permissions import (
 )
 from .registry import ToolRegistry
 from .types import (
+    PreparedToolCall,
     Tool,
     ToolCall,
     ToolContext,
@@ -29,16 +28,6 @@ from .types import (
 )
 
 ResultNormalizer = Callable[[ToolResult, ToolContext], Awaitable[ToolResult]]
-
-
-def validate_tool_arguments(
-    definition: ToolDefinition,
-    arguments: dict[str, object],
-) -> tuple[str, ...]:
-    """使用 Draft 2020-12 校验一组工具参数。"""
-
-    errors = Draft202012Validator(definition.input_schema).iter_errors(arguments)
-    return tuple(error.message for error in sorted(errors, key=lambda item: list(item.path)))
 
 
 class ToolExecutor:
@@ -75,10 +64,9 @@ class ToolExecutor:
             return _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
 
         try:
-            errors = validate_tool_arguments(tool.to_definition(), tool_call.arguments)
-            if errors:
-                return _error_result(tool_call, "；".join(errors), ToolExecutionStatus.NOT_EXECUTED)
-            execution_context = tool.approval_context(tool_call, tool_context)
+            prepared_call = tool.prepare_call(tool_call, tool_context)
+        except ToolNotExecutedError as exc:
+            return _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
         except Exception as exc:
             return _error_result(
                 tool_call, f"工具参数或执行上下文校验失败：{exc}", ToolExecutionStatus.NOT_EXECUTED
@@ -88,11 +76,11 @@ class ToolExecutor:
             capabilities=tool.capabilities,
             risk=tool.risk.value,
             # 审批后参数即固定；执行使用同一份深拷贝快照。
-            arguments=deepcopy(tool_call.arguments),
+            arguments=deepcopy(prepared_call.arguments),
             mode=tool_context.permission_mode,
             request_id=uuid4().hex,
             session_id=tool_context.session_id,
-            execution_context=execution_context,
+            execution_context=prepared_call.execution_context,
         )
         try:
             decision = await self._permission_service.authorize(permission_request, on_approval)
@@ -104,18 +92,20 @@ class ToolExecutor:
             return _error_result(
                 tool_call, f"权限拒绝：{decision.reason}", ToolExecutionStatus.NOT_EXECUTED
             )
-        return await self._execute_authorized(tool, tool_call, tool_context)
+        return await self._execute_authorized(tool, tool_call, tool_context, prepared_call)
 
     async def _execute_authorized(
-        self, tool: Tool, tool_call: ToolCall, tool_context: ToolContext
+        self,
+        tool: Tool,
+        tool_call: ToolCall,
+        tool_context: ToolContext,
+        prepared_call: PreparedToolCall,
     ) -> ToolResult:
         """执行后无法确认的副作用保守标记未知，取消与归档故障继续传播。"""
 
         try:
             # wait_for 只取消协程；线程或子进程可能仍在运行，超时只能是 UNKNOWN。
-            result = await asyncio.wait_for(
-                tool.execute(tool_call, tool_context), timeout=tool.timeout_seconds
-            )
+            result = await asyncio.wait_for(prepared_call.execute(), timeout=tool.timeout_seconds)
         except ToolNotExecutedError as exc:
             result = _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
         except TimeoutError:

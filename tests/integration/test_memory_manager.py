@@ -355,17 +355,14 @@ async def test_file_tools_cannot_modify_managed_memory(
     if alias:
         path = tmp_path / "alias.md"
         path.symlink_to(target)
+    arguments = (
+        {"path": str(path), "content": "新内容"}
+        if isinstance(tool, WriteFileTool)
+        else {"path": str(path), "edits": [{"old_text": "旧内容", "new_text": "新内容"}]}
+    )
     with pytest.raises(ValueError, match="只能通过"):
         await tool.execute(
-            ToolCall(
-                "c",
-                tool.name,
-                {
-                    "path": str(path),
-                    "content": "新内容",
-                    "edits": [{"old_text": "旧内容", "new_text": "新内容"}],
-                },
-            ),
+            ToolCall("c", tool.name, arguments),
             ToolContext("s", tmp_path),
         )
     assert target.read_text("utf-8") == "旧内容"

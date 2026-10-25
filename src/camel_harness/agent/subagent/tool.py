@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import Field
+
+from ..tools.parameters import PydanticTool, ToolArguments
 from ..tools.registry import ToolProvider
 from ..tools.types import (
     Tool,
@@ -11,20 +16,19 @@ from ..tools.types import (
 from .runner import SubagentRequest, SubagentRunner, SubagentType
 
 
-class DelegateTaskTool(Tool):
+class DelegateTaskArguments(ToolArguments):
+    """委派任务内容与角色，角色字符串保持外部协议不变。"""
+
+    task: str = Field(min_length=1)
+    agent_type: Literal["explore", "plan", "general"]
+
+
+class DelegateTaskTool(PydanticTool[DelegateTaskArguments]):
     """把边界清晰的任务委派给隔离子 Agent。"""
 
     name = "delegate_task"
     description = "委派独立探索、规划或通用任务给隔离子 Agent。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "task": {"type": "string", "minLength": 1},
-            "agent_type": {"type": "string", "enum": ["explore", "plan", "general"]},
-        },
-        "required": ["task", "agent_type"],
-        "additionalProperties": False,
-    }
+    arguments_model = DelegateTaskArguments
     capabilities = frozenset({"agent.delegate", "llm.invoke"})
     risk = ToolRisk.EXTERNAL
     # 必须大于 executor 的判定，给子 Agent 留出完整生命周期。
@@ -33,7 +37,9 @@ class DelegateTaskTool(Tool):
     def __init__(self, subagent_runner: SubagentRunner) -> None:
         self._subagent_runner = subagent_runner
 
-    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+    async def execute_validated(
+        self, arguments: DelegateTaskArguments, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
         if tool_context.model is None:
             # 普通错误结果会被记为 FAILED；这里没有产生任何副作用。
             return ToolResult(
@@ -41,8 +47,8 @@ class DelegateTaskTool(Tool):
             )
         subagent_result = await self._subagent_runner(
             SubagentRequest(
-                task=str(tool_call.arguments["task"]),
-                agent_type=SubagentType(str(tool_call.arguments["agent_type"])),
+                task=arguments.task,
+                agent_type=SubagentType(arguments.agent_type),
                 workspace=tool_context.workspace,
                 permission_mode=tool_context.permission_mode,
                 parent_session_id=tool_context.session_id,
