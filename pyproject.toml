@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "camel-harness"
-version = "0.1.0"
+version = "1.0.1"
 description = "轻量、可扩展的 Python Harness Agent"
 license = "MIT"
 license-files = ["LICENSE"]

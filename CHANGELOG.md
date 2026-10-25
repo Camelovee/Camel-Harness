@@ -1,6 +1,8 @@
 # 变更记录
 
-## 未发布
+## 1.0.1 — 2026-10-25
+
+- 发布首个稳定版本：完成上下文压缩、Hermes 风格长期记忆、模块分层和 Agent 编排拆分，全量回归通过。
 
 - 抽出 `TurnRunner` 与 `SessionCommitter`：TurnRunner 负责单 Turn 的上下文准备、模型流、溢出重试与工具分发，SessionCommitter 统一“先保存消息再发确认”的顺序和 `SESSION_FAILED` 分类；Agent 只保留公开生命周期、Run 循环、取消/steering 与唯一终态。运行行为、事件顺序和持久化格式保持不变。
 

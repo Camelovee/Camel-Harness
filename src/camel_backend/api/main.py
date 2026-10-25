@@ -24,7 +24,7 @@ def create_api_app(
 
     application = FastAPI(
         title="Camel Harness Web",
-        version="0.1.0",
+        version="1.0.1",
         lifespan=lifespan,
     )
     application.add_middleware(
