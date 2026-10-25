@@ -90,6 +90,7 @@ class CompactionEngine:
         """
 
         input_limit = context_input_limit(model, self._compaction_settings.reserve_tokens)
+        # 预检按最坏情况（重试输出上限，通常大于首次）计算，避免摘要请求发出后才失败。
         if (
             self._compaction_settings.keep_recent_tokens
             + min(self._compaction_settings.retry_max_output_tokens, model.max_output_tokens)
@@ -131,6 +132,7 @@ class CompactionEngine:
         if compact_end < 2:
             compact_end = len(surface) - 1
         # ToolResult 必须与产生它的 assistant tool_use 一起进入摘要或一起保留。
+        # 尾部是结果时向后跳过；没有后继消息时改向前回退到调用之前，两个方向不对称。
         safe_end = compact_end
         while safe_end < len(surface) and isinstance(surface[safe_end].message, ToolResultMessage):
             safe_end += 1
@@ -146,11 +148,13 @@ class CompactionEngine:
         selected = surface[:compact_end]
         replaced = tuple(node.message for node in selected)
         summary, usage = await self._summarize(model, replaced, on_usage)
+        # 压缩后首节点是 [Compacted History] 包装，逐消息估算不含它，这里必须显式计入。
         projected_tokens = estimate_message_tokens(UserMessage("[Compacted History]\n\n" + summary))
         projected_tokens += sum(
             estimate_message_tokens(node.message) for node in surface[compact_end:]
         )
         tokens_before = sum(estimate_message_tokens(node.message) for node in surface)
+        # 只有溢出恢复要求历史严格缩小；常规压力压缩允许摘要后估算持平。
         if require_reduction and projected_tokens >= tokens_before:
             raise CompactionError("上下文溢出压缩未缩小历史，未提交摘要；请减少输入或调整压缩预算")
         if projected_tokens + context_overhead_tokens >= context_input_limit(
@@ -176,6 +180,7 @@ class CompactionEngine:
             json.dumps(model_message_dict(message), ensure_ascii=False, separators=(",", ":"))
             for message in messages
         )
+        # 首条是上次摘要时做增量更新，避免摘要套摘要；前缀是压缩器与读取方共享的约定。
         previous_summary = isinstance(messages[0], UserMessage) and messages[0].content.startswith(
             "[Compacted History]\n"
         )
@@ -187,6 +192,7 @@ class CompactionEngine:
             if on_usage is not None:
                 on_usage(usage)
 
+        # 512 是 JSON 转录与消息框架的误差余量，不是业务预算。
         estimated_input = estimate_text_tokens(transcript) + 512
         previous_output_budget = 0
         for attempt, maximum in enumerate(
@@ -215,6 +221,7 @@ class CompactionEngine:
                 )
             except ContextBudgetError as exc:
                 raise CompactionError(f"摘要输入超过模型安全上下文预算，未修改历史：{exc}") from exc
+            # 重试预算必须严格大于首次，否则同一个请求只会再次截断。
             if attempt and output_budget <= previous_output_budget:
                 raise CompactionError("摘要重试预算没有增长空间，未修改历史")
             previous_output_budget = output_budget
@@ -268,7 +275,7 @@ class CompactionEngine:
                 try:
                     on_usage(usage or LlmUsage())
                 except Exception:
-                    # 已知用量仍被记录，但预算回调不能把用户取消改成运行失败。
+                    # 取消时已知用量仍要上报，但预算回调不能把用户取消改成运行失败。
                     pass
             else:
                 on_usage(usage or LlmUsage())

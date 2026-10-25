@@ -23,6 +23,7 @@ from .types import MemoryStorageError, MemoryTarget, MemoryValidationError
 _MEMORY_FILENAME = "MEMORY.md"
 _USER_FILENAME = "USER.md"
 ENTRY_SEPARATOR = "\n§\n"
+# 外部文件读取的硬上限；与 MemorySettings 的业务字符上限是两回事。
 _MAX_FILE_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 _TransactionValue = TypeVar("_TransactionValue")
@@ -111,6 +112,7 @@ class MemoryStore:
         with os.fdopen(descriptor, "a+") as lock:
             locked = False
             try:
+                # 取消只在取锁前或刚取锁时生效；阻塞式锁无法中断，只能非阻塞轮询。
                 while not locked:
                     if stop.is_set():
                         raise asyncio.CancelledError
@@ -119,6 +121,7 @@ class MemoryStore:
                         locked = True
                     except portalocker.exceptions.AlreadyLocked:
                         stop.wait(0.01)
+                # 取锁后、写入前再检查一次：尚未开始的提交不执行。
                 if stop.is_set():
                     raise asyncio.CancelledError
                 yield self._checked_path(target, create_root=True)
@@ -132,6 +135,7 @@ class MemoryStore:
         except FileNotFoundError:
             return ()
         with os.fdopen(descriptor, "rb") as stream:
+            # 多读 1 字节用于判断是否超限，避免把超大文件整个读入内存。
             payload = stream.read(_MAX_FILE_BYTES + 1)
         if len(payload) > _MAX_FILE_BYTES:
             raise MemoryValidationError("记忆文件超过读取上限")
@@ -149,6 +153,7 @@ class MemoryStore:
         temporary: Path | None = None
         published = False
         try:
+            # 临时文件必须与目标同目录，replace 才是原子发布。
             with tempfile.NamedTemporaryFile(
                 mode="wb", dir=root, prefix=".memory-", delete=False
             ) as stream:
@@ -159,8 +164,10 @@ class MemoryStore:
             os.chmod(temporary, 0o600)
             temporary.replace(path)
             published = True
+            # rename 后同步目录，确保目录项在崩溃后仍然可见。
             sync_directory(root)
         except OSError as exc:
+            # 发布前失败表示未提交；发布后失败表示结果不确定，两者不能混为一谈。
             message = (
                 "记忆提交后确认失败，结果不确定，请先读取确认，不得盲目重试"
                 if published
@@ -179,8 +186,10 @@ class MemoryStore:
         if root is None:
             raise MemoryValidationError("记忆目标必须是 memory 或 user")
         if any(is_link(path) for path in (root, *root.parents)):
+            # 任何祖先目录是链接都拒绝，避免读写被重定向到工作区之外。
             raise MemoryValidationError("记忆目录不得包含符号链接")
         if create:
+            # 逐级创建并统一 0o700，避免中间目录沿用宽松的 umask。
             for path in reversed((root, *root.parents)):
                 path.mkdir(exist_ok=True, mode=0o700)
         if root.exists() and not root.is_dir():
@@ -216,6 +225,7 @@ class MemoryStore:
         stop = threading.Event()
         task = asyncio.create_task(asyncio.to_thread(operation, stop))
         cancelled = False
+        # 与 _finish_commit 同构：取消只置 stop，已开始的提交仍要等线程结束后再传播。
         while not task.done():
             try:
                 await asyncio.shield(task)

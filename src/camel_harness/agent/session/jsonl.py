@@ -47,6 +47,7 @@ async def _finish_commit(operation: Awaitable[_T]) -> _T:
     """磁盘提交及关联游标必须一起完成，不能留下半更新的绑定会话。"""
     task = asyncio.ensure_future(operation)
     cancelled = False
+    # 取消只记录标志，仍要等线程内写入结束；否则可能出现半行落盘但锁已释放。
     while not task.done():
         try:
             await asyncio.shield(task)
@@ -186,6 +187,7 @@ class JsonlSessionStorage:
             return await asyncio.to_thread(self._read_events_sync, self._path(session_id))
 
     def _lock(self, session_id: str) -> asyncio.Lock:
+        # 只做进程内串行；跨进程互斥由各同步方法里的 portalocker 负责。锁表只增不删。
         return self._locks_by_session_id.setdefault(session_id, asyncio.Lock())
 
     def _path(self, session_id: str) -> Path:
@@ -193,6 +195,7 @@ class JsonlSessionStorage:
             raise ValueError("session_id 只能包含字母、数字、下划线和连字符")
         cached = self._paths_by_session_id.get(session_id)
         if cached is not None:
+            # 缓存路径每次复用都重新检查链接，防止检查之后被替换。
             self._assert_no_symlink(cached)
             if cached.exists():
                 return cached
@@ -202,6 +205,7 @@ class JsonlSessionStorage:
         if direct.exists():
             self._paths_by_session_id[session_id] = direct
             return direct
+        # 子会话位于父目录的 subagents 下，直连路径不存在时需要回扫确定真实位置。
         for path in self._session_paths():
             if path.parent.name == session_id:
                 self._paths_by_session_id[session_id] = path
@@ -224,6 +228,8 @@ class JsonlSessionStorage:
     def _session_paths(self) -> Iterator[Path]:
         if not self._root.is_dir():
             return
+        # 合法布局只有 root/<id>/ 与 root/<id>/subagents/<id>/ 两层；
+        # 层级奇偶与 subagents 位置一起限定，避免把任意深层文件当成会话。
         for path in self._root.rglob("session.jsonl"):
             parts = path.relative_to(self._root).parts
             if len(parts) < 2 or len(parts) % 2 or parts[-1] != "session.jsonl":
@@ -238,6 +244,7 @@ class JsonlSessionStorage:
     def _has_symlink(self, path: Path) -> bool:
         if is_link(self._root):
             return True
+        # 必须逐级查到 root；父目录是链接同样会把读写重定向到别处。
         current = path
         while current != self._root:
             if is_link(current):
@@ -265,6 +272,7 @@ class JsonlSessionStorage:
             parent_session_id=metadata.parent_session_id,
             parent_tool_call_id=metadata.parent_tool_call_id,
         )
+        # O_EXCL 防止并发创建互相覆盖；首行即会话身份，必须与目录名一致。
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             _write_event(stream, event)
@@ -297,6 +305,7 @@ class JsonlSessionStorage:
         with path.open("r+", encoding="utf-8") as stream:
             portalocker.lock(stream.fileno(), portalocker.LOCK_EX)
             try:
+                # 在文件锁内重新投影，parent_id 取当前叶节点而不是调用方缓存。
                 snapshot = project_context(
                     JsonlSessionStorage._iter_events(stream, path), leaf_id, use_latest=use_latest
                 )
@@ -326,6 +335,7 @@ class JsonlSessionStorage:
                 events = list(JsonlSessionStorage._iter_events(stream, path))
                 snapshot = project_context(events, leaf_id, use_latest=use_latest)
                 # 元数据不影响模型内容；分支变更或任意消息/压缩写入都会使旧计划失效。
+                # CAS 同时比较 revision 与 nodes；命中后用当前叶节点重写 parent_id。
                 if expected.revision != snapshot.revision or expected.nodes != snapshot.nodes:
                     raise ValueError("会话上下文已被并发修改，请重新加载后再压缩")
                 event = replace(event, parent_id=snapshot.leaf_id)
@@ -357,6 +367,7 @@ class JsonlSessionStorage:
                     name=name, workspace=workspace, archived=archived, model_id=model_id
                 )
                 parent = events[-1]
+                # Info 事件只能挂到最后一个非 header 条目；会话头没有条目 ID。
                 stream.seek(0, os.SEEK_END)
                 _write_event(
                     stream,
@@ -420,6 +431,7 @@ class JsonlSessionStorage:
         known_ids: set[str] = set()
         for number, line in enumerate(stream, start=1):
             try:
+                # 追加日志无法修复：末尾半行即判损坏，避免把截断记录当成完整事件。
                 if not line.endswith("\n"):
                     raise ValueError("会话日志尾部不完整")
                 row = json.loads(line)
@@ -427,6 +439,7 @@ class JsonlSessionStorage:
                     raise TypeError("记录必须是 JSON 对象")
                 event = event_from_dict(row)
                 if number == 1:
+                    # 首行必须是唯一会话头；ID 与父 ID 还要和目录层级一致，防止复制目录伪造身份。
                     if not isinstance(event, SessionHeaderEvent):
                         raise ValueError("会话头格式不受支持")
                     if event.session_id != path.parent.name:

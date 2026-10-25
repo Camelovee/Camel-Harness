@@ -62,6 +62,7 @@ class MemoryManager:
         try:
             entries = await self._store.read_entries(target)
         except (OSError, ValueError) as exc:
+            # 容错只降级存储与解析错误；其它异常仍然上抛，避免掩盖编程错误。
             if not tolerant:
                 raise
             logger.warning("记忆读取降级：%s（%s）", target, type(exc).__name__)
@@ -107,6 +108,7 @@ class MemoryManager:
             updated, changed, duplicate = _apply_mutation(entries, "add", entry, None)
             if changed:
                 self._ensure_within_limit(target, entries, updated)
+            # 无变化或重复时 entries=None 表示不写盘，但仍返回当前状态。
             return MemoryWritePlan(updated if changed else None, (changed, duplicate, updated))
 
         changed, duplicate, updated = await self._store.transact(target, plan)
@@ -133,6 +135,7 @@ class MemoryManager:
 
         def plan(entries: tuple[str, ...]) -> MemoryWritePlan[tuple[bool, bool, tuple[str, ...]]]:
             updated, changed, duplicate = _apply_mutation(entries, "remove", None, old_text)
+            # 删除只会让条目变少，不需要再做聚合上限检查。
             return MemoryWritePlan(updated if changed else None, (changed, duplicate, updated))
 
         changed, duplicate, updated = await self._store.transact(target, plan)
@@ -147,6 +150,7 @@ class MemoryManager:
 
         def plan(_entries: tuple[str, ...]) -> MemoryWritePlan[None]:
             self._ensure_within_limit(target, (), validated)
+            # read_existing=False 是迁移专用的整文件覆盖语义，不能用于日常写入。
             return MemoryWritePlan(validated, None)
 
         await self._store.transact(target, plan, read_existing=False)
@@ -224,6 +228,7 @@ class MemoryManager:
 
         if document.used_chars <= document.limit_chars:
             return document.text
+        # 外部编辑超限时按整条截断，不能输出半条；预算先扣除标记与分隔符长度。
         budget = max(0, document.limit_chars - len(_TRUNCATION_MARKER) - len(ENTRY_SEPARATOR))
         selected: list[str] = []
         used_chars = 0
@@ -246,6 +251,7 @@ def _apply_mutation(
 ) -> tuple[tuple[str, ...], bool, bool]:
     """在锁内计算新条目；重复添加与无变化替换不写文件。"""
 
+    # 回调在持久化锁内执行，重复 add 是幂等的，replace 相同内容不算变更。
     if action == "add":
         assert content is not None
         if content in entries:

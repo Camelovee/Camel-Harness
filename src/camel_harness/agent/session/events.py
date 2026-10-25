@@ -128,6 +128,7 @@ def build_branch(
             raise ValueError("会话条目的父 ID 不存在或引用未来条目")
         by_id[event.id] = event
         latest = event.id
+    # use_latest 优先于 leaf_id：latest 是日志最后条目，而不是叶节点子树的末端。
     current = latest if use_latest else leaf_id
     if current is not None and current not in by_id:
         raise ValueError("当前分支叶节点不存在")
@@ -145,6 +146,7 @@ def project_context(
     """学习 pi：当前叶节点路径中的最新压缩摘要加保留历史，再加后续消息。"""
     entries = tuple(events)
     path = build_branch(entries, leaf_id, use_latest=use_latest)
+    # revision 取全日志最后一条消息/压缩，故意不含 SessionInfoEvent，用作跨并发写 CAS。
     revision = next(
         (
             event.id
@@ -159,6 +161,7 @@ def project_context(
         if isinstance(entry, SessionMessageEvent):
             nodes.append(ContextNode(entry.id, entry.message))
         elif isinstance(entry, SessionCompactionEvent):
+            # 沿路径依次应用压缩；kept == 0 被拒绝，压缩必须至少吃掉一个可见节点。
             kept = next(
                 (
                     index
@@ -170,6 +173,7 @@ def project_context(
             if kept is None or kept == 0:
                 raise ValueError("压缩保留条目必须位于当前可见上下文，且存在待压缩前缀")
             nodes = [
+                # 固定前缀让压缩器识别上一次摘要，从而做增量更新而不是摘要套摘要。
                 ContextNode(entry.id, UserMessage(f"[Compacted History]\n\n{entry.summary}")),
                 *nodes[kept:],
             ]
@@ -191,6 +195,7 @@ def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:
     name, workspace = header.name, header.workspace
     model_id, archived = header.model_id, header.archived
     updated_at = header.timestamp
+    # 身份与创建时间只来自 header；message_count 统计整棵树，而非当前分支。
     message_count = 0
     last_message_type: str | None = None
     for event in iterator:
@@ -274,6 +279,7 @@ def event_from_dict(data: dict[str, Any]) -> SessionEvent:
         if data.get("modelId") is not None and not isinstance(data["modelId"], str):
             raise ValueError("会话模型标识必须是字符串或空值")
     if event_type == "session":
+        # 版本必须严格相等；未知类型与旧格式都直接报错，不做兼容降级。
         if type(data["version"]) is not int or data["version"] != SCHEMA_VERSION:
             raise ValueError("会话头格式不受支持")
         if not isinstance(data["id"], str) or not data["id"]:

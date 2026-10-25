@@ -90,6 +90,7 @@ class ContextManager:
         trigger: CompactionTrigger = CompactionTrigger.PRESSURE,
     ) -> PreparedContext:
         """按次借用 Session 准备上下文；压缩提交成功后才返回请求内容。"""
+        # 读取与提交都经 Session；失败归入会话错误边界，由 Agent 映射为 SESSION_FAILED。
         try:
             snapshot = await session.context_snapshot()
         except Exception as exc:
@@ -104,6 +105,7 @@ class ContextManager:
             tool_definitions=tool_definitions,
         )
         if compacted is not None:
+            # 压缩计划必须由 Session 在锁内校验 revision 后再提交，不能直接改内存快照。
             snapshot = await self._commit_compaction(session, snapshot, compacted)
         return PreparedContext(system_prompt, snapshot.messages)
 
@@ -152,6 +154,7 @@ class ContextManager:
                 f"{manifest}"
             )
         if self._memory_manager is not None:
+            # 容错读取：记忆文件损坏时只丢记忆块，不能阻断本次请求。
             memory_context = await self._memory_manager.prompt_context(tolerant=True)
             if memory_context:
                 sections.append(memory_context)
@@ -174,13 +177,16 @@ class ContextManager:
         if input_limit <= 0:
             raise CompactionError("上下文容量不足：模型窗口无法容纳配置的输出与压缩预留")
         overhead = estimate_context_overhead_tokens(system_prompt, tool_definitions)
+        # 逐消息估算不含系统提示和工具定义，预算判断必须把开销单独加上。
         estimated_tokens = estimate_context_tokens(
             snapshot, model, context_overhead_tokens=overhead
         ).total_tokens
+        # 先估算再判断开关与消息数：即使关闭或历史很短，超限也必须显式失败。
         if not compaction_settings.enabled:
             if trigger is CompactionTrigger.CONTEXT_OVERFLOW or estimated_tokens >= input_limit:
                 raise CompactionError("上下文超出安全预算且自动压缩未开启")
             return None
+        # 溢出触发绕过最少消息数；常规压力压缩仍受它限制。
         if (
             len(snapshot.nodes) < compaction_settings.min_messages
             and trigger is not CompactionTrigger.CONTEXT_OVERFLOW
@@ -188,6 +194,7 @@ class ContextManager:
             if estimated_tokens >= input_limit:
                 raise CompactionError("上下文超限，但没有足够的完整消息可压缩")
             return None
+        # 压力阈值是安全输入上限，达到即压缩；溢出触发不在这里早退。
         if trigger is not CompactionTrigger.CONTEXT_OVERFLOW and estimated_tokens < input_limit:
             return None
         return await self._compaction_engine.compact(
