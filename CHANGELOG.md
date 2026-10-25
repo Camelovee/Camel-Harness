@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 抽出 `TurnRunner` 与 `SessionCommitter`：TurnRunner 负责单 Turn 的上下文准备、模型流、溢出重试与工具分发，SessionCommitter 统一“先保存消息再发确认”的顺序和 `SESSION_FAILED` 分类；Agent 只保留公开生命周期、Run 循环、取消/steering 与唯一终态。运行行为、事件顺序和持久化格式保持不变。
+
 - 拆分长期记忆为 `agent/memory/` 包：`MemoryManager` 负责开关、校验、上限、匹配与提示渲染，`MemoryStore` 负责路径、锁、解析与原子提交，实体和错误集中在 `types.py`；写入通过锁内事务回调保持原子性，存储层不再依赖 `MemorySettings`。会话包把编解码并入 `events.py`，`SessionMetadata` 与 `SCHEMA_VERSION` 下沉到 `types.py`，并新增对应的 Import Linter 契约。对外行为、记忆文件格式和会话 JSONL 格式保持不变。
 
 - 按 Hermes 方式改造长期记忆：使用 MEMORY.md / USER.md 两个有界文件（默认 2200 / 1375 字符）、单个 `memory` 工具以 add/replace/remove 和唯一子串维护条目，并在每个 Turn 完整注入系统提示。记忆写入在 PLAN 外自动允许，不再逐次审批；新增 `scripts/migrate_memory.py` 迁移旧 JSON 条目。原检索、分页读取、版本校验和审批接口移除，配置字段改为 `user_profile_enabled`、`memory_char_limit`、`user_char_limit`。
