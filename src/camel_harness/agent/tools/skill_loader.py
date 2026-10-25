@@ -28,6 +28,7 @@ class LoadSkillTool(Tool):
         self._skills = skills
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        # Skill 根目录在构造时绑定，与单次调用的工作区无关。
         del tool_context
         name = str(tool_call.arguments["name"])
         relative_path = tool_call.arguments.get("path")

@@ -51,6 +51,7 @@ class RunShellTool(Tool):
     }
     capabilities = frozenset({"process.execute"})
     risk = ToolRisk.EXECUTE
+    # 必须大于参数上限 120，否则外层先超时，无法“先杀进程树再返回 UNKNOWN”。
     timeout_seconds = 125
 
     def __init__(self, tool_result_storage: FileToolResultStorage | None = None) -> None:
@@ -66,11 +67,13 @@ class RunShellTool(Tool):
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         command = str(tool_call.arguments["command"])
+        # 启发式黑名单只拦常见危险命令，不是安全边界；命中即视为未执行。
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
             return ToolResult(
                 tool_call.call_id, tool_call.name, "危险命令已被安全规则阻止", is_error=True
             ).with_execution_status(ToolExecutionStatus.NOT_EXECUTED)
         timeout = float(tool_call.arguments.get("timeout_seconds", 30))
+        # 输出走临时文件，避免管道背压把父子进程一起卡死，也便于归档后复读。
         with tempfile.TemporaryFile() as output_file:
             output = cast(BinaryIO, output_file)
             environment = os.environ.copy()
@@ -78,6 +81,7 @@ class RunShellTool(Tool):
                 # cmd 和 Python 子进程输出统一 UTF-8，结果归档无需猜测本机代码页。
                 environment["PYTHONIOENCODING"] = "utf-8"
             try:
+                # 新进程组（Windows 为 CREATE_NEW_PROCESS_GROUP）是能清理全部后代的前提。
                 process = await asyncio.create_subprocess_shell(
                     _build_shell_command(command),
                     cwd=tool_context.workspace.resolve(),
@@ -94,6 +98,7 @@ class RunShellTool(Tool):
             try:
                 await asyncio.wait_for(process.wait(), timeout=timeout)
             except TimeoutError:
+                # 用户超时后先杀进程树；命令可能已经产生部分副作用，只能返回 UNKNOWN。
                 await _stop_process_group(process)
                 return ToolResult(
                     tool_call.call_id, tool_call.name, "Shell 命令执行超时", is_error=True
@@ -127,6 +132,7 @@ class RunShellTool(Tool):
                     "exit_code": process.returncode,
                 },
             ).with_execution_status(
+                # 非零退出说明命令已经执行，记 FAILED 而不是 UNKNOWN。
                 ToolExecutionStatus.SUCCEEDED
                 if process.returncode == 0
                 else ToolExecutionStatus.FAILED
@@ -183,6 +189,7 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
     kill_signal = getattr(signal, "SIGKILL", None)
     if kill_group is None or kill_signal is None:
         raise RuntimeError("当前平台不支持 Shell 进程组清理")
+    # 先 SIGTERM 等 0.2s，再 SIGKILL；进程已消失时忽略 ProcessLookupError。
     for signal_number in (signal.SIGTERM, kill_signal):
         try:
             kill_group(process.pid, signal_number)

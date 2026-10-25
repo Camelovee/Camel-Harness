@@ -65,8 +65,10 @@ class ToolExecutor:
         tool_context: ToolContext,
         on_approval: ApprovalPendingListener | None = None,
     ) -> ToolResult:
+        # 参数深拷贝：审批快照与执行各持一份，工具实现无法原地改写审批看到的内容。
         tool_call = replace(tool_call, arguments=deepcopy(tool_call.arguments))
         try:
+            # 审批与执行必须使用同一规范化工作区，否则展示路径和实际操作可能不同。
             tool_context = replace(tool_context, workspace=tool_context.workspace.resolve())
             tool = self._tool_registry.resolve(tool_call.name)
         except Exception as exc:
@@ -85,6 +87,7 @@ class ToolExecutor:
             tool_name=tool_call.name,
             capabilities=tool.capabilities,
             risk=tool.risk.value,
+            # 审批后参数即固定；执行使用同一份深拷贝快照。
             arguments=deepcopy(tool_call.arguments),
             mode=tool_context.permission_mode,
             request_id=uuid4().hex,
@@ -109,6 +112,7 @@ class ToolExecutor:
         """执行后无法确认的副作用保守标记未知，取消与归档故障继续传播。"""
 
         try:
+            # wait_for 只取消协程；线程或子进程可能仍在运行，超时只能是 UNKNOWN。
             result = await asyncio.wait_for(
                 tool.execute(tool_call, tool_context), timeout=tool.timeout_seconds
             )
@@ -117,14 +121,17 @@ class ToolExecutor:
         except TimeoutError:
             result = _error_result(tool_call, "工具执行超时", ToolExecutionStatus.UNKNOWN)
         except ToolResultStorageError:
+            # 结果归档失败发生在工具执行之后，不能降级成“未执行”。
             raise
         except Exception as exc:
+            # 只有 READ 能确定失败；其余风险可能已经产生副作用，保守判 UNKNOWN。
             status = (
                 ToolExecutionStatus.FAILED
                 if tool.risk is ToolRisk.READ
                 else ToolExecutionStatus.UNKNOWN
             )
             result = _error_result(tool_call, f"工具执行失败：{exc}", status)
+        # metadata 里的显式状态优先；is_error 由最终状态反推，而不是反过来。
         status = ToolExecutionStatus(
             result.metadata.get(
                 "execution_status",
@@ -132,7 +139,7 @@ class ToolExecutor:
             )
         )
         result = result.with_execution_status(status)
-        # 执行可能已产生副作用；归档失败属于基础设施故障，不让模型误以为工具未执行。
+        # 归档失败会抛 ToolResultStorageError 中止 Run；成功时保持执行状态不变。
         if self._normalize_result is not None:
             result = await self._normalize_result(result, tool_context)
         return result

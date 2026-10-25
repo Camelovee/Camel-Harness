@@ -23,6 +23,7 @@ class BuiltinToolProvider(ToolProvider):
 
     async def discover(self) -> tuple[Tool, ...]:
         return (
+            # 只有注入结果解析器，read_file 才能读取 content_ref 指向的会话结果目录。
             ReadFileTool(
                 self._tool_result_storage.resolve_read_path if self._tool_result_storage else None
             ),

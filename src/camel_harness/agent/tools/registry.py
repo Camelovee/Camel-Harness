@@ -42,6 +42,7 @@ class ToolRegistry:
 
         tool_registry = ToolRegistry()
         for name in names:
+            # 白名单静默取交集：未注册的名字不报错，便于可选工具缺席。
             if name in self._tools_by_name:
                 tool_registry.register(self._tools_by_name[name])
         return tool_registry
@@ -49,4 +50,5 @@ class ToolRegistry:
     def llm_definitions(self) -> tuple[ToolDefinition, ...]:
         """返回当前运行时显式注册的全部工具定义。"""
 
+        # 保持注册顺序：工具定义顺序稳定有利于提示前缀缓存。
         return tuple(tool.to_definition() for tool in self._tools_by_name.values())

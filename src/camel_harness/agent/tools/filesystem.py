@@ -9,6 +9,7 @@ from pathlib import Path
 from .text_edits import apply_text_edits
 from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
 
+# 锁表以已 resolve 的路径为键；调用方必须先规范化，否则同一文件的别名会拿到不同的锁。
 _mutations: dict[Path, tuple[asyncio.Lock, int]] = {}
 
 
@@ -46,6 +47,7 @@ def _atomic_write(path: Path, content: str) -> int:
     """完整写入同目录临时文件再替换；失败不破坏原文件或遗留临时文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    # 覆盖时保留原文件 mode；新文件继承 mkstemp 的 0600，而不是进程 umask。
     mode = path.stat().st_mode & 0o777 if path.exists() else None
     descriptor, raw_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary = Path(raw_path)
@@ -66,6 +68,7 @@ def _atomic_write(path: Path, content: str) -> int:
 def resolve_in_workspace(workspace: Path, raw_path: str) -> Path:
     """解析并限制路径，防止绝对路径和软链接逃逸工作区。"""
 
+    # 保护只在解析时点生效；之后替换成符号链接不再检查，这是已知的 TOCTOU 边界。
     candidate = (workspace / raw_path).resolve()
     try:
         candidate.relative_to(workspace.resolve())
@@ -114,6 +117,8 @@ class ReadFileTool(Tool):
         except ValueError:
             if self._result_path_resolver is None:
                 raise
+            # 结果目录在工作区外，read_file 因此也兼作 content_ref 的读取入口；
+            # 解析器仍会校验会话分支登记与符号链接。
             path = await self._result_path_resolver(tool_context.session_id, raw_path)
         start = int(tool_call.arguments.get("start_line", 1))
         limit = int(tool_call.arguments.get("max_lines", 400))
@@ -125,12 +130,14 @@ def _read_page(tool_call: ToolCall, text: str, start: int, limit: int) -> ToolRe
     """按行与 UTF-8 字节双阈值分页，元信息不占正文额度。"""
 
     lines = text.splitlines()
+    # 空文件只允许 start=1；其余越界或非法 max_lines 都在读取前拒绝。
     if start < 1 or not 1 <= limit <= 2000 or (start > len(lines) and (lines or start != 1)):
         raise ToolNotExecutedError("读取行范围越界或 max_lines 不在 1–2000 内")
     selected: list[str] = []
     output_bytes = 0
     for line_number in range(start, min(start + limit, len(lines) + 1)):
         numbered = f"{line_number}: {lines[line_number - 1]}"
+        # 字节额度包含行间换行，不包含末尾提示与元信息。
         size = len(numbered.encode("utf-8")) + int(bool(selected))
         if output_bytes + size > 16 * 1024:
             break

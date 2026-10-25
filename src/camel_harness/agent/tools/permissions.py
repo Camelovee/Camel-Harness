@@ -72,6 +72,7 @@ class ApprovalHandler(ABC):
 def default_permission_decision(permission_request: PermissionRequest) -> PermissionDecision:
     """提供保守且可预测的本地工具授权默认策略。"""
 
+    # 记忆写入先于模式判断：任何模式都不弹审批，只有 PLAN 直接拒绝。
     if "memory.write" in permission_request.capabilities:
         if permission_request.mode is PermissionMode.PLAN:
             return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止修改长期记忆")
@@ -81,10 +82,12 @@ def default_permission_decision(permission_request: PermissionRequest) -> Permis
         )
     if permission_request.mode is PermissionMode.YOLO:
         return PermissionDecision(PermissionAction.ALLOW, "YOLO 模式允许所有已注册工具")
+    # 只读判定早于 PLAN：Plan 模式仍允许读取。risk 用字符串比较，与 ToolRisk 取值耦合。
     if permission_request.risk == "read":
         return PermissionDecision(PermissionAction.ALLOW, "只读能力自动允许")
     if permission_request.mode is PermissionMode.PLAN:
         return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止产生副作用")
+    # ACCEPT_EDITS 只放宽 write；execute / external 仍然需要审批。
     if (
         permission_request.mode is PermissionMode.ACCEPT_EDITS
         and permission_request.risk == "write"
@@ -113,6 +116,7 @@ class PermissionService:
         if decision.action is not PermissionAction.ASK:
             return decision
         if self._approval_handler is None:
+            # 没有审批处理器时 fail-closed，不能把 ASK 降级为 ALLOW。
             return PermissionDecision(PermissionAction.DENY, "权限请求需要审批但没有可用审批服务")
         approved = await self._approval_handler.approve(
             permission_request, decision.reason, on_pending

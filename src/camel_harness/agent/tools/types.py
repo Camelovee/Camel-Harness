@@ -76,6 +76,7 @@ class ToolResult:
         return replace(
             self,
             content=content,
+            # is_error 把三种非成功状态压平；具体是未执行、失败还是未知只能看 metadata。
             is_error=status is not ToolExecutionStatus.SUCCEEDED,
             metadata={**self.metadata, "execution_status": status.value},
         )
@@ -121,6 +122,7 @@ class Tool(ABC):
     def qualified_name(self) -> str:
         """返回模型调用和注册表查找使用的稳定名称。"""
 
+        # builtin 不加前缀以保持模型可见名兼容；MCP 等命名空间用双下划线防冲突。
         return self.name if self.namespace == "builtin" else f"{self.namespace}__{self.name}"
 
     def to_definition(self) -> ToolDefinition:

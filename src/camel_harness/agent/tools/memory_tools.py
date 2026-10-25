@@ -55,6 +55,7 @@ class MemoryTool(Tool):
             action = memory_action(arguments["action"])
             target = memory_target(arguments["target"])
         except (KeyError, MemoryValidationError) as exc:
+            # 参数问题发生在任何写入之前，可安全标记为未执行。
             raise ToolNotExecutedError(f"记忆参数无效，未执行修改：{exc}") from exc
         content = arguments.get("content")
         old_text = arguments.get("old_text")
@@ -73,8 +74,10 @@ class MemoryTool(Tool):
                 assert isinstance(old_text, str)
                 mutation = await self._memory_manager.remove(target, old_text)
         except MemoryValidationError as exc:
+            # 校验与匹配失败都没有写盘，归为未执行，模型可安全调整后重试。
             raise ToolNotExecutedError(str(exc)) from exc
         except MemoryStorageError as exc:
+            # 存储故障可能是“已提交但确认失败”；抛普通异常让 executor 按 WRITE 判 UNKNOWN。
             raise RuntimeError(await self._storage_failure_message(target, exc)) from exc
         return ToolResult(tool_call.call_id, tool_call.name, _render_mutation(mutation))
 
@@ -108,6 +111,7 @@ def _render_mutation(mutation: MemoryMutation) -> str:
     elif mutation.changed:
         message = "记忆已更新"
     else:
+        # 三态区分重复、实际变化与无变化替换，模型据此决定是否继续整合。
         message = "记忆内容未变化"
     payload = {
         "target": document.target,

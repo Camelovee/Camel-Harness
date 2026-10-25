@@ -27,6 +27,7 @@ class DelegateTaskTool(Tool):
     }
     capabilities = frozenset({"agent.delegate", "llm.invoke"})
     risk = ToolRisk.EXTERNAL
+    # 必须大于 executor 的判定，给子 Agent 留出完整生命周期。
     timeout_seconds = 300
 
     def __init__(self, subagent_runner: SubagentRunner) -> None:
@@ -34,6 +35,7 @@ class DelegateTaskTool(Tool):
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         if tool_context.model is None:
+            # 普通错误结果会被记为 FAILED；这里没有产生任何副作用。
             return ToolResult(
                 tool_call.call_id, tool_call.name, "委派缺少模型上下文", is_error=True
             )
@@ -45,6 +47,7 @@ class DelegateTaskTool(Tool):
                 permission_mode=tool_context.permission_mode,
                 parent_session_id=tool_context.session_id,
                 parent_tool_call_id=tool_call.call_id,
+                # 子 Agent 继承父 Run 的模型快照，不重新解析配置。
                 model=tool_context.model,
             )
         )
