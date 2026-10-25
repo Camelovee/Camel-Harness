@@ -16,11 +16,8 @@ from camel_harness.agent.context import (
 )
 from camel_harness.agent.context.compaction import CompactionError
 from camel_harness.agent.context.token_counting import estimate_message_tokens
-from camel_harness.agent.resources import (
-    MemoryStore,
-    ProjectRules,
-    Skills,
-)
+from camel_harness.agent.memory import MemoryManager
+from camel_harness.agent.resources import ProjectRules, Skills
 from camel_harness.agent.session import ContextNode, ContextSnapshot, Session
 from camel_harness.llm import (
     AssistantMessage,
@@ -436,13 +433,13 @@ async def test_context_manager_lists_skills_without_loading_instructions(tmp_pat
         "---\nname: python-style\ndescription: Python style\n---\n使用类型注解\n",
         encoding="utf-8",
     )
-    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
-    await memory_store.add("memory", "保持线性会话")
+    memory_manager = MemoryManager(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    await memory_manager.add("memory", "保持线性会话")
     context_manager = ContextManager(
         system_prompt="测试提示",
         compaction_engine=CompactionEngine(llm_client=LlmClient(SummaryLlm())),
         skills=skills,
-        memory_store=memory_store,
+        memory_manager=memory_manager,
     )
 
     result = await context_manager.build_system_context(tmp_path)

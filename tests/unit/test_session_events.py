@@ -11,8 +11,12 @@ from camel_harness.agent.session import (
     SessionInfoEvent,
     SessionMessageEvent,
 )
-from camel_harness.agent.session.codec import event_from_dict, event_to_dict
-from camel_harness.agent.session.events import project_context, project_metadata
+from camel_harness.agent.session.events import (
+    event_from_dict,
+    event_to_dict,
+    project_context,
+    project_metadata,
+)
 from camel_harness.llm import AssistantMessage, LlmStopReason, LlmUsage, TextBlock, UserMessage
 
 

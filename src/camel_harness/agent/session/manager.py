@@ -7,7 +7,7 @@ from camel_harness.llm import LlmUsage, Message, ToolResultMessage
 
 from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
 from .jsonl import JsonlSessionStorage, _finish_commit
-from .metadata import SessionMetadata
+from .types import SessionMetadata
 
 
 class Session:

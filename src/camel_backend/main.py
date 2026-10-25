@@ -18,7 +18,8 @@ from camel_backend.settings_store import SettingsStore
 from camel_backend.workspace import NativeWorkspacePicker
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
-from camel_harness.agent.resources import MemoryStore, Skills
+from camel_harness.agent.memory import MemoryManager
+from camel_harness.agent.resources import Skills
 from camel_harness.agent.runtime import AgentExtensions, build_agent, build_session_manager
 from camel_harness.agent.subagent import SubagentToolProvider
 from camel_harness.agent.tools import ToolProvider
@@ -33,20 +34,20 @@ async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> A
     """Web 入口注入的本地可选能力：Skill、Memory、MCP 与子 Agent 委派。"""
 
     skills = Skills(workspace)
-    memory_store = (
-        MemoryStore(workspace, agent_settings.memory) if agent_settings.memory.enabled else None
+    memory_manager = (
+        MemoryManager(workspace, agent_settings.memory) if agent_settings.memory.enabled else None
     )
     mcp_manager = McpManager(workspace, workspace / agent_settings.mcp_config)
     await mcp_manager.start()
     for error in mcp_manager.errors:
         logger.warning("MCP 工具加载失败：%s", error)
     tool_providers: list[ToolProvider] = [SkillToolProvider(skills), mcp_manager]
-    if memory_store is not None:
-        tool_providers.append(MemoryToolProvider(memory_store))
+    if memory_manager is not None:
+        tool_providers.append(MemoryToolProvider(memory_manager))
     return AgentExtensions(
         tool_providers=tuple(tool_providers),
         skills=skills,
-        memories=memory_store,
+        memory_manager=memory_manager,
         subagent_provider=SubagentToolProvider,
         on_close=(mcp_manager.close,),
     )

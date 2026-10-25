@@ -107,7 +107,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
 ) -> None:
     from camel_harness.agent.config import MemorySettings
-    from camel_harness.agent.resources import MemoryStore
+    from camel_harness.agent.memory import MemoryManager
     from camel_harness.agent.tools.memory_tools import MemoryToolProvider
     from camel_harness.llm import (
         LlmAdapter,
@@ -122,9 +122,9 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
     memory_settings = MemorySettings(enabled=enabled)
-    memory_store = MemoryStore(tmp_path, memory_settings)
-    seed_store = MemoryStore(tmp_path, MemorySettings())
-    await seed_store.add("memory", "只有公开 API 需要 docstring")
+    memory_manager = MemoryManager(tmp_path, memory_settings)
+    seed_manager = MemoryManager(tmp_path, MemorySettings())
+    await seed_manager.add("memory", "只有公开 API 需要 docstring")
     requests: list[LlmRequest] = []
 
     class Adapter(LlmAdapter):
@@ -143,8 +143,8 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await session_manager.create("memory", tmp_path, "记忆组合")
     agent_extensions = AgentExtensions(
-        tool_providers=(MemoryToolProvider(memory_store),) if enabled else (),
-        memories=memory_store if enabled else None,
+        tool_providers=(MemoryToolProvider(memory_manager),) if enabled else (),
+        memory_manager=memory_manager if enabled else None,
     )
     agent = await build_agent(
         agent_settings=AgentSettings(memory=MemorySettings(enabled=enabled)),
@@ -157,7 +157,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     try:
         await agent.run("中文注释", model=_MODEL)
         await agent.run("继续检查中文注释", model=_MODEL)
-        await seed_store.add("memory", "新增的跨会话约定")
+        await seed_manager.add("memory", "新增的跨会话约定")
         await agent.run("再次检查", model=_MODEL)
     finally:
         await agent.close()
@@ -174,7 +174,7 @@ async def test_factory_wires_injected_memory_and_disabled_mode(
     assert names & {"memory"} == ({"memory"} if enabled else set())
     assert ("只有公开 API 需要 docstring" in requests[0].system_prompt) is enabled
     assert ("新增的跨会话约定" in requests[2].system_prompt) is enabled
-    assert (await seed_store.snapshot("memory")).entries == (
+    assert (await seed_manager.snapshot("memory")).entries == (
         "只有公开 API 需要 docstring",
         "新增的跨会话约定",
     )

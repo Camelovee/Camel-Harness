@@ -16,7 +16,6 @@ import portalocker
 from camel_harness.llm import Message
 
 from ..platform_io import is_link
-from .codec import event_from_dict, event_to_dict
 from .events import (
     ContextSnapshot,
     SessionCompactionEvent,
@@ -26,10 +25,12 @@ from .events import (
     SessionInfoEvent,
     SessionMessageEvent,
     build_branch,
+    event_from_dict,
+    event_to_dict,
     project_context,
     project_metadata,
 )
-from .metadata import SessionMetadata
+from .types import SessionMetadata
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 logger = logging.getLogger(__name__)

@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 from camel_harness import Agent, AgentEvent
 from camel_harness.agent.events import MessageEndEvent, TurnEndEvent
-from camel_harness.agent.session.codec import message_to_dict
+from camel_harness.agent.session import message_to_dict
 
 
 def encode_sse(event: AgentEvent) -> str:

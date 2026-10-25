@@ -13,8 +13,7 @@ from pathlib import Path
 from time import perf_counter
 
 from camel_harness.agent.session import SessionManager
-from camel_harness.agent.session.codec import event_to_dict
-from camel_harness.agent.session.events import SessionMessageEvent
+from camel_harness.agent.session.events import SessionMessageEvent, event_to_dict
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.llm import AssistantMessage, LlmStopReason, TextBlock, UserMessage
 

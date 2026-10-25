@@ -70,9 +70,9 @@ jobs:
           tests/integration/test_session_tree.py
           tests/integration/test_session_write_cancellation.py
           tests/integration/test_mcp_lifecycle.py
-          tests/integration/test_memory.py::test_cross_process_compare_and_swap
-          tests/integration/test_memory.py::test_queued_cancel_does_not_execute
-          tests/integration/test_memory.py::test_inflight_cancel_waits_for_commit_and_holds_lock
+          tests/integration/test_memory_store.py::test_cross_process_adds_are_both_preserved
+          tests/integration/test_memory_store.py::test_queued_cancel_does_not_execute
+          tests/integration/test_memory_store.py::test_inflight_cancel_waits_for_commit
       - name: Windows 前端测试与构建
         run: |
           npm ci --prefix webui

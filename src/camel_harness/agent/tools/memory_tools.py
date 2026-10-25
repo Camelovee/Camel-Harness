@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from ..resources.memory import (
+from ..memory import (
+    MemoryManager,
     MemoryMutation,
     MemoryStorageError,
-    MemoryStore,
     MemoryTarget,
     MemoryValidationError,
     memory_action,
@@ -46,8 +46,8 @@ class MemoryTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, memory_store: MemoryStore) -> None:
-        self._memory_store = memory_store
+    def __init__(self, memory_manager: MemoryManager) -> None:
+        self._memory_manager = memory_manager
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         arguments = tool_call.arguments
@@ -65,13 +65,13 @@ class MemoryTool(Tool):
         try:
             if action == "add":
                 assert isinstance(content, str)
-                mutation = await self._memory_store.add(target, content)
+                mutation = await self._memory_manager.add(target, content)
             elif action == "replace":
                 assert isinstance(old_text, str) and isinstance(content, str)
-                mutation = await self._memory_store.replace(target, old_text, content)
+                mutation = await self._memory_manager.replace(target, old_text, content)
             else:
                 assert isinstance(old_text, str)
-                mutation = await self._memory_store.remove(target, old_text)
+                mutation = await self._memory_manager.remove(target, old_text)
         except MemoryValidationError as exc:
             raise ToolNotExecutedError(str(exc)) from exc
         except MemoryStorageError as exc:
@@ -85,7 +85,7 @@ class MemoryTool(Tool):
 
         details = str(error)
         try:
-            document = await self._memory_store.snapshot(target, tolerant=True)
+            document = await self._memory_manager.snapshot(target, tolerant=True)
         except Exception:
             return details
         return f"{details}\n当前记忆（容错读取，可能不是最新）：{document.text or '（空）'}"
@@ -94,11 +94,11 @@ class MemoryTool(Tool):
 class MemoryToolProvider(ToolProvider):
     """统一发现记忆工具，组合层负责是否注册以及子 Agent 白名单。"""
 
-    def __init__(self, memory_store: MemoryStore) -> None:
-        self._memory_store = memory_store
+    def __init__(self, memory_manager: MemoryManager) -> None:
+        self._memory_manager = memory_manager
 
     async def discover(self) -> tuple[Tool, ...]:
-        return (MemoryTool(self._memory_store),)
+        return (MemoryTool(self._memory_manager),)
 
 
 def _render_mutation(mutation: MemoryMutation) -> str:

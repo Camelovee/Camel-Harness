@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
+SCHEMA_VERSION = 1
+
 
 def _utc_now() -> str:
     """生成便于 JSON 持久化和字符串排序的 UTC 时间。"""
@@ -25,7 +27,7 @@ class SessionMetadata:
     archived: bool = False
     parent_session_id: str | None = None
     parent_tool_call_id: str | None = None
-    schema_version: int = 1
+    schema_version: int = SCHEMA_VERSION
 
     @classmethod
     def create(

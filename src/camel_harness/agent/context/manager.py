@@ -7,7 +7,8 @@ from pathlib import Path
 
 from camel_harness.llm import LlmModel, LlmUsage, Message, ToolDefinition
 
-from ..resources import MemoryStore, ProjectRules, Skills
+from ..memory import MemoryManager
+from ..resources import ProjectRules, Skills
 from ..session.events import ContextSnapshot
 from ..session.manager import Session
 from .compaction import CompactionEngine, CompactionError, CompactionResult
@@ -49,7 +50,7 @@ class ContextManager:
         compaction_engine: CompactionEngine,
         project_rules: ProjectRules | None = None,
         skills: Skills | None = None,
-        memory_store: MemoryStore | None = None,
+        memory_manager: MemoryManager | None = None,
         max_rules_chars: int = 12_000,
         *,
         system_prompt: str,
@@ -63,7 +64,7 @@ class ContextManager:
         self._compaction_engine = compaction_engine
         self._project_rules = project_rules
         self._skills = skills
-        self._memory_store = memory_store
+        self._memory_manager = memory_manager
         self._max_rules_chars = max_rules_chars
 
     def with_system_prompt(self, system_prompt: str) -> ContextManager:
@@ -73,7 +74,7 @@ class ContextManager:
             compaction_engine=self._compaction_engine,
             project_rules=self._project_rules,
             skills=self._skills,
-            memory_store=self._memory_store,
+            memory_manager=self._memory_manager,
             max_rules_chars=self._max_rules_chars,
             system_prompt=system_prompt,
         )
@@ -150,8 +151,8 @@ class ContextManager:
                 "说明引用的支持文件再按需用 load_skill 的 path 参数读取。\n"
                 f"{manifest}"
             )
-        if self._memory_store is not None:
-            memory_context = await self._memory_store.prompt_context(tolerant=True)
+        if self._memory_manager is not None:
+            memory_context = await self._memory_manager.prompt_context(tolerant=True)
             if memory_context:
                 sections.append(memory_context)
         return "\n\n".join(sections)

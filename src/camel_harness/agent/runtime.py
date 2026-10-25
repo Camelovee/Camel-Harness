@@ -14,7 +14,8 @@ from .agent import Agent, CloseHandler
 from .config import AgentSettings
 from .context import CompactionEngine, ContextManager
 from .context.system_prompt import DEFAULT_SYSTEM_PROMPT
-from .resources import MemoryStore, ProjectRules, Skills
+from .memory import MemoryManager
+from .resources import ProjectRules, Skills
 from .session import SessionManager
 from .session.jsonl import JsonlSessionStorage
 from .state import AgentOptions
@@ -38,7 +39,7 @@ class AgentExtensions:
 
     tool_providers: tuple[ToolProvider, ...] = ()
     skills: Skills | None = None
-    memories: MemoryStore | None = None
+    memory_manager: MemoryManager | None = None
     subagent_provider: SubagentProviderFactory | None = None
     on_close: tuple[CloseHandler, ...] = ()
 
@@ -109,7 +110,7 @@ async def build_agent(
             ),
             project_rules=ProjectRules(),
             skills=agent_extensions.skills,
-            memory_store=agent_extensions.memories,
+            memory_manager=agent_extensions.memory_manager,
         )
         if agent_extensions.subagent_provider is not None:
             subagent_runner = LocalSubagentRunner(

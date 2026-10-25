@@ -1,7 +1,8 @@
 import pytest
 
 from camel_harness.agent.config import MemorySettings
-from camel_harness.agent.resources import MemoryStore, Skills, SkillSource
+from camel_harness.agent.memory import MemoryManager
+from camel_harness.agent.resources import Skills, SkillSource
 from camel_harness.agent.tools import ToolCall, ToolContext, ToolExecutor, ToolRegistry
 from camel_harness.agent.tools.skill_loader import SkillToolProvider
 
@@ -122,16 +123,16 @@ async def test_skill_discovery_does_not_read_body(tmp_path) -> None:
 
 
 async def test_memory_is_isolated_under_workspace(tmp_path) -> None:
-    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
-    mutation = await memory_store.add("memory", "使用 JSONL")
+    memory_manager = MemoryManager(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    mutation = await memory_manager.add("memory", "使用 JSONL")
     assert mutation.changed
-    document = await memory_store.snapshot("memory")
+    document = await memory_manager.snapshot("memory")
     assert document.entries == ("使用 JSONL",)
     assert (tmp_path / ".camel" / "memory" / "MEMORY.md").exists()
 
-    other_store = MemoryStore(
+    other_manager = MemoryManager(
         tmp_path / "other-workspace",
         MemorySettings(),
         user_root=tmp_path / "user-memory",
     )
-    assert (await other_store.snapshot("memory")).entries == ()
+    assert (await other_manager.snapshot("memory")).entries == ()

@@ -106,3 +106,43 @@ name = "上下文不得依赖运行状态"
 type = "forbidden"
 source_modules = ["camel_harness.agent.context"]
 forbidden_modules = ["camel_harness.agent.state"]
+
+[[tool.importlinter.contracts]]
+name = "Memory 内部分层：服务 -> 存储 -> 类型"
+type = "layers"
+containers = ["camel_harness.agent.memory"]
+layers = [
+  "memory_manager",
+  "memory_store",
+  "types",
+]
+exhaustive = true
+
+[[tool.importlinter.contracts]]
+name = "Memory 不得依赖编排、上下文、运行、工具或入口层"
+type = "forbidden"
+source_modules = ["camel_harness.agent.memory"]
+forbidden_modules = [
+  "camel_harness.agent.agent",
+  "camel_harness.agent.context",
+  "camel_harness.agent.runtime",
+  "camel_harness.agent.tools",
+  "camel_backend",
+]
+
+[[tool.importlinter.contracts]]
+name = "上下文不得直接依赖记忆存储实现"
+type = "forbidden"
+source_modules = ["camel_harness.agent.context"]
+forbidden_modules = ["camel_harness.agent.memory.memory_store"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "会话类型不依赖会话其他模块"
+type = "layers"
+containers = ["camel_harness.agent.session"]
+layers = [
+  "events:jsonl:manager:resume",
+  "types",
+]
+exhaustive = true

@@ -117,6 +117,19 @@ def test_symlinked_workspace_argument_is_resolved(tmp_path: Path) -> None:
     assert plans[0].path == real_workspace / ".camel" / "memory" / "MEMORY.md"
 
 
+def test_force_overwrites_unparsable_target(tmp_path: Path) -> None:
+    workspace, user_root = tmp_path / "workspace", tmp_path / "user"
+    legacy_root = workspace / ".camel" / "memory"
+    _write_legacy(legacy_root, "style")
+    target = legacy_root / "MEMORY.md"
+    target.write_bytes(b"\xff\xfe")
+
+    plans = migrate_memory.plan_migration(workspace, user_root)
+    asyncio.run(migrate_memory.apply_migration(workspace, user_root, plans, force=True))
+
+    assert target.read_text(encoding="utf-8") == "[style] 编码规则\n使用中文注释"
+
+
 def test_invalid_legacy_entry_aborts(tmp_path: Path) -> None:
     legacy_root = tmp_path / "workspace" / ".camel" / "memory"
     legacy_root.mkdir(parents=True)

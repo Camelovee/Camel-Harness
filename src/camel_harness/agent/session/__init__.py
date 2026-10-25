@@ -1,6 +1,5 @@
 """会话状态、上下文重放与 JSONL 存储。"""
 
-from .codec import message_from_dict, message_to_dict
 from .events import (
     ContextNode,
     ContextSnapshot,
@@ -10,10 +9,12 @@ from .events import (
     SessionHeaderEvent,
     SessionInfoEvent,
     SessionMessageEvent,
+    message_from_dict,
+    message_to_dict,
 )
 from .manager import Session, SessionManager
-from .metadata import SessionMetadata
 from .resume import ResumePlan, analyze_resume
+from .types import SessionMetadata
 
 __all__ = [
     "Session",

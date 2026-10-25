@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from camel_harness.agent import platform_io
-from camel_harness.agent.resources import memory
 
 
 def test_open_regular_checks_type_and_returns_owned_descriptor(tmp_path):
@@ -129,9 +128,10 @@ def test_windows_safe_open_preserves_missing_file_semantics(monkeypatch, tmp_pat
 
 async def test_memory_uses_fixed_filenames_and_rejects_file_links(tmp_path):
     from camel_harness.agent.config import MemorySettings
+    from camel_harness.agent.memory import MemoryManager
 
-    memory_store = memory.MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user")
-    await memory_store.add("memory", "内容")
+    memory_manager = MemoryManager(tmp_path, MemorySettings(), user_root=tmp_path / "user")
+    await memory_manager.add("memory", "内容")
     path = tmp_path / ".camel" / "memory" / "MEMORY.md"
     assert path.exists()
 
@@ -140,4 +140,4 @@ async def test_memory_uses_fixed_filenames_and_rejects_file_links(tmp_path):
     outside.write_text("外部内容", encoding="utf-8")
     path.symlink_to(outside)
     with pytest.raises(ValueError, match="符号链接"):
-        await memory_store.snapshot("memory")
+        await memory_manager.snapshot("memory")

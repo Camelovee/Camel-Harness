@@ -11,7 +11,8 @@ from camel_harness.agent.context.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     SUBAGENT_SYSTEM_PROMPTS,
 )
-from camel_harness.agent.resources import MemoryStore, ProjectRules, Skills
+from camel_harness.agent.memory import MemoryManager
+from camel_harness.agent.resources import ProjectRules, Skills
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.subagent import (
@@ -52,11 +53,11 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         "---\nname: shared-context\ndescription: 共享技能索引\n---\n技能正文按需加载\n",
         encoding="utf-8",
     )
-    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    memory_manager = MemoryManager(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
     for index in range(2):
-        await memory_store.add("memory", f"记忆正文{index}")
+        await memory_manager.add("memory", f"记忆正文{index}")
     if not memory_enabled:
-        memory_store = MemoryStore(
+        memory_manager = MemoryManager(
             tmp_path,
             MemorySettings(enabled=False),
             user_root=tmp_path / "user-memory",
@@ -90,7 +91,7 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         system_prompt="父 Agent 基础提示",
         project_rules=ProjectRules(),
         skills=Skills(tmp_path, user_root=tmp_path / "user-skills"),
-        memory_store=memory_store,
+        memory_manager=memory_manager,
         max_rules_chars=len(rules),
     )
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
@@ -340,11 +341,11 @@ async def test_child_reads_its_own_archived_result(tmp_path):
 
 @pytest.mark.parametrize("kind", list(SubagentType))
 async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind):
-    from camel_harness.agent.resources import MemoryStore
+    from camel_harness.agent.memory import MemoryManager
     from camel_harness.agent.tools.memory_tools import MemoryToolProvider
 
-    memory_store = MemoryStore(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
-    await memory_store.add("memory", "中文说明")
+    memory_manager = MemoryManager(tmp_path, MemorySettings(), user_root=tmp_path / "user-memory")
+    await memory_manager.add("memory", "中文说明")
 
     class MemoryLlm(LlmAdapter):
         requests = 0
@@ -384,7 +385,7 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     await session_manager.create("parent", tmp_path, "父会话")
     tool_registry = ToolRegistry()
-    await tool_registry.register_provider(MemoryToolProvider(memory_store))
+    await tool_registry.register_provider(MemoryToolProvider(memory_manager))
     adapter = MemoryLlm()
     llm_client = LlmClient(adapter)
     subagent_runner = LocalSubagentRunner(
@@ -395,7 +396,7 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
         context_manager=ContextManager(
             system_prompt="测试提示",
             compaction_engine=CompactionEngine(llm_client=llm_client),
-            memory_store=memory_store,
+            memory_manager=memory_manager,
         ),
         agent_options=AgentOptions(),
     )
@@ -412,4 +413,4 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
     )
     assert result.succeeded and result.content == "仅收到注入的只读记忆"
     assert adapter.requests == 2
-    assert (await memory_store.snapshot("user")).entries == ()
+    assert (await memory_manager.snapshot("user")).entries == ()

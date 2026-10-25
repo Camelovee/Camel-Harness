@@ -7,12 +7,10 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from camel_harness.agent.config import MemorySettings
-from camel_harness.agent.resources import MemoryStore
+from camel_harness.agent.memory import MemoryManager, MemoryTarget
 
-MemoryTarget = Literal["memory", "user"]
 _ENTRY_SEPARATOR = "\n§\n"
 _FILENAMES: dict[MemoryTarget, str] = {"memory": "MEMORY.md", "user": "USER.md"}
 
@@ -97,13 +95,15 @@ async def apply_migration(
 
     effective_settings = settings or MemorySettings()
     resolved_workspace, resolved_user_root = _resolved_roots(workspace, user_root)
-    memory_store = MemoryStore(resolved_workspace, effective_settings, user_root=resolved_user_root)
+    memory_manager = MemoryManager(
+        resolved_workspace, effective_settings, user_root=resolved_user_root
+    )
     for plan in plans:
         if not plan.entries:
             continue
         if plan.path.exists() and not force:
             raise ValueError(f"目标记忆已存在，未覆盖：{plan.path}；使用 --force 覆盖")
-        await memory_store.import_entries(plan.target, plan.entries)
+        await memory_manager.import_entries(plan.target, plan.entries)
 
 
 def _resolved_roots(workspace: Path, user_root: Path) -> tuple[Path, Path]:

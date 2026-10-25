@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from camel_backend.main import create_app
 from camel_harness.agent import platform_io
 from camel_harness.agent.config import AgentSettings, MemorySettings
-from camel_harness.agent.resources import MemoryStore
+from camel_harness.agent.memory import MemoryManager
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.agent.tools import ToolContext, ToolResult
@@ -30,19 +30,19 @@ def test_backend_starts_with_isolated_default_config_and_can_create_session(tmp_
 
 
 async def test_memory_native_create_update_read_delete(tmp_path):
-    memory_store = MemoryStore(
+    memory_manager = MemoryManager(
         tmp_path / "项目 with spaces",
         MemorySettings(),
         user_root=tmp_path / "user-memory",
     )
-    assert (await memory_store.add("memory", "保留中文和换行\n第二行")).changed
-    assert (await memory_store.snapshot("memory")).entries == ("保留中文和换行\n第二行",)
+    assert (await memory_manager.add("memory", "保留中文和换行\n第二行")).changed
+    assert (await memory_manager.snapshot("memory")).entries == ("保留中文和换行\n第二行",)
 
-    assert (await memory_store.replace("memory", "第二行", "新正文")).changed
-    assert (await memory_store.snapshot("memory")).entries == ("新正文",)
+    assert (await memory_manager.replace("memory", "第二行", "新正文")).changed
+    assert (await memory_manager.snapshot("memory")).entries == ("新正文",)
 
-    assert (await memory_store.remove("memory", "新正文")).changed
-    assert (await memory_store.snapshot("memory")).entries == ()
+    assert (await memory_manager.remove("memory", "新正文")).changed
+    assert (await memory_manager.snapshot("memory")).entries == ()
 
 
 async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
@@ -62,7 +62,7 @@ async def test_native_link_or_junction_cannot_redirect_memory_root(tmp_path):
     try:
         assert platform_io.is_link(link)
         with pytest.raises(ValueError, match="符号链接"):
-            await MemoryStore(workspace, MemorySettings(), user_root=tmp_path / "user").snapshot(
+            await MemoryManager(workspace, MemorySettings(), user_root=tmp_path / "user").snapshot(
                 "memory"
             )
         assert list(outside.iterdir()) == []
