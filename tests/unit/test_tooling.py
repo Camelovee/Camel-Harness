@@ -150,4 +150,5 @@ async def test_invalid_tool_arguments_are_normalized(tmp_path) -> None:
     )
 
     assert tool_result.is_error
-    assert "required" in tool_result.content
+    assert "path：缺少必填参数" in tool_result.content
+    assert tool_result.metadata["execution_status"] == "not_executed"

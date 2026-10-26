@@ -97,6 +97,7 @@ class TurnRunner:
         """执行一次 assistant 响应及其产生的全部工具调用。"""
 
         agent_run = self._agent_run
+        # next_turn() 可能先 fail(MAX_TURNS) 再抛错；超限的 Turn 不会发出 TurnStart。
         agent_run.next_turn()
         turn_id = uuid4().hex
         await self._emit(
@@ -121,6 +122,8 @@ class TurnRunner:
             effort=effort,
         )
         assistant_message_id = uuid4().hex
+        # MessageStart 在流开始前发出；失败或取消时不会配对 MessageEnd，也不持久化，
+        # 事件消费者必须容忍孤立的 start。
         await self._committer.emit_message_start(turn_id, assistant_message_id, "assistant")
         while True:
             try:
@@ -136,6 +139,7 @@ class TurnRunner:
                         f"请减少输入或调整 compaction 配置：{exc}"
                     ) from exc
                 # 同一 Turn 只重发尚未生成内容的模型请求，不重存输入或重跑工具。
+                # 恢复标记是 Run 级且永不重置，每个 Run 最多恢复一次。
                 agent_run.context_overflow_recovery_used = True
                 system_prompt, history = await self._prepare_context(
                     model,
@@ -212,6 +216,7 @@ class TurnRunner:
                     if llm_event.code is LlmErrorCode.CONTEXT_OVERFLOW and not started:
                         raise _ContextOverflowError(llm_event.error)
                     raise RuntimeError(llm_event.error)
+                # 一旦收到任意流事件，overflow 不再可恢复，否则会重复投递已发出的增量。
                 started = True
         finally:
             # 失败或取消也保留已知消耗，但绝不保存未完成 assistant。
@@ -249,6 +254,8 @@ class TurnRunner:
                 trigger=trigger,
             )
         except ContextSessionError:
+            # 分类按责任方划分且顺序不可调换：会话 → SESSION，资源 → RESOURCE，
+            # 其余上下文/压缩/提示词故障 → CONTEXT。
             agent_run.fail(StopReason.SESSION_FAILED)
             raise
         except ContextResourceError:
@@ -300,6 +307,7 @@ class TurnRunner:
                 request_id: str,
                 permission_request: PermissionRequest,
                 reason: str,
+                # 默认参数在当前迭代捕获 tool_call，规避闭包晚绑定。
                 current_tool_call: ToolCall = tool_call,
             ) -> None:
                 await self._emit(
@@ -328,6 +336,8 @@ class TurnRunner:
                     on_approval=on_approval,
                 )
             except Exception:
+                # ToolExecutor 已把工具失败归一化为 ToolResult；这里捕获的是基础设施或
+                # 结果归档故障，因此升级为 TOOL_FAILED。
                 agent_run.fail(StopReason.TOOL_FAILED)
                 raise
             tool_results.append(await self._record_tool_result(turn_id, tool_result))
@@ -356,6 +366,8 @@ class TurnRunner:
     ) -> ToolResultMessage:
         """完整保存工具结果后返回，保持恢复所需的消息链。"""
 
+        # 该事件描述“执行结果”，不是持久化确认，因此先于落盘发出；
+        # 与 SessionCommitter 的“先保存后事件”相反，是有意为之。
         await self._emit(
             ToolExecutionEndEvent(
                 session_id=self._agent_run.session_id,

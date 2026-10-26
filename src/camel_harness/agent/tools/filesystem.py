@@ -6,9 +6,13 @@ import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from .text_edits import apply_text_edits
-from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
+from pydantic import Field
 
+from .parameters import PydanticTool, ToolArguments
+from .text_edits import TextEditArguments, apply_text_edits
+from .types import ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
+
+# 锁表以已 resolve 的路径为键；调用方必须先规范化，否则同一文件的别名会拿到不同的锁。
 _mutations: dict[Path, tuple[asyncio.Lock, int]] = {}
 
 
@@ -46,6 +50,7 @@ def _atomic_write(path: Path, content: str) -> int:
     """完整写入同目录临时文件再替换；失败不破坏原文件或遗留临时文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    # 覆盖时保留原文件 mode；新文件继承 mkstemp 的 0600，而不是进程 umask。
     mode = path.stat().st_mode & 0o777 if path.exists() else None
     descriptor, raw_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary = Path(raw_path)
@@ -66,6 +71,7 @@ def _atomic_write(path: Path, content: str) -> int:
 def resolve_in_workspace(workspace: Path, raw_path: str) -> Path:
     """解析并限制路径，防止绝对路径和软链接逃逸工作区。"""
 
+    # 保护只在解析时点生效；之后替换成符号链接不再检查，这是已知的 TOCTOU 边界。
     candidate = (workspace / raw_path).resolve()
     try:
         candidate.relative_to(workspace.resolve())
@@ -81,7 +87,29 @@ def _check_memory_write(workspace: Path, path: Path) -> None:
         raise ToolNotExecutedError("记忆目录只能通过 memory 工具维护")
 
 
-class ReadFileTool(Tool):
+class ReadFileArguments(ToolArguments):
+    """读取文件的路径和分页边界。"""
+
+    path: str = Field(min_length=1)
+    start_line: int = Field(default=1, ge=1)
+    max_lines: int = Field(default=400, ge=1, le=2000)
+
+
+class WriteFileArguments(ToolArguments):
+    """完整写入文件的目标与正文。"""
+
+    path: str = Field(min_length=1)
+    content: str
+
+
+class EditFileArguments(ToolArguments):
+    """同一文件的一批精确替换。"""
+
+    path: str = Field(min_length=1)
+    edits: list[TextEditArguments] = Field(min_length=1)
+
+
+class ReadFileTool(PydanticTool[ReadFileArguments]):
     """读取工作区内 UTF-8 文本文件。"""
 
     name = "read_file"
@@ -90,16 +118,7 @@ class ReadFileTool(Tool):
         "默认读取 400 行，最多 2000 行；带行号正文最多 16 KiB，只展示完整行。"
         "返回行范围、总行数和续读 start_line；未完整展示时按提示继续，不把片段当作全文。"
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "minLength": 1},
-            "start_line": {"type": "integer", "minimum": 1},
-            "max_lines": {"type": "integer", "minimum": 1, "maximum": 2000},
-        },
-        "required": ["path"],
-        "additionalProperties": False,
-    }
+    arguments_model = ReadFileArguments
     capabilities = frozenset({"filesystem.read"})
 
     def __init__(
@@ -107,16 +126,20 @@ class ReadFileTool(Tool):
     ) -> None:
         self._result_path_resolver = result_path_resolver
 
-    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        raw_path = str(tool_call.arguments["path"])
+    async def execute_validated(
+        self, arguments: ReadFileArguments, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
+        raw_path = arguments.path
         try:
             path = resolve_in_workspace(tool_context.workspace, raw_path)
         except ValueError:
             if self._result_path_resolver is None:
                 raise
+            # 结果目录在工作区外，read_file 因此也兼作 content_ref 的读取入口；
+            # 解析器仍会校验会话分支登记与符号链接。
             path = await self._result_path_resolver(tool_context.session_id, raw_path)
-        start = int(tool_call.arguments.get("start_line", 1))
-        limit = int(tool_call.arguments.get("max_lines", 400))
+        start = arguments.start_line
+        limit = arguments.max_lines
         data = await asyncio.to_thread(path.read_bytes)
         return _read_page(tool_call, data.decode("utf-8"), start, limit)
 
@@ -125,12 +148,14 @@ def _read_page(tool_call: ToolCall, text: str, start: int, limit: int) -> ToolRe
     """按行与 UTF-8 字节双阈值分页，元信息不占正文额度。"""
 
     lines = text.splitlines()
+    # 空文件只允许 start=1；其余越界或非法 max_lines 都在读取前拒绝。
     if start < 1 or not 1 <= limit <= 2000 or (start > len(lines) and (lines or start != 1)):
         raise ToolNotExecutedError("读取行范围越界或 max_lines 不在 1–2000 内")
     selected: list[str] = []
     output_bytes = 0
     for line_number in range(start, min(start + limit, len(lines) + 1)):
         numbered = f"{line_number}: {lines[line_number - 1]}"
+        # 字节额度包含行间换行，不包含末尾提示与元信息。
         size = len(numbered.encode("utf-8")) + int(bool(selected))
         if output_bytes + size > 16 * 1024:
             break
@@ -158,7 +183,7 @@ def _read_page(tool_call: ToolCall, text: str, start: int, limit: int) -> ToolRe
     )
 
 
-class WriteFileTool(Tool):
+class WriteFileTool(PydanticTool[WriteFileArguments]):
     """原子覆盖工作区文件，并按需创建父目录。"""
 
     name = "write_file"
@@ -168,22 +193,16 @@ class WriteFileTool(Tool):
         "覆盖前先了解现有内容；覆盖不进行版本校验，不能防止基于旧内容覆盖其他修改。"
         "content 必须完整且适合单次输出额度，大文件请分阶段构建，禁止省略内容。"
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "minLength": 1},
-            "content": {"type": "string"},
-        },
-        "required": ["path", "content"],
-        "additionalProperties": False,
-    }
+    arguments_model = WriteFileArguments
     capabilities = frozenset({"filesystem.write"})
     risk = ToolRisk.WRITE
 
-    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+    async def execute_validated(
+        self, arguments: WriteFileArguments, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
+        path = resolve_in_workspace(tool_context.workspace, arguments.path)
         _check_memory_write(tool_context.workspace, path)
-        content = str(tool_call.arguments["content"])
+        content = arguments.content
 
         size = await _mutate_file(path, lambda: _atomic_write(path, content))
         return ToolResult(
@@ -193,7 +212,7 @@ class WriteFileTool(Tool):
         )
 
 
-class EditFileTool(Tool):
+class EditFileTool(PydanticTool[EditFileArguments]):
     """通过唯一文本匹配执行可验证的精确编辑。"""
 
     name = "edit_file"
@@ -202,34 +221,16 @@ class EditFileTool(Tool):
         "片段应尽量小而唯一，不复制行号；相邻或重叠修改合并为一项，不拼接大段无关内容。"
         "不做模糊匹配，保留 BOM 和未修改区域原文，返回修改数量及 diff。"
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "minLength": 1},
-            "edits": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "old_text": {"type": "string", "minLength": 1},
-                        "new_text": {"type": "string"},
-                    },
-                    "required": ["old_text", "new_text"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required": ["path", "edits"],
-        "additionalProperties": False,
-    }
+    arguments_model = EditFileArguments
     capabilities = frozenset({"filesystem.write"})
     risk = ToolRisk.WRITE
 
-    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+    async def execute_validated(
+        self, arguments: EditFileArguments, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
+        path = resolve_in_workspace(tool_context.workspace, arguments.path)
         _check_memory_write(tool_context.workspace, path)
-        edits = tool_call.arguments["edits"]
+        edits = arguments.edits
         diff = ""
 
         def edit() -> int:

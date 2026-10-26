@@ -31,6 +31,7 @@ def analyze_resume(messages: tuple[Message, ...]) -> ResumePlan:
     if isinstance(last, UserMessage):
         return ResumePlan(True, "会话停在用户消息之后")
 
+    # 判定顺序即优先级：先看用户消息，再找最后一条 assistant，最后才看 stop_reason。
     assistant_index = next(
         (
             index
@@ -51,6 +52,7 @@ def analyze_resume(messages: tuple[Message, ...]) -> ResumePlan:
             for message in messages[assistant_index + 1 :]
             if isinstance(message, ToolResultMessage)
         }
+        # 补出的错误结果只表示副作用状态不确定；恢复后应先核验环境，不自动重放。
         missing = tuple(
             ToolResultMessage(
                 call_id=call.call_id,

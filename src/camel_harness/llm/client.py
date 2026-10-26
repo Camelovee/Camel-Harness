@@ -64,6 +64,7 @@ class AssistantMessageAccumulator:
 
         if self._error is not None:
             raise RuntimeError(self._error)
+        # 三条完整性断言：必须有完成事件，且 stop_reason 与内容形态一致。
         if self._stop_reason is None:
             raise RuntimeError("LLM 流缺少 MessageCompleted，禁止使用不完整消息")
         if self._stop_reason is LlmStopReason.TOOL_USE and not self._tool_calls:
@@ -81,6 +82,7 @@ class AssistantMessageAccumulator:
             self._stop_reason,
             provider=self._provider,
             model=self._model,
+            # 只在服务端实际模型与请求不同时才记录，避免重复字段。
             response_model=self._response_model if self._response_model != self._model else None,
             usage=self.usage,
         )
@@ -112,6 +114,7 @@ class LlmClient:
             yield StreamFailed(f"未配置的 Provider：{llm_request.model.provider}", retryable=False)
             return
         for attempt in range(1, self._max_attempts + 1):
+            # emitted 一旦为 True，消费者已经看到增量，本轮就不能再重放。
             emitted = False
             failure: StreamFailed | None = None
             stream = adapter.stream(llm_request)
@@ -127,12 +130,14 @@ class LlmClient:
             except Exception as exc:
                 failure = StreamFailed(str(exc), isinstance(exc, ConnectionError | TimeoutError))
             finally:
+                # 失败或取消也要关闭适配器流，避免连接泄漏。
                 close = getattr(stream, "aclose", None)
                 if close is not None:
                     await close()
             if failure is None:
                 return
             if (
+                # 已发出增量、溢出、不可重试或次数用尽：直接返回失败，不再重放。
                 emitted
                 or failure.code is LlmErrorCode.CONTEXT_OVERFLOW
                 or not failure.retryable
@@ -140,4 +145,5 @@ class LlmClient:
             ):
                 yield failure
                 return
+            # 指数退避 0.25s、0.5s…；只在首个事件前允许重试。
             await asyncio.sleep(0.25 * (2 ** (attempt - 1)))

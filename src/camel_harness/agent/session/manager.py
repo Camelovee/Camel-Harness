@@ -31,6 +31,7 @@ class Session:
             entry_id = await self._session_storage.append_message(
                 self._session_id, message, leaf_id=self._leaf_id, use_latest=self._use_latest
             )
+            # use_latest 时叶节点跟随日志末尾；只有显式选过分支才回写。
             if not self._use_latest:
                 self._leaf_id = entry_id
             return entry_id
@@ -139,6 +140,7 @@ class SessionManager:
             parent = await self._session_storage.get_metadata(parent_session_id)
             if parent is None:
                 raise ValueError(f"父会话不存在：{parent_session_id}")
+            # 子会话必须与父会话同一工作目录，结果读取和路径授权都依赖这一点。
             if parent.workspace != str(workspace.resolve()):
                 raise ValueError("子会话工作目录必须与父会话一致")
         metadata = SessionMetadata.create(
@@ -157,6 +159,7 @@ class SessionManager:
         current = await self._session_storage.get_metadata(session_id)
         if current is not None:
             return current
+        # “查后建”没有跨两段的锁；并发创建由存储层的 O_EXCL 兜底。
         return await self.create(session_id, workspace, name)
 
     async def get(self, session_id: str) -> SessionMetadata | None:
@@ -215,4 +218,5 @@ class SessionManager:
             visited.add(current_id)
             preorder.append(current_id)
             pending.extend(children.get(current_id, ()))
+        # preorder 反转即后序，保证后代先于祖先删除，无需真正做后序遍历。
         return tuple(reversed(preorder))

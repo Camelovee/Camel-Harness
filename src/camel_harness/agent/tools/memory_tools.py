@@ -1,24 +1,44 @@
 from __future__ import annotations
 
 import json
+from typing import Self
+
+from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from ..memory import (
+    MemoryAction,
     MemoryManager,
     MemoryMutation,
     MemoryStorageError,
     MemoryTarget,
     MemoryValidationError,
-    memory_action,
-    memory_target,
 )
+from .parameters import PydanticTool, ToolArguments
 from .registry import ToolProvider
 from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
 
-_TARGET = {"type": "string", "enum": ["memory", "user"]}
-_ACTION = {"type": "string", "enum": ["add", "replace", "remove"]}
+
+class MemoryArguments(ToolArguments):
+    """记忆操作及各操作所需的文本参数。"""
+
+    action: MemoryAction
+    target: MemoryTarget
+    content: str | SkipJsonSchema[None] = Field(default=None, min_length=1)
+    old_text: str | SkipJsonSchema[None] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def check_action_fields(self) -> Self:
+        """在任何审批与存储操作前检查条件必填字段。"""
+
+        if self.action in ("add", "replace") and self.content is None:
+            raise ValueError("该记忆操作必须提供 content，未执行修改")
+        if self.action in ("replace", "remove") and self.old_text is None:
+            raise ValueError("该记忆操作必须提供 old_text，未执行修改")
+        return self
 
 
-class MemoryTool(Tool):
+class MemoryTool(PydanticTool[MemoryArguments]):
     """维护两个有界记忆文件；写入由 Agent 自主完成，不再逐次审批。"""
 
     name = "memory"
@@ -34,34 +54,18 @@ class MemoryTool(Tool):
     )
     risk = ToolRisk.WRITE
     capabilities = frozenset({"memory.write"})
-    parameters = {
-        "type": "object",
-        "properties": {
-            "action": _ACTION,
-            "target": _TARGET,
-            "content": {"type": "string", "minLength": 1},
-            "old_text": {"type": "string", "minLength": 1},
-        },
-        "required": ["action", "target"],
-        "additionalProperties": False,
-    }
+    arguments_model = MemoryArguments
 
     def __init__(self, memory_manager: MemoryManager) -> None:
         self._memory_manager = memory_manager
 
-    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        arguments = tool_call.arguments
-        try:
-            action = memory_action(arguments["action"])
-            target = memory_target(arguments["target"])
-        except (KeyError, MemoryValidationError) as exc:
-            raise ToolNotExecutedError(f"记忆参数无效，未执行修改：{exc}") from exc
-        content = arguments.get("content")
-        old_text = arguments.get("old_text")
-        if action in ("add", "replace") and not isinstance(content, str):
-            raise ToolNotExecutedError("该记忆操作必须提供 content，未执行修改")
-        if action in ("replace", "remove") and not isinstance(old_text, str):
-            raise ToolNotExecutedError("该记忆操作必须提供 old_text，未执行修改")
+    async def execute_validated(
+        self, arguments: MemoryArguments, tool_call: ToolCall, tool_context: ToolContext
+    ) -> ToolResult:
+        action = arguments.action
+        target = arguments.target
+        content = arguments.content
+        old_text = arguments.old_text
         try:
             if action == "add":
                 assert isinstance(content, str)
@@ -73,8 +77,10 @@ class MemoryTool(Tool):
                 assert isinstance(old_text, str)
                 mutation = await self._memory_manager.remove(target, old_text)
         except MemoryValidationError as exc:
+            # 校验与匹配失败都没有写盘，归为未执行，模型可安全调整后重试。
             raise ToolNotExecutedError(str(exc)) from exc
         except MemoryStorageError as exc:
+            # 存储故障可能是“已提交但确认失败”；抛普通异常让 executor 按 WRITE 判 UNKNOWN。
             raise RuntimeError(await self._storage_failure_message(target, exc)) from exc
         return ToolResult(tool_call.call_id, tool_call.name, _render_mutation(mutation))
 
@@ -108,6 +114,7 @@ def _render_mutation(mutation: MemoryMutation) -> str:
     elif mutation.changed:
         message = "记忆已更新"
     else:
+        # 三态区分重复、实际变化与无变化替换，模型据此决定是否继续整合。
         message = "记忆内容未变化"
     payload = {
         "target": document.target,

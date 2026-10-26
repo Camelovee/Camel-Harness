@@ -32,6 +32,7 @@ class ContextTokenEstimate:
 def estimate_text_tokens(text: str) -> int:
     """按 UTF-8 字节数除以 3 向上取整；不是厂商精确 tokenizer。"""
 
+    # 英文约 4 字符/token、中文约 1 字符/token；字节除以 3 是跨语言折中，英文偏保守。
     return (len(text.encode("utf-8")) + 2) // 3
 
 
@@ -69,6 +70,7 @@ def estimate_context_tokens(
     """
 
     messages = snapshot.messages
+    # 从压缩边界之后回扫最近的有效 usage；边界之前的统计属于旧投影，不能作为基数。
     for index in range(len(messages) - 1, snapshot.usage_start_index - 1, -1):
         usage_tokens = _matching_usage_tokens(messages[index], model)
         if usage_tokens is not None:

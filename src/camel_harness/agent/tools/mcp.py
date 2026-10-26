@@ -32,12 +32,18 @@ class McpRemoteTool(Tool):
         self.namespace = f"mcp__{server_name}"
         self.name = remote_name
         self.description = description
-        self.parameters = input_schema
+        self._parameters = input_schema
         self.capabilities = frozenset({"external.mcp"})
         self.risk = ToolRisk.EXTERNAL
+        # 远端调用没有独立超时，靠 executor 的 60s；超时只是取消协程，结果未知。
         self.timeout_seconds = 60
 
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._parameters
+
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        # Server 的 cwd 已在进程级固定为工作区，单次调用不再使用 tool_context。
         del tool_context
         mcp_result = await self._session.call_tool(self._remote_name, tool_call.arguments)
         content_parts: list[str] = []
@@ -107,6 +113,7 @@ class McpManager(ToolProvider):
                         try:
                             await self._connect(str(server_name), server_config, stack)
                         except Exception as exc:
+                            # 单个 Server 失败只记录错误，其余工具仍然可用。
                             self.errors.append(f"{server_name}: {exc}")
                 self._ready.set()
                 await self._stop.wait()
@@ -164,12 +171,14 @@ class McpManager(ToolProvider):
             command=command,
             args=server_arguments,
             env=server_environment,
+            # Server 必须继承工作区而不是 Harness 进程的当前目录。
             cwd=self._workspace,
         )
         # 失败连接就地清理，成功连接按进入顺序交给同一任务的外层栈。
         async with AsyncExitStack() as connection:
             reader, writer = await connection.enter_async_context(stdio_client(parameters))
             session = await connection.enter_async_context(ClientSession(reader, writer))
+            # 握手与工具发现各 30s，避免启动阶段无限挂起。
             await asyncio.wait_for(session.initialize(), 30)
             catalog = await asyncio.wait_for(session.list_tools(), 30)
             remote_tools = [

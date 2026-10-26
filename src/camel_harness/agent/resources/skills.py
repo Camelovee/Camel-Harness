@@ -57,6 +57,7 @@ class Skills:
 
     def _discover_sync(self) -> tuple[SkillDefinition, ...]:
         found: dict[str, SkillDefinition] = {}
+        # 按 builtin → project → user 遍历，setdefault 先到者胜：内置同名 Skill 覆盖后两者。
         for root, source in (
             (self._builtin_root, SkillSource.BUILTIN),
             (self._project_root, SkillSource.PROJECT),
@@ -65,6 +66,7 @@ class Skills:
             if not root.is_dir():
                 continue
             for path in sorted(root.glob("*/SKILL.md")):
+                # 跳过符号链接是 Skill 根目录逃逸防护。
                 if is_link(path) or is_link(path.parent) or not path.is_file():
                     continue
                 try:
@@ -116,6 +118,7 @@ class Skills:
     def _frontmatter(path: Path) -> dict[str, str] | None:
         """只读取 YAML 头部的名称和描述，正文绝不进入发现阶段。"""
 
+        # 只识别 name/description 与 |/> 块标量，不是完整 YAML 解析器。
         with path.open("rb") as stream:
             if stream.readline().decode("utf-8").strip() != "---":
                 return None

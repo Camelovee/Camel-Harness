@@ -40,6 +40,7 @@ class LlmModel:
 
     provider: str
     model: str
+    # repr=False：凭据不进入 repr、日志或错误文本。
     api_key: str = field(default="", repr=False)
     base_url: str | None = None
     context_window_tokens: int = 128_000
@@ -47,6 +48,7 @@ class LlmModel:
     thinking_mode: LlmThinkingMode = LlmThinkingMode.PROVIDER_DEFAULT
 
     def __post_init__(self) -> None:
+        # 4096 是上下文与压缩共享的最小安全余量，不是可调业务参数。
         if (
             self.max_output_tokens <= 0
             or self.context_window_tokens <= self.max_output_tokens + 4096
@@ -54,6 +56,7 @@ class LlmModel:
             raise ValueError("模型窗口必须大于输出预算与 4096 Token 安全余量之和")
         if not isinstance(self.thinking_mode, LlmThinkingMode):
             raise ValueError("思考模式必须使用 LlmThinkingMode")
+        # 枚举值前缀与 provider 是隐含耦合；改枚举名会同时破坏这条校验。
         if (
             self.thinking_mode is not LlmThinkingMode.PROVIDER_DEFAULT
             and self.thinking_mode.value.split("_")[0] != self.provider

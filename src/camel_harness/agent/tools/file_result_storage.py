@@ -33,10 +33,12 @@ class FileToolResultStorage:
         self._registered_paths = registered_paths
 
     async def normalize(self, tool_result: ToolResult, tool_context: ToolContext) -> ToolResult:
+        # content_ref 已存在时直接返回，重复归档是幂等的。
         if "content_ref" in tool_result.metadata:
             return tool_result
         if len(tool_result.content) <= self._max_inline_chars:
             return tool_result
+        # call_id 来自模型，清洗后才能安全用作文件名。
         call_id = _SAFE_PART.sub("-", tool_result.call_id)[:80] or "result"
         try:
             directory = self._session_directory(tool_context.session_id) / "tool-results"
@@ -44,6 +46,7 @@ class FileToolResultStorage:
                 asyncio.to_thread(self._write, directory, call_id, tool_result.content)
             )
             cancelled = False
+            # shield 循环保证取消不丢已经在线程里的写；取消完成后删除半成品。
             while not task.done():
                 try:
                     await asyncio.shield(task)
@@ -61,6 +64,7 @@ class FileToolResultStorage:
                 path.unlink(missing_ok=True)
                 raise asyncio.CancelledError
         except Exception as exc:
+            # 归档失败会中止 Run：此时工具可能已经执行，不能伪装成未执行。
             raise ToolResultStorageError(f"工具结果归档失败：{exc}") from exc
         reference = str(path)
         preview_chars = self._max_inline_chars
@@ -96,6 +100,7 @@ class FileToolResultStorage:
             raise ValueError("工具结果路径必须是无穿越的绝对路径")
         if path.parent != directory or is_link(directory) or is_link(path):
             raise ValueError("工具结果路径不属于当前会话或包含符号链接")
+        # 登记按当前分支校验：父会话不能读子会话结果，兄弟分支也互不可见。
         if path not in await self._registered_paths(session_id):
             raise ValueError("工具结果引用未在当前会话分支登记")
         if not path.is_file() or path.resolve().parent != directory.resolve():
@@ -141,6 +146,7 @@ class FileToolResultStorage:
         directory = self._session_directory(tool_context.session_id) / "tool-results"
         safe_id = _SAFE_PART.sub("-", call_id)[:80] or "result"
         path = self._write(directory, safe_id, "")
+        # 增量解码跨块保留多字节字符，预览不会在块边界截断 UTF-8。
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         preview = ""
         chars = 0
@@ -174,6 +180,7 @@ class FileToolResultStorage:
 
     @staticmethod
     def _write(directory: Path, call_id: str, content: str) -> Path:
+        # 目录 0700；newline="" 原样写入，避免换行转换改变结果内容。
         if is_link(directory):
             raise ValueError("工具结果目录不能是符号链接")
         directory.mkdir(mode=0o700, exist_ok=True)

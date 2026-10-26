@@ -82,12 +82,14 @@ class LocalSubagentRunner:
         self._agent_options = agent_options
 
     async def run(self, subagent_request: SubagentRequest) -> SubagentResult:
+        # 显式白名单默认拒绝：排除二次委派、memory 与 MCP，避免递归和越权写入。
         allowed_tool_names = (
             _GENERAL_TOOLS
             if subagent_request.agent_type is SubagentType.GENERAL
             else _READ_ONLY_TOOLS
         )
         session_id = f"sub-{uuid4().hex}"
+        # 非 general 强制 PLAN，是工具白名单之外的第二道兜底。
         permission_mode = (
             subagent_request.permission_mode
             if subagent_request.agent_type is SubagentType.GENERAL
@@ -104,6 +106,7 @@ class LocalSubagentRunner:
         session = self._session_manager.bind(session_id)
 
         async def registered_paths(requested_id: str) -> frozenset[Path]:
+            # 结果读取只认子会话自身 ID，父会话与兄弟会话都不能借用。
             if requested_id != session_id:
                 raise ValueError("结果读取必须使用子 Agent 自身会话")
             return await self._session_manager.tool_result_paths(requested_id)
@@ -116,6 +119,7 @@ class LocalSubagentRunner:
         for tool_definition in selected_tool_registry.llm_definitions():
             tool = selected_tool_registry.resolve(tool_definition.name)
             # 内置读取工具绑定子会话，其他扩展工具保留注册者提供的实现。
+            # 其余实例与父 Agent 共享，只有读取工具需要换会话绑定。
             tool_registry.register(
                 ReadFileTool(tool_result_storage.resolve_read_path)
                 if type(tool) is ReadFileTool
@@ -158,10 +162,12 @@ class LocalSubagentRunner:
             await agent.run(
                 subagent_request.task,
                 model=subagent_request.model,
+                # 8 是成本上限，不代表任务复杂度。
                 max_turns=8,
                 permission_mode=permission_mode,
             )
         except Exception as exc:
+            # 异常转普通结果，外层记 FAILED；子 Agent 可能已有副作用，语义上更接近 UNKNOWN。
             return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)
         finally:
             # run() 的等待被 shield 隔离，父任务取消时必须显式关闭子任务。

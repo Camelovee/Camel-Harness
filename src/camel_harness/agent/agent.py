@@ -157,6 +157,8 @@ class Agent:
             raise ValueError("运行中输入不能为空")
         if len(value) > self._agent_options.max_steering_chars:
             raise ValueError(f"运行中输入不能超过 {self._agent_options.max_steering_chars} 个字符")
+        # 入队只在 Turn 边界被消费；accepting_input 与 _run_lock 共同构成关闭窗口。
+        # deque 不是线程安全的，但只在这把锁内修改。
         async with self._run_lock:
             run_control = self._run_control
             if run_control is None or not run_control.accepting_input:
@@ -185,12 +187,15 @@ class Agent:
             run_control.accepting_input = False
             run_control.abort_requested = True
             run_control.steering.clear()
+            # abort 只是请求，不在这里落终态；终态统一由 Run 循环设置。
             task = run_control.owner_task
             if task is None:
+                # owner_task 为空是启动窗口的防御分支，直接取消并清理登记。
                 run_control.agent_run.cancel()
                 run_control.done.set()
                 self._run_control = None
             elif not task.done() and run_control.agent_run.status is RunStatus.RUNNING:
+                # 只在 RUNNING 时 cancel；IDLE 启动窗口由执行体里的 abort_requested 检查兜住。
                 task.cancel()
             return True
 
@@ -198,6 +203,7 @@ class Agent:
         """等待当前 Run 的终态事件和清理全部完成。"""
 
         run_control = self._run_control
+        # 只等当下的 Run；之后启动的新 Run 不受这次等待约束。
         if run_control is not None:
             await run_control.done.wait()
 
@@ -234,7 +240,9 @@ class Agent:
                 max_turns=max_turns,
             )
             run_control = RunControl(agent_run, asyncio.Event())
+            # 先登记控制对象再创建任务，并全程持锁；锁外观察者看不到半登记状态。
             self._run_control = run_control
+            # 任务所有权归 Agent；调用方取消自己的等待不会隐式接管或取消 Run。
             run_control.owner_task = asyncio.create_task(
                 self._execute_run(
                     run_control,
@@ -294,6 +302,7 @@ class Agent:
                     sequence=agent_run.next_sequence(),
                 )
             )
+            # 事件发出后才检查 abort，覆盖 status 仍为 IDLE 的启动窗口。
             if run_control.abort_requested:
                 raise asyncio.CancelledError
             async with asyncio.timeout(self._agent_options.max_duration_seconds):
@@ -312,6 +321,7 @@ class Agent:
                     turn_reason = outcome.stop_reason
                     has_tool_calls = outcome.has_tool_calls
                     pending_user = None
+                    # Turn 内部可能已 fail（会话/上下文/工具故障），不能覆盖更精确的终态原因。
                     if agent_run.status is not RunStatus.RUNNING:
                         continue
                     if turn_reason is LlmStopReason.LENGTH:
@@ -327,8 +337,10 @@ class Agent:
                     if queued is not None:
                         pending_user = queued.message
                     elif turn_reason is LlmStopReason.STOP:
+                        # STOP 但队列非空时继续；只有 STOP 且队列排空才完成。
                         agent_run.complete()
         except TimeoutError as exc:
+            # 异常分类顺序即优先级；已设置终态时不再覆盖原因。
             if agent_run.stop_reason is None:
                 agent_run.fail(StopReason.TIMEOUT)
             error = str(exc) or "Agent 运行超时"
@@ -340,9 +352,11 @@ class Agent:
                 agent_run.fail(StopReason.INTERNAL_ERROR)
             error = str(exc)
         finally:
+            # 先关闭输入窗口，终态交付期间 steer 一律拒绝。
             run_control.accepting_input = False
             try:
                 if agent_run.status in {RunStatus.FAILED, RunStatus.CANCELLED}:
+                    # 修复必须先于终态事件；修复失败不改状态，只补充 error 文本。
                     try:
                         await self._repair_dangling_tool_calls(committer)
                     except Exception as exc:
@@ -367,6 +381,7 @@ class Agent:
                 async with self._run_lock:
                     if self._run_control is run_control:
                         self._run_control = None
+                # 先清登记再唤醒观察者：新 Run 可以启动早于旧 Run 的等待者被唤醒。
                 run_control.done.set()
 
     async def _next_steering(
@@ -389,6 +404,7 @@ class Agent:
         messages = await self._session.messages()
         plan = analyze_resume(messages)
         for result in plan.missing_tool_results:
+            # interruption-repair 是伪 Turn id，没有对应的 TurnStart 事件，仅用于消息坐标。
             await committer.emit_complete_message("interruption-repair", result)
 
     async def close(self) -> None:
@@ -396,6 +412,7 @@ class Agent:
 
         if self._closed:
             return
+        # _closing 一旦置位不再复位；_closed 只在 on_close 成功后置位，失败后仍可重试。
         self._closing = True
         if self._close_task is None or self._close_task.done():
             self._close_task = asyncio.create_task(self._close_resources())

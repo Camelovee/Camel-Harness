@@ -42,6 +42,7 @@ def create_anthropic_adapter() -> AnthropicLlmAdapter:
 
 
 def _default_client(api_key: str, base_url: str | None) -> AsyncAnthropic:
+    # 重试统一由 LlmClient 负责，SDK 自身关闭重试避免双层放大。
     return AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=0)
 
 
@@ -63,6 +64,7 @@ class AnthropicLlmAdapter(LlmAdapter):
         if not llm_model.api_key:
             yield StreamFailed("Anthropic 请求缺少 API Key", retryable=False)
             return
+        # 每次调用新建并关闭 client：适配器无状态，凭据随请求进入，不做连接复用。
         sdk_client = self._client_factory(llm_model.api_key, llm_model.base_url)
         try:
             async for llm_event in self._stream_with_client(sdk_client, llm_request):
@@ -94,6 +96,7 @@ class AnthropicLlmAdapter(LlmAdapter):
         if llm_request.temperature is not None:
             request_parameters["temperature"] = llm_request.temperature
         if llm_request.model.thinking_mode is LlmThinkingMode.ANTHROPIC_ADAPTIVE:
+            # 只有显式 adaptive 模式才注入 thinking/output_config；默认由服务端决定。
             request_parameters["thinking"] = {"type": "adaptive", "display": "summarized"}
             request_parameters["output_config"] = {"effort": llm_request.effort.value}
 
@@ -146,6 +149,7 @@ class AnthropicLlmAdapter(LlmAdapter):
     @staticmethod
     def _convert_messages(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
         converted_messages: list[dict[str, Any]] = []
+        # Anthropic 要求 tool_result 紧邻对应 assistant 并合并成一条 user 消息，故先缓冲。
         pending_tool_results: list[dict[str, Any]] = []
 
         def flush_tool_results() -> None:
@@ -226,6 +230,7 @@ class AnthropicLlmAdapter(LlmAdapter):
             if getattr(delta, "type", "") == "thinking_delta":
                 return [ReasoningDelta(text=delta.thinking)]
             if getattr(delta, "type", "") == "input_json_delta":
+                # 参数增量不带 id/name，只能按 content block index 聚合。
                 block = tool_blocks_by_index[sdk_event.index]
                 block["arguments"] += delta.partial_json
                 return [ToolCallArgumentsDelta(call_id=block["call_id"], delta=delta.partial_json)]
@@ -235,6 +240,7 @@ class AnthropicLlmAdapter(LlmAdapter):
             try:
                 arguments = json.loads(arguments_json)
             except json.JSONDecodeError:
+                # 保留原始片段交给参数校验，确保工具被标记为未执行而不是误执行。
                 arguments = {"_invalid_json": arguments_json}
             return [ToolCallCompleted(ToolUseBlock(block["call_id"], block["name"], arguments))]
         if event_type == "message_delta":
@@ -242,6 +248,7 @@ class AnthropicLlmAdapter(LlmAdapter):
             usage_data = AnthropicLlmAdapter._map_usage(usage, usage_state) if usage else {}
             reason = getattr(getattr(sdk_event, "delta", None), "stop_reason", None)
             if reason:
+                # message_delta 的 usage 是累计快照；stop_reason 需暂存给随后的 message_stop。
                 completion["stop_reason"] = AnthropicLlmAdapter._map_stop_reason(reason)
             return [UsageUpdated(LlmUsage(**usage_data))]
         if event_type == "message_stop":

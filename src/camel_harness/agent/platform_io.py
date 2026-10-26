@@ -35,6 +35,7 @@ def open_regular(path: Path, *, writable: bool = False, create: bool = False) ->
         non_block = getattr(os, "O_NONBLOCK", None)
         if no_follow is None or non_block is None:
             raise RuntimeError("当前平台不支持安全文件打开")
+        # O_NONBLOCK 防止打开 FIFO 时挂起；fstat 再校验普通文件，抵消检查与打开之间的替换。
         descriptor = os.open(path, flags | no_follow | non_block, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
@@ -74,6 +75,7 @@ def _open_windows(path: Path, *, writable: bool, create: bool) -> int:
         if attributes & (win32con.FILE_ATTRIBUTE_REPARSE_POINT | win32con.FILE_ATTRIBUTE_DIRECTORY):
             raise ValueError("存储条目必须是普通文件，不得包含符号链接或重解析点")
         flags = (os.O_RDWR if writable else os.O_RDONLY) | getattr(os, "O_BINARY", 0)
+        # 转为 fd 后 handle 不能再 Close；transferred 标记所有权已转移。
         descriptor = int(msvcrt.open_osfhandle(int(handle), flags))
         handle.Detach()
         transferred = True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from camel_harness.llm import LlmModel
 
+# 估算误差缓冲，与 CompactionSettings.reserve_tokens 的业务预留是两回事。
 CONTEXT_SAFETY_TOKENS = 4096
 
 
@@ -19,6 +20,7 @@ def resolve_output_budget(model: LlmModel, input_tokens: int, maximum: int | Non
 
 def context_input_limit(model: LlmModel, reserve_tokens: int) -> int:
     """压缩策略预留与模型输出预留取较大值。"""
+    # 取 max：普通回答的输出空间不能被压缩预留挤掉。
     return model.context_window_tokens - max(
         reserve_tokens, model.max_output_tokens + CONTEXT_SAFETY_TOKENS
     )
