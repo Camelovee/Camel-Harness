@@ -45,6 +45,7 @@ class PermissionMode(StrEnum):
     """一次 Agent 运行采用的工具权限模式。"""
 
     DEFAULT = "default"
+    ACCEPT_EDITS = "accept_edits"
     PLAN = "plan"
     YOLO = "yolo"
 

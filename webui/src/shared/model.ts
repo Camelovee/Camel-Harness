@@ -212,4 +212,4 @@ export type AgentEvent =
       execution_context?: Record<string, string>;
     });
 
-export type PermissionMode = "default" | "plan" | "yolo";
+export type PermissionMode = "default" | "accept_edits" | "plan" | "yolo";

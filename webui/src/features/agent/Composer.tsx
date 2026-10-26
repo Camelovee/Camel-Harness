@@ -142,6 +142,7 @@ export function Composer({
             >
               <option value="default">默认权限</option>
               <option value="plan">Plan Mode</option>
+              <option value="accept_edits">接受编辑</option>
               <option value="yolo">YOLO</option>
             </select>
             <button
