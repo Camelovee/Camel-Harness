@@ -1,44 +1,24 @@
 from __future__ import annotations
 
 import json
-from typing import Self
-
-from pydantic import Field, model_validator
-from pydantic.json_schema import SkipJsonSchema
 
 from ..memory import (
-    MemoryAction,
     MemoryManager,
     MemoryMutation,
     MemoryStorageError,
     MemoryTarget,
     MemoryValidationError,
+    memory_action,
+    memory_target,
 )
-from .parameters import PydanticTool, ToolArguments
 from .registry import ToolProvider
 from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
 
-
-class MemoryArguments(ToolArguments):
-    """记忆操作及各操作所需的文本参数。"""
-
-    action: MemoryAction
-    target: MemoryTarget
-    content: str | SkipJsonSchema[None] = Field(default=None, min_length=1)
-    old_text: str | SkipJsonSchema[None] = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def check_action_fields(self) -> Self:
-        """在任何审批与存储操作前检查条件必填字段。"""
-
-        if self.action in ("add", "replace") and self.content is None:
-            raise ValueError("该记忆操作必须提供 content，未执行修改")
-        if self.action in ("replace", "remove") and self.old_text is None:
-            raise ValueError("该记忆操作必须提供 old_text，未执行修改")
-        return self
+_TARGET = {"type": "string", "enum": ["memory", "user"]}
+_ACTION = {"type": "string", "enum": ["add", "replace", "remove"]}
 
 
-class MemoryTool(PydanticTool[MemoryArguments]):
+class MemoryTool(Tool):
     """维护两个有界记忆文件；写入由 Agent 自主完成，不再逐次审批。"""
 
     name = "memory"
@@ -54,18 +34,35 @@ class MemoryTool(PydanticTool[MemoryArguments]):
     )
     risk = ToolRisk.WRITE
     capabilities = frozenset({"memory.write"})
-    arguments_model = MemoryArguments
+    parameters = {
+        "type": "object",
+        "properties": {
+            "action": _ACTION,
+            "target": _TARGET,
+            "content": {"type": "string", "minLength": 1},
+            "old_text": {"type": "string", "minLength": 1},
+        },
+        "required": ["action", "target"],
+        "additionalProperties": False,
+    }
 
     def __init__(self, memory_manager: MemoryManager) -> None:
         self._memory_manager = memory_manager
 
-    async def execute_validated(
-        self, arguments: MemoryArguments, tool_call: ToolCall, tool_context: ToolContext
-    ) -> ToolResult:
-        action = arguments.action
-        target = arguments.target
-        content = arguments.content
-        old_text = arguments.old_text
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        arguments = tool_call.arguments
+        try:
+            action = memory_action(arguments["action"])
+            target = memory_target(arguments["target"])
+        except (KeyError, MemoryValidationError) as exc:
+            # 参数问题发生在任何写入之前，可安全标记为未执行。
+            raise ToolNotExecutedError(f"记忆参数无效，未执行修改：{exc}") from exc
+        content = arguments.get("content")
+        old_text = arguments.get("old_text")
+        if action in ("add", "replace") and not isinstance(content, str):
+            raise ToolNotExecutedError("该记忆操作必须提供 content，未执行修改")
+        if action in ("replace", "remove") and not isinstance(old_text, str):
+            raise ToolNotExecutedError("该记忆操作必须提供 old_text，未执行修改")
         try:
             if action == "add":
                 assert isinstance(content, str)

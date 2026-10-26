@@ -87,12 +87,6 @@ def default_permission_decision(permission_request: PermissionRequest) -> Permis
         return PermissionDecision(PermissionAction.ALLOW, "只读能力自动允许")
     if permission_request.mode is PermissionMode.PLAN:
         return PermissionDecision(PermissionAction.DENY, "Plan Mode 禁止产生副作用")
-    # ACCEPT_EDITS 只放宽 write；execute / external 仍然需要审批。
-    if (
-        permission_request.mode is PermissionMode.ACCEPT_EDITS
-        and permission_request.risk == "write"
-    ):
-        return PermissionDecision(PermissionAction.ALLOW, "接受编辑模式允许工作区写入")
     return PermissionDecision(PermissionAction.ASK, "该工具可能修改环境，需要用户确认")
 
 

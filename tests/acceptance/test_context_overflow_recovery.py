@@ -229,9 +229,7 @@ async def test_overflow_after_tool_keeps_call_and_result_without_reexecuting(tmp
     agent, session = await _build(tmp_path, adapter, max_turns=2)
     events = []
     agent.subscribe(events.append)
-    await agent.run(
-        "写入一次", max_turns=2, permission_mode=PermissionMode.ACCEPT_EDITS, model=_MODEL
-    )
+    await agent.run("写入一次", max_turns=2, permission_mode=PermissionMode.YOLO, model=_MODEL)
 
     _assert_terminal(events, "completed", StopReason.MODEL_COMPLETED)
     assert (tmp_path / "marker.txt").read_text("utf-8") == "执行一次\n"
@@ -254,7 +252,7 @@ async def test_recovery_limit_applies_to_entire_run_including_later_turns(tmp_pa
     agent, session = await _build(tmp_path, adapter, max_turns=2)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务", max_turns=2, permission_mode=PermissionMode.ACCEPT_EDITS, model=_MODEL)
+    await agent.run("任务", max_turns=2, permission_mode=PermissionMode.YOLO, model=_MODEL)
 
     _assert_terminal(events, "failed", StopReason.CONTEXT_FAILED)
     assert "恢复次数已用尽" in events[-1].error
@@ -411,7 +409,7 @@ async def test_recovery_does_not_bypass_turn_limit_after_tools(tmp_path):
     agent, _ = await _build(tmp_path, adapter, max_turns=1)
     events = []
     agent.subscribe(events.append)
-    await agent.run("任务", max_turns=1, permission_mode=PermissionMode.ACCEPT_EDITS, model=_MODEL)
+    await agent.run("任务", max_turns=1, permission_mode=PermissionMode.YOLO, model=_MODEL)
     _assert_terminal(events, "failed", StopReason.MAX_TURNS)
     assert len(adapter.requests) == 2
     assert len(adapter.summaries) == 1

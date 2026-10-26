@@ -27,7 +27,7 @@ class RunBody(BaseModel):
     """浏览器发起一次 Agent Run 的 HTTP 请求体。"""
 
     prompt: str = Field(min_length=1, max_length=100_000)
-    permission_mode: Literal["default", "accept_edits", "plan", "yolo"] = "default"
+    permission_mode: Literal["default", "plan", "yolo"] = "default"
     max_turns: int = Field(default=20, ge=1, le=100)
     effort: Literal["low", "high", "max"] = "low"
     model_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -36,7 +36,7 @@ class RunBody(BaseModel):
 class ResumeBody(BaseModel):
     """浏览器恢复一个可继续 Session 的请求体。"""
 
-    permission_mode: Literal["default", "accept_edits", "plan", "yolo"] = "default"
+    permission_mode: Literal["default", "plan", "yolo"] = "default"
     max_turns: int = Field(default=20, ge=1, le=100)
     effort: Literal["low", "high", "max"] = "low"
     model_id: str | None = Field(default=None, min_length=1, max_length=64)

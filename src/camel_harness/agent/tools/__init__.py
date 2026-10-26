@@ -1,7 +1,6 @@
 """Agent 核心工具协议、注册与执行。"""
 
-from .executor import ToolExecutor
-from .parameters import PydanticTool, ToolArguments
+from .executor import ToolExecutor, validate_tool_arguments
 from .permissions import (
     ApprovalHandler,
     ApprovalPendingListener,
@@ -15,7 +14,6 @@ from .permissions import (
 from .registry import ToolProvider, ToolRegistry
 from .types import (
     PermissionMode,
-    PreparedToolCall,
     Tool,
     ToolCall,
     ToolContext,
@@ -35,10 +33,7 @@ __all__ = [
     "PermissionRequest",
     "PermissionService",
     "PermissionMode",
-    "PreparedToolCall",
-    "PydanticTool",
     "Tool",
-    "ToolArguments",
     "ToolCall",
     "ToolContext",
     "ToolExecutionStatus",
@@ -48,4 +43,5 @@ __all__ = [
     "ToolResult",
     "ToolRegistry",
     "ToolRisk",
+    "validate_tool_arguments",
 ]

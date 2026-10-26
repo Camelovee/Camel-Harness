@@ -10,12 +10,10 @@ import tempfile
 from dataclasses import replace
 from typing import BinaryIO, cast
 
-from pydantic import Field
-
 from ..platform_io import IS_WINDOWS
 from .file_result_storage import FileToolResultStorage
-from .parameters import PydanticTool, ToolArguments
 from .types import (
+    Tool,
     ToolCall,
     ToolContext,
     ToolExecutionStatus,
@@ -35,21 +33,22 @@ _DANGEROUS_SHELL_PATTERNS = (
 )
 
 
-class RunShellArguments(ToolArguments):
-    """Shell 命令及其独立超时。"""
-
-    command: str = Field(min_length=1)
-    timeout_seconds: float = Field(default=30.0, ge=0.1, le=120)
-
-
-class RunShellTool(PydanticTool[RunShellArguments]):
+class RunShellTool(Tool):
     """在工作区启动受超时与危险命令规则保护的 Shell。"""
 
     name = "run_shell"
     description = "在工作区执行 Shell 命令，返回退出码和合并输出。" + (
         "当前系统为 Windows，使用 cmd.exe 语法，不是 PowerShell。" if IS_WINDOWS else ""
     )
-    arguments_model = RunShellArguments
+    parameters = {
+        "type": "object",
+        "properties": {
+            "command": {"type": "string", "minLength": 1},
+            "timeout_seconds": {"type": "number", "minimum": 0.1, "maximum": 120},
+        },
+        "required": ["command"],
+        "additionalProperties": False,
+    }
     capabilities = frozenset({"process.execute"})
     risk = ToolRisk.EXECUTE
     # 必须大于参数上限 120，否则外层先超时，无法“先杀进程树再返回 UNKNOWN”。
@@ -58,26 +57,22 @@ class RunShellTool(PydanticTool[RunShellArguments]):
     def __init__(self, tool_result_storage: FileToolResultStorage | None = None) -> None:
         self._tool_result_storage = tool_result_storage
 
-    def prepare_approval_context(
-        self, arguments: RunShellArguments, tool_call: ToolCall, tool_context: ToolContext
-    ) -> dict[str, str]:
+    def approval_context(self, tool_call: ToolCall, tool_context: ToolContext) -> dict[str, str]:
         """审批与执行使用相同目录和命令构造逻辑。"""
 
         return {
             "working_directory": str(tool_context.workspace.resolve()),
-            "command": _build_shell_command(arguments.command),
+            "command": _build_shell_command(str(tool_call.arguments["command"])),
         }
 
-    async def execute_validated(
-        self, arguments: RunShellArguments, tool_call: ToolCall, tool_context: ToolContext
-    ) -> ToolResult:
-        command = arguments.command
+    async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
+        command = str(tool_call.arguments["command"])
         # 启发式黑名单只拦常见危险命令，不是安全边界；命中即视为未执行。
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
             return ToolResult(
                 tool_call.call_id, tool_call.name, "危险命令已被安全规则阻止", is_error=True
             ).with_execution_status(ToolExecutionStatus.NOT_EXECUTED)
-        timeout = arguments.timeout_seconds
+        timeout = float(tool_call.arguments.get("timeout_seconds", 30))
         # 输出走临时文件，避免管道背压把父子进程一起卡死，也便于归档后复读。
         with tempfile.TemporaryFile() as output_file:
             output = cast(BinaryIO, output_file)
@@ -133,7 +128,7 @@ class RunShellTool(PydanticTool[RunShellArguments]):
                 is_error=process.returncode != 0,
                 metadata={
                     **tool_result.metadata,
-                    "argv_preview": _command_preview(arguments.command),
+                    "argv_preview": _command_preview(str(tool_call.arguments["command"])),
                     "exit_code": process.returncode,
                 },
             ).with_execution_status(
