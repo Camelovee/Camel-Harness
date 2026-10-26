@@ -568,7 +568,7 @@ async def test_agent_recovers_once_after_truncated_tool_call(tmp_path, scenario)
     agent.subscribe(cancel_recovery)
     await agent.run(
         "写文件",
-        permission_mode=PermissionMode.ACCEPT_EDITS,
+        permission_mode=PermissionMode.YOLO,
         max_turns=1 if scenario == "turn_limit" else 50,
         model=_MODEL,
     )

@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Sequence
 
-from pydantic import Field
-
-from .parameters import ToolArguments
 from .types import ToolNotExecutedError
 
 
@@ -27,16 +23,7 @@ def _normalize_with_offsets(text: str) -> tuple[str, list[int]]:
     return "".join(characters), offsets
 
 
-class TextEditArguments(ToolArguments):
-    """在原始快照中唯一匹配的一项替换。"""
-
-    old_text: str = Field(min_length=1)
-    new_text: str
-
-
-def apply_text_edits(
-    content: str, edits: Sequence[TextEditArguments], path: str
-) -> tuple[str, str]:
+def apply_text_edits(content: str, edits: list[dict[str, str]], path: str) -> tuple[str, str]:
     """所有片段匹配原始快照，验证全部通过后才生成新内容及 diff。"""
 
     if not edits:
@@ -50,8 +37,8 @@ def apply_text_edits(
     replacements: list[tuple[int, int, str]] = []
     for index, edit in enumerate(edits):
         # 模型给的 CRLF 也要归一，否则无法匹配已经规范化的原文。
-        old_text = re.sub(r"\r\n?", "\n", edit.old_text)
-        new_text = re.sub(r"\r\n?", "\n", edit.new_text)
+        old_text = re.sub(r"\r\n?", "\n", edit["old_text"])
+        new_text = re.sub(r"\r\n?", "\n", edit["new_text"])
         if not old_text:
             raise ToolNotExecutedError(f"edits[{index}].old_text 不能为空，未执行修改")
         start = normalized.find(old_text)
