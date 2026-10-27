@@ -75,6 +75,7 @@ class SessionResponse(BaseModel):
     parent_session_id: str | None = None
     parent_tool_call_id: str | None = None
     schema_version: int = 1
+    task_outcome: dict[str, Any] | None = None
 
     @classmethod
     def from_metadata(cls, metadata: SessionMetadata) -> SessionResponse:

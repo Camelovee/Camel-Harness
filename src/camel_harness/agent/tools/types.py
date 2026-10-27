@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from camel_harness.llm import LlmModel, ToolDefinition, ToolResultMessage
 
@@ -92,6 +93,16 @@ class ToolResult:
         )
 
 
+class SubagentProgress(TypedDict):
+    """子任务观察数据，不依赖 Agent 的运行事件类型。"""
+
+    agent_type: str
+    event: dict[str, Any]
+
+
+SubagentObserver = Callable[[SubagentProgress], Awaitable[None]]
+
+
 @dataclass(frozen=True, slots=True)
 class ToolContext:
     """一次工具执行所需的稳定运行上下文；model 为所属 Run 的模型选择。"""
@@ -100,6 +111,7 @@ class ToolContext:
     workspace: Path
     permission_mode: PermissionMode = PermissionMode.DEFAULT
     model: LlmModel | None = None
+    on_subagent_event: SubagentObserver | None = field(default=None, repr=False, compare=False)
 
 
 class Tool(ABC):

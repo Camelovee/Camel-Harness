@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from uuid import uuid4
@@ -11,8 +13,9 @@ from camel_harness.llm import AssistantMessage, LlmClient, LlmModel, TextBlock
 from ..agent import Agent
 from ..context import ContextManager
 from ..context.system_prompt import SUBAGENT_SYSTEM_PROMPTS
-from ..events import AgentEvent
+from ..events import AgentEndEvent, AgentEvent, agent_event_to_dict
 from ..session import SessionManager
+from ..session.types import TaskOutcome
 from ..state import AgentOptions
 from ..tools import (
     PermissionMode,
@@ -21,8 +24,9 @@ from ..tools import (
     ToolProvider,
     ToolRegistry,
 )
-from ..tools.file_result_storage import FileToolResultStorage
+from ..tools.file_result_storage import FileToolResultStorage, ToolResultStorageError
 from ..tools.filesystem import ReadFileTool
+from ..tools.types import SubagentObserver
 
 _READ_ONLY_TOOLS = frozenset({"read_file", "load_skill"})
 _GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
@@ -47,6 +51,7 @@ class SubagentRequest:
     parent_session_id: str
     parent_tool_call_id: str
     model: LlmModel
+    on_event: SubagentObserver | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,8 +148,10 @@ class LocalSubagentRunner:
         succeeded = False
         error = "子 Agent 未产生终态"
 
+        terminal: AgentEndEvent | None = None
+
         def collect_text(agent_event: AgentEvent) -> None:
-            nonlocal content, succeeded, error
+            nonlocal content, succeeded, error, terminal
             if agent_event.type == "message_end" and isinstance(
                 agent_event.message, AssistantMessage
             ):
@@ -154,10 +161,22 @@ class LocalSubagentRunner:
                     if isinstance(block, TextBlock)
                 )
             elif agent_event.type == "agent_end":
+                terminal = agent_event
                 succeeded = agent_event.status == "completed"
                 error = agent_event.error or f"子 Agent 未完成：{agent_event.stop_reason}"
 
+        async def forward_event(agent_event: AgentEvent) -> None:
+            if subagent_request.on_event is not None:
+                await subagent_request.on_event(
+                    {
+                        "agent_type": subagent_request.agent_type.value,
+                        "event": agent_event_to_dict(agent_event),
+                    }
+                )
+
         unsubscribe = agent.subscribe(collect_text)
+        # 转发观察者可能因背压被移除，不能连带丢掉内部终态收集。
+        unsubscribe_progress = agent.subscribe(forward_event) if subagent_request.on_event else None
         try:
             await agent.run(
                 subagent_request.task,
@@ -166,11 +185,45 @@ class LocalSubagentRunner:
                 max_turns=8,
                 permission_mode=permission_mode,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            # 异常转普通结果，外层记 FAILED；子 Agent 可能已有副作用，语义上更接近 UNKNOWN。
-            return SubagentResult(session_id, f"子 Agent 执行失败：{exc}", False)
+            error = f"子 Agent 执行失败：{exc}"
+            succeeded = False
         finally:
-            # run() 的等待被 shield 隔离，父任务取消时必须显式关闭子任务。
-            await agent.close()
-            unsubscribe()
+            # 终态写入不经观察者，存储失败必须传播；清理不受父任务取消影响。
+            async def finish() -> None:
+                try:
+                    await agent.close()
+                    outcome = TaskOutcome(
+                        status=terminal.status if terminal is not None else "unknown",
+                        stop_reason=(
+                            terminal.stop_reason.value
+                            if terminal is not None and terminal.stop_reason
+                            else None
+                        ),
+                        error=terminal.error if terminal is not None else error,
+                        finished_at=datetime.now(UTC).isoformat(),
+                    )
+                    try:
+                        await self._session_manager.update(session_id, task_outcome=outcome)
+                    except Exception as exc:
+                        raise ToolResultStorageError(
+                            "子任务终态保存失败，执行结果需要核验"
+                        ) from exc
+                finally:
+                    unsubscribe()
+                    if unsubscribe_progress is not None:
+                        unsubscribe_progress()
+
+            cleanup_task = asyncio.create_task(finish())
+            cancelled = False
+            while not cleanup_task.done():
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            cleanup_task.result()
+            if cancelled:
+                raise asyncio.CancelledError
         return SubagentResult(session_id, content if succeeded else error, succeeded)

@@ -49,6 +49,7 @@ class DelegateTaskTool(Tool):
                 parent_tool_call_id=tool_call.call_id,
                 # 子 Agent 继承父 Run 的模型快照，不重新解析配置。
                 model=tool_context.model,
+                on_event=tool_context.on_subagent_event,
             )
         )
         return ToolResult(

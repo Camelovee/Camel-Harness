@@ -18,7 +18,21 @@ def create_approvals_router(dependencies: HttpDependencies) -> APIRouter:
         if approvals is None:
             return {"approvals": []}
         result = await approvals.list_pending()
-        return {"approvals": [asdict(item) for item in result]}
+        items: list[dict[str, Any]] = []
+        for item in result:
+            payload = asdict(item)
+            metadata = (
+                await dependencies.require_sessions().get(item.session_id)
+                if item.session_id
+                else None
+            )
+            if metadata is not None and metadata.parent_session_id is not None:
+                payload.update(
+                    parent_session_id=metadata.parent_session_id,
+                    parent_tool_call_id=metadata.parent_tool_call_id,
+                )
+            items.append(payload)
+        return {"approvals": items}
 
     @router.post("/approvals/{request_id}")
     async def resolve_approval(request_id: str, body: ResolveApprovalBody) -> dict[str, bool]:

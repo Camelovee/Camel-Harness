@@ -90,6 +90,8 @@ export type ContentBlock = {
   type: string;
   text?: string;
   call_id?: string;
+  arguments?: Record<string, unknown>;
+  arguments_text?: string;
   name?: string;
   content?: string;
   is_error?: boolean;
@@ -101,6 +103,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "completed" |
 export type Approval = {
   request_id: string;
   session_id?: string;
+  parent_session_id?: string;
+  parent_tool_call_id?: string;
   call_id?: string;
   tool_name: string;
   capabilities?: string[];
@@ -201,6 +205,19 @@ export type AgentEvent =
       };
     })
   | (TurnEventBase & {
+      type: "subagent_event";
+      call_id: string;
+      agent_type: string;
+      event: AgentEvent;
+    })
+  | (TurnEventBase & {
+      type: "approval_resolved";
+      request_id: string;
+      call_id: string;
+      approved: boolean;
+      reason: string;
+    })
+  | (TurnEventBase & {
       type: "approval_requested";
       request_id: string;
       call_id: string;
@@ -213,3 +230,33 @@ export type AgentEvent =
     });
 
 export type PermissionMode = "default" | "plan" | "yolo";
+
+
+export type TaskOutcome = {
+  status: "completed" | "failed" | "cancelled" | "unknown";
+  stop_reason: string | null;
+  error: string | null;
+  finished_at: string;
+};
+
+export type SubagentSnapshot = {
+  session_id: string;
+  parent_session_id: string;
+  parent_tool_call_id: string;
+  agent_type: string;
+  task: string;
+  status: "running" | "waiting_approval" | TaskOutcome["status"];
+  phase: string;
+  turn: number;
+  task_outcome: TaskOutcome | null;
+};
+
+export type SubagentView = SubagentSnapshot & {
+  messages: Message[];
+  approvals: Approval[];
+  streamAssistantId: string | null;
+  live: boolean;
+  loaded: boolean;
+  loading: boolean;
+  error: string | null;
+};

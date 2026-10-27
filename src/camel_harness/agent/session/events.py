@@ -18,7 +18,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-from .types import SCHEMA_VERSION, SessionMetadata
+from .types import SCHEMA_VERSION, SessionMetadata, TaskOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +81,7 @@ class SessionInfoEvent(SessionEntryBase):
     workspace: str
     model_id: str | None = None
     archived: bool = False
+    task_outcome: TaskOutcome | None = None
     type: Literal["session_info"] = field(default="session_info", init=False)
 
 
@@ -194,6 +195,7 @@ def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:
         raise ValueError("会话日志必须以会话头开始")
     name, workspace = header.name, header.workspace
     model_id, archived = header.model_id, header.archived
+    task_outcome: TaskOutcome | None = None
     updated_at = header.timestamp
     # 身份与创建时间只来自 header；message_count 统计整棵树，而非当前分支。
     message_count = 0
@@ -204,6 +206,7 @@ def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:
             last_message_type = event.message.role
             updated_at = event.timestamp
         elif isinstance(event, SessionInfoEvent):
+            task_outcome = event.task_outcome
             name, workspace = event.name, event.workspace
             model_id, archived = event.model_id, event.archived
             updated_at = event.timestamp
@@ -220,6 +223,7 @@ def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:
         parent_session_id=header.parent_session_id,
         parent_tool_call_id=header.parent_tool_call_id,
         schema_version=header.version,
+        task_outcome=task_outcome,
     )
 
 
@@ -253,6 +257,8 @@ def event_to_dict(event: SessionEvent) -> dict[str, Any]:
         result.update(
             name=event.name, cwd=event.workspace, modelId=event.model_id, archived=event.archived
         )
+        if event.task_outcome is not None:
+            result["taskOutcome"] = asdict(event.task_outcome)
     return result
 
 
@@ -318,6 +324,7 @@ def event_from_dict(data: dict[str, Any]) -> SessionEvent:
             data["cwd"],
             data.get("modelId"),
             data["archived"],
+            TaskOutcome(**data["taskOutcome"]) if data.get("taskOutcome") is not None else None,
             **coordinates,
         )
     raise ValueError(f"未知会话记录类型：{event_type}")

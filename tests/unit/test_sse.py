@@ -110,3 +110,50 @@ async def test_agent_sse_disconnect_explicitly_aborts_run() -> None:
 
     assert fake.cancelled.is_set()
     assert fake.listener is None
+
+
+async def test_nested_child_terminal_does_not_close_parent_sse() -> None:
+    from camel_harness.agent.events import AgentEndEvent, SubagentEvent
+    from camel_harness.agent.state import StopReason
+
+    agent = FakeAgent()
+    child_end = SubagentEvent(
+        session_id="session-1",
+        run_id="run-1",
+        sequence=1,
+        turn_id="turn-1",
+        call_id="delegate",
+        agent_type="explore",
+        event={
+            "type": "agent_end",
+            "session_id": "child",
+            "run_id": "child-run",
+            "sequence": 20,
+            "status": "completed",
+            "stop_reason": "model_completed",
+            "total_tokens": 10,
+            "error": None,
+        },
+    )
+
+    async def operation() -> None:
+        await agent.emit(child_end)
+        await agent.emit(_event(2, "父任务继续"))
+        await agent.emit(
+            AgentEndEvent(
+                session_id="session-1",
+                run_id="run-1",
+                sequence=3,
+                status="completed",
+                stop_reason=StopReason.MODEL_COMPLETED,
+                total_tokens=20,
+            )
+        )
+
+    stream = await open_agent_sse(cast(Agent, agent), operation)
+    frames = [frame async for frame in stream]
+    assert len(frames) == 3
+    assert "event: subagent_event" in frames[0]
+    assert "父任务继续" in frames[1]
+    assert "event: agent_end" in frames[-1]
+    assert not agent.cancelled.is_set()

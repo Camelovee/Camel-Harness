@@ -158,3 +158,21 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .approval-execution { margin: 10px 0; min-width: 0; }
 .approval-execution strong { font-size: 11px; }
 .approval-execution pre { margin: 5px 0 12px; padding: 8px 10px; border-radius: 5px; background: rgba(255, 255, 255, .65); color: #7d6b59; font: 11px/1.55 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+
+/* 子任务侧栏独立滚动，收起视图不改变运行生命周期。 */
+.subagent-panel { position: fixed; right: 0; top: 0; bottom: 0; width: min(480px, 42vw); z-index: 30; display: flex; flex-direction: column; background: var(--bg, #fff); color: var(--text, #242424); border-left: 1px solid #d8d8d8; box-shadow: -8px 0 24px #0001; }
+.subagent-panel-head { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px; border-bottom: 1px solid #ddd; gap: 12px; }
+.subagent-panel-head p { font-size: 13px; line-height: 1.5; margin: 8px 0 0; max-height: 100px; overflow: auto; white-space: pre-wrap; }
+.subagent-panel-head button { background: transparent; border: 0; font-size: 26px; cursor: pointer; }
+.subagent-panel .messages { flex: 1; min-height: 0; overflow: auto; }
+.subagent-panel .messages-inner { max-width: none; padding: 16px; }
+.subagent-phase, .subagent-notice, .subagent-outcome { padding: 12px 20px; font-size: 13px; }
+.subagent-phase { background: #eef3ef; color: #31543b; }
+.subagent-outcome { border-top: 1px solid #ddd; max-height: 160px; overflow: auto; }
+.subagent-summaries { display: grid; gap: 8px; margin: 12px 0; }
+.subagent-summary { display: grid; gap: 6px; text-align: left; border: 1px solid #d8ded8; border-radius: 10px; padding: 12px 16px; background: #f6f8f5; color: inherit; cursor: pointer; }
+.subagent-summary span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subagent-summary small { color: #526354; }
+@media (min-width: 1400px) { .app-shell:has(.subagent-panel) { padding-right: min(480px, 42vw); } }
+@media (max-width: 1399px) { .subagent-panel { width: min(480px, 100vw); box-shadow: -16px 0 60px #0003; } }

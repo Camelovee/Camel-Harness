@@ -72,6 +72,16 @@ export function projectAgentEvent(
     projectApproval(event, context);
     return;
   }
+  if (event.type === "approval_resolved") {
+    context.setApprovals((current) => current.filter((item) => item.request_id !== event.request_id));
+    context.setMessages((current) => current.map((message) =>
+      message.approval?.request_id === event.request_id
+        ? { ...message, approval: { ...message.approval, status: event.approved ? "approved" : "rejected" } }
+        : message,
+    ));
+    context.onStatus(event.approved ? "已批准，执行中…" : "未获批准");
+    return;
+  }
   if (event.type === "tool_execution_end") {
     projectToolExecutionEnd(event, context);
     return;
@@ -144,6 +154,29 @@ function projectMessageUpdate(
   context: ProjectionContext,
 ): void {
   const update = event.assistant_event;
+  if (update.type === "tool_call_started" || update.type === "tool_call_arguments_delta" || update.type === "tool_call_completed") {
+    const assistantId = ensureAssistant(event.message_id);
+    const callId = update.type === "tool_call_completed" ? update.tool_call.call_id : update.call_id;
+    context.setMessages((messages) => messages.map((message) => {
+      if (message.id !== assistantId) return message;
+      const blocks = [...message.content];
+      let index = blocks.findIndex((block) => block.type === "tool_use" && block.call_id === callId);
+      if (index < 0) {
+        index = blocks.length;
+        blocks.push({ type: "tool_use", call_id: callId });
+      }
+      const block = { ...blocks[index] };
+      if (update.type === "tool_call_started") block.name = update.name;
+      if (update.type === "tool_call_arguments_delta") block.arguments_text = (block.arguments_text ?? "") + update.delta;
+      if (update.type === "tool_call_completed") {
+        block.name = update.tool_call.name;
+        block.arguments = update.tool_call.arguments;
+      }
+      blocks[index] = block;
+      return { ...message, content: blocks };
+    }));
+    return;
+  }
   if (update.type !== "text_delta" && update.type !== "reasoning_delta") return;
   const assistantId = ensureAssistant(event.message_id);
   const type = update.type === "text_delta" ? "text" : "reasoning";

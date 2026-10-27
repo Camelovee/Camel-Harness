@@ -7,7 +7,7 @@ from camel_harness.llm import LlmUsage, Message, ToolResultMessage
 
 from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
 from .jsonl import JsonlSessionStorage, _finish_commit
-from .types import SessionMetadata
+from .types import SessionMetadata, TaskOutcome
 
 
 class Session:
@@ -180,6 +180,7 @@ class SessionManager:
         workspace: Path | None = None,
         archived: bool | None = None,
         model_id: str | None = None,
+        task_outcome: TaskOutcome | None = None,
     ) -> SessionMetadata:
         """更新会话名称、工作目录或归档状态。"""
 
@@ -189,6 +190,7 @@ class SessionManager:
             workspace=str(workspace.resolve()) if workspace is not None else None,
             archived=archived,
             model_id=model_id,
+            task_outcome=task_outcome,
         )
 
     async def delete(self, session_id: str) -> bool:

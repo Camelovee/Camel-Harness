@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { ApprovalStatus, Message, Session } from "../../shared/model";
+import type { ApprovalStatus, Message, Session, SubagentView } from "../../shared/model";
 import {
   reasoningFromBlocks,
   renderMarkdown,
@@ -16,6 +16,9 @@ type Props = {
   resolvingApprovalId: string | null;
   onResolveApproval: (requestId: string, approved: boolean) => void;
   onStart: () => void;
+  showToolCalls?: boolean;
+  subagents?: SubagentView[];
+  onOpenSubagent?: (sessionId: string) => void;
 };
 
 export function MessageList({
@@ -27,7 +30,11 @@ export function MessageList({
   resolvingApprovalId,
   onResolveApproval,
   onStart,
+  showToolCalls = false,
+  subagents = [],
+  onOpenSubagent,
 }: Props) {
+  const outcomeLabels = { completed: "已完成", failed: "执行失败", cancelled: "已取消", unknown: "结果未知" };
   const scrollRef = useRef<HTMLElement>(null);
   const pinnedToBottom = useRef(true);
 
@@ -58,6 +65,14 @@ export function MessageList({
         {!activeSession && (
           <Welcome activeWorkspace={activeWorkspace} onStart={onStart} />
         )}
+        {subagents.length > 0 && <div className="subagent-summaries" aria-label="委派任务">
+          {subagents.map((child) => <button key={child.session_id} className="subagent-summary"
+            onClick={() => onOpenSubagent?.(child.session_id)}>
+            <strong>{child.agent_type} 子任务</strong>
+            <span>{child.task}</span>
+            <small>{child.task_outcome ? outcomeLabels[child.task_outcome.status] : child.phase}{child.approvals.length > 0 ? ` · ${child.approvals.length} 项待审批` : ""} · 查看过程 ›</small>
+          </button>)}
+        </div>}
         {messages.map((message) => {
           if (message.role === "toolResult") {
             return <ToolMessage key={message.id} message={message} />;
@@ -76,6 +91,7 @@ export function MessageList({
             <ConversationMessage
               key={message.id}
               message={message}
+              showToolCalls={showToolCalls}
               streaming={
                 message.role === "assistant" &&
                 running &&
@@ -95,6 +111,9 @@ function Welcome({
 }: {
   activeWorkspace: string | null;
   onStart: () => void;
+  showToolCalls?: boolean;
+  subagents?: SubagentView[];
+  onOpenSubagent?: (sessionId: string) => void;
 }) {
   return (
     <div className="welcome">
@@ -116,9 +135,11 @@ function Welcome({
 function ConversationMessage({
   message,
   streaming,
+  showToolCalls,
 }: {
   message: Message;
   streaming: boolean;
+  showToolCalls: boolean;
 }) {
   const content = textFromBlocks(message.content);
   const reasoning = reasoningFromBlocks(message.content);
@@ -143,6 +164,12 @@ function ConversationMessage({
           (streaming && !reasoning ? <span className="waiting-dots">· · ·</span> : "")
         )}
       </div>
+      {showToolCalls && message.content.filter((block) => block.type === "tool_use").map((block) => (
+        <details className="tool-message" key={block.call_id}>
+          <summary>调用 {block.name ?? "工具"}</summary>
+          <pre className="tool-detail">{block.arguments ? JSON.stringify(block.arguments, null, 2) : block.arguments_text ?? "等待参数…"}</pre>
+        </details>
+      ))}
       {message.role === "assistant" && !streaming && (message.model || message.usage) && (
         <div className="message-meta">
           {[message.provider, message.response_model ?? message.model].filter(Boolean).join(" / ")}

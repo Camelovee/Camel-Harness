@@ -30,7 +30,7 @@ from .events import (
     project_context,
     project_metadata,
 )
-from .types import SessionMetadata
+from .types import SessionMetadata, TaskOutcome
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 logger = logging.getLogger(__name__)
@@ -162,6 +162,7 @@ class JsonlSessionStorage:
         workspace: str | None = None,
         archived: bool | None = None,
         model_id: str | None = None,
+        task_outcome: TaskOutcome | None = None,
     ) -> SessionMetadata:
         async with self._lock(session_id):
             return await _complete_write(
@@ -171,6 +172,7 @@ class JsonlSessionStorage:
                 workspace=workspace,
                 archived=archived,
                 model_id=model_id,
+                task_outcome=task_outcome,
             )
 
     async def delete(self, session_id: str) -> bool:
@@ -355,6 +357,7 @@ class JsonlSessionStorage:
         workspace: str | None,
         archived: bool | None,
         model_id: str | None,
+        task_outcome: TaskOutcome | None,
     ) -> SessionMetadata:
         if not path.exists():
             raise KeyError(f"会话不存在：{path.parent.name}")
@@ -364,7 +367,11 @@ class JsonlSessionStorage:
                 events = list(JsonlSessionStorage._iter_events(stream, path))
                 current = project_metadata(events)
                 updated = current.update(
-                    name=name, workspace=workspace, archived=archived, model_id=model_id
+                    name=name,
+                    workspace=workspace,
+                    archived=archived,
+                    model_id=model_id,
+                    task_outcome=task_outcome,
                 )
                 parent = events[-1]
                 # Info 事件只能挂到最后一个非 header 条目；会话头没有条目 ID。
@@ -377,6 +384,7 @@ class JsonlSessionStorage:
                         updated.workspace,
                         updated.model_id,
                         updated.archived,
+                        updated.task_outcome,
                         parent_id=parent.id if not isinstance(parent, SessionHeaderEvent) else None,
                     ),
                 )

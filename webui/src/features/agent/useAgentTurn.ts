@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SetStateAction } from "react";
 
-import type { AgentEvent, Approval, Message, PermissionMode, Session, SessionIndicator, ThinkingEffort, TokenUsage } from "../../shared/model";
+import type { AgentEvent, Approval, Message, PermissionMode, Session, SessionIndicator, ThinkingEffort, TokenUsage, SubagentView } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import {
   abortAgentRun, fetchConversation, fetchPendingApprovals, steerAgentRun,
-  streamAgentRun, streamAgentResume, submitApproval,
+  streamAgentRun, streamAgentResume, submitApproval, fetchSubagents,
 } from "./api";
+import { childView, projectSubagentEvent } from "./subagentProjection";
+import type { SubagentStream } from "./subagentProjection";
 import { projectAgentEvent } from "./streamProjection";
 
 type Options = {
@@ -33,6 +35,8 @@ type ConversationState = {
   prompt: string;
   permissionMode: PermissionMode;
   effort: ThinkingEffort;
+  subagents: Record<string, SubagentView>;
+  selectedSubagentId: string | null;
 };
 
 type ConversationRuntime = {
@@ -40,6 +44,8 @@ type ConversationRuntime = {
   history: Promise<void> | null;
   controller: AbortController | null;
   approvalVersion: number;
+  subagentVersion: number;
+  childStreams: Map<string, SubagentStream>;
 };
 
 const DRAFT = "__new_conversation__";
@@ -49,6 +55,7 @@ function emptyState(): ConversationState {
     messages: [], running: false, starting: false, loaded: false,
     streamAssistantId: null, usage: { input: null, output: null, runTotal: null },
     approvals: [], resolvingApprovalId: null, status: "准备就绪", error: null,
+    subagents: {}, selectedSubagentId: null,
     endStatus: null, unread: false, prompt: "", permissionMode: "default", effort: "low",
   };
 }
@@ -73,7 +80,7 @@ export function useAgentTurn(options: Options) {
   const getRuntime = useCallback((id: string) => {
     let runtime = runtimes.current.get(id);
     if (!runtime) {
-      runtime = { state: emptyState(), history: null, controller: null, approvalVersion: 0 };
+      runtime = { state: emptyState(), history: null, controller: null, approvalVersion: 0, subagentVersion: 0, childStreams: new Map() };
       runtimes.current.set(id, runtime);
     }
     return runtime;
@@ -86,6 +93,32 @@ export function useAgentTurn(options: Options) {
     const next = runtime.state;
     if (alive.current) setViews((current) => ({ ...current, [id]: next }));
   }, [getRuntime]);
+
+  const refreshSubagents = useCallback(async (id: string) => {
+    const runtime = getRuntime(id);
+    const version = runtime.subagentVersion;
+    const snapshots = await fetchSubagents(id);
+    if (runtime.subagentVersion !== version) return;
+    update(id, (state) => {
+      const subagents: Record<string, SubagentView> = {};
+      for (const snapshot of snapshots) {
+        const previous = state.subagents[snapshot.session_id];
+        const missedTerminal = previous?.live && snapshot.task_outcome !== null &&
+          (previous.status === "running" || previous.status === "waiting_approval");
+        subagents[snapshot.session_id] = previous
+          ? { ...previous, ...snapshot, task_outcome: snapshot.task_outcome ?? previous.task_outcome,
+            ...(snapshot.task_outcome ? { approvals: [], messages: previous.messages.filter((message) => message.role !== "approval") }
+              : previous.approvals.length ? { status: "waiting_approval", phase: "等待工具审批" } : {}),
+            ...(missedTerminal ? { live: false, loaded: false,
+              streamAssistantId: null, messages: previous.messages.filter((message) => message.role !== "approval" && message.id !== previous.streamAssistantId) } : {}) }
+          : childView(snapshot);
+      }
+      return { ...state, subagents,
+        selectedSubagentId: state.selectedSubagentId && subagents[state.selectedSubagentId] ? state.selectedSubagentId : null,
+        approvals: state.approvals.filter((item) => !item.parent_session_id || !subagents[item.session_id ?? ""]?.task_outcome),
+      };
+    });
+  }, [getRuntime, update]);
 
   const loadHistory = useCallback((id: string): Promise<void> => {
     const runtime = getRuntime(id);
@@ -102,18 +135,33 @@ export function useAgentTurn(options: Options) {
   const refreshApprovals = useCallback(async () => {
     const versions = new Map([...runtimes.current].map(([id, runtime]) => [id, runtime.approvalVersion]));
     const pending = await fetchPendingApprovals();
-    const ids = new Set([...runtimes.current.keys(), ...pending.map((item) => item.session_id).filter((id): id is string => !!id)]);
+    const ids = new Set([...runtimes.current.keys(), ...pending.map((item) => item.parent_session_id ?? item.session_id).filter((id): id is string => !!id)]);
     for (const id of ids) {
       if (id === DRAFT) continue;
       const runtime = getRuntime(id);
       // 查询开始后的 SSE/审批操作比这份快照更新，不能被迟到的响应覆盖。
       if (runtime.approvalVersion !== (versions.get(id) ?? 0)) continue;
-      const approvals = pending.filter((item) => item.session_id === id);
+      const approvals = pending.filter((item) => (item.parent_session_id ?? item.session_id) === id &&
+        !runtime.state.subagents[item.session_id ?? ""]?.task_outcome);
+      const ownApprovals = approvals.filter((item) => item.session_id === id);
       update(id, (state) => {
-        const requestIds = new Set(approvals.map((item) => item.request_id));
+        const requestIds = new Set(ownApprovals.map((item) => item.request_id));
         const messages = state.messages.filter((message) => message.role !== "approval" || requestIds.has(message.approval!.request_id));
         const known = new Set(messages.filter((message) => message.role === "approval").map((message) => message.approval!.request_id));
-        return { ...state, approvals, messages: [...messages, ...approvals.filter((item) => !known.has(item.request_id)).map((approval): Message => ({
+        const subagents = { ...state.subagents };
+        for (const approval of approvals) {
+          if (approval.session_id === id || !approval.session_id) continue;
+          const childId = approval.session_id;
+          const child = subagents[childId] ?? childView({ session_id: childId, parent_session_id: id,
+            parent_tool_call_id: approval.parent_tool_call_id ?? "", agent_type: "general", task: "子任务",
+            status: "waiting_approval", phase: "等待工具审批", turn: 0, task_outcome: null });
+          subagents[childId] = { ...child, status: "waiting_approval", phase: "等待工具审批",
+            approvals: approvals.filter((item) => item.session_id === childId) };
+        }
+        return { ...state, subagents, selectedSubagentId: selection.current.id === id
+          ? approvals.find((item) => item.parent_session_id === id)?.session_id ?? state.selectedSubagentId
+          : state.selectedSubagentId,
+          approvals, messages: [...messages, ...ownApprovals.filter((item) => !known.has(item.request_id)).map((approval): Message => ({
           id: `approval-${approval.request_id}`, role: "approval", content: [], approval,
         }))] };
       });
@@ -135,11 +183,14 @@ export function useAgentTurn(options: Options) {
 
   useEffect(() => {
     if (!activeId) return;
-    update(activeId, (state) => ({ ...state, unread: false }));
+    update(activeId, (state) => ({ ...state, unread: false,
+      selectedSubagentId: state.selectedSubagentId ?? state.approvals.find((item) => item.parent_session_id === activeId)?.session_id ?? null,
+    }));
+    void refreshSubagents(activeId).catch(() => undefined);
     void loadHistory(activeId).catch((reason: unknown) => {
       update(activeId, (state) => ({ ...state, error: errorText(reason, "加载会话失败") }));
     });
-  }, [activeId, loadHistory, update]);
+  }, [activeId, loadHistory, refreshSubagents, update]);
 
   const startRun = useCallback(async (
     id: string,
@@ -167,7 +218,39 @@ export function useAgentTurn(options: Options) {
       if (event.session_id !== id || (runId !== null && runId !== event.run_id)) throw new Error("收到不属于当前会话运行的事件");
       if (event.sequence <= lastSequence.current) return;
       runId = event.run_id;
-      if (event.type === "approval_requested" || event.type === "tool_execution_end" || event.type === "agent_end") runtime.approvalVersion++;
+      if (event.type === "subagent_event" || event.type === "approval_resolved" || event.type === "approval_requested" || event.type === "tool_execution_end" || event.type === "agent_end") runtime.approvalVersion++;
+      if (event.type === "subagent_event") {
+        lastSequence.current = event.sequence;
+        const childEvent = event.event;
+        const childId = childEvent.session_id;
+        let childStream = runtime.childStreams.get(childId);
+        if (!childStream) {
+          childStream = { lastSequence: { current: 0 }, assistantIds: new Map() };
+          runtime.childStreams.set(childId, childStream);
+        }
+        if (childEvent.sequence <= childStream.lastSequence.current) return;
+        runtime.subagentVersion++;
+        // 引用内同步投影，避免重复事件或 React 重放重复消费序号。
+        const previous = runtime.state.subagents[childId] ?? childView({
+          session_id: childId, parent_session_id: id, parent_tool_call_id: event.call_id,
+          agent_type: event.agent_type, task: "子任务", status: "running", phase: "正在启动", turn: 0,
+          task_outcome: null,
+        });
+        const call = runtime.state.messages.flatMap((message) => message.content)
+          .find((block) => block.type === "tool_use" && block.call_id === event.call_id);
+        const child = projectSubagentEvent({ ...previous, task: String(call?.arguments?.task ?? previous.task) }, childEvent, childStream);
+        const childApprovals = child.approvals.map((approval) => ({ ...approval,
+          parent_session_id: id, parent_tool_call_id: event.call_id }));
+        update(id, (state) => ({ ...state,
+          subagents: { ...state.subagents, [childId]: child },
+          approvals: [...state.approvals.filter((item) => item.session_id !== childId), ...childApprovals],
+          selectedSubagentId: childEvent.type === "approval_requested" && selection.current.id === id
+            ? childId : state.selectedSubagentId,
+          unread: childEvent.type === "approval_requested" && selection.current.id !== id ? true : state.unread,
+          status: child.status === "waiting_approval" ? "子任务等待审批…" : `子任务：${child.phase}`,
+        }));
+        return;
+      }
       projectAgentEvent(event, assistantIds, {
         activeId: id, lastSequence, streamAssistantId,
         setMessages: setField("messages"), setStreamAssistantId: setField("streamAssistantId"),
@@ -194,6 +277,7 @@ export function useAgentTurn(options: Options) {
         };
         if (resume) await streamAgentResume(id, request, onEvent, streamOptions);
         else await streamAgentRun(id, request, onEvent, streamOptions);
+        await refreshSubagents(id).catch(() => undefined);
         const messages = await fetchConversation(id);
         update(id, (state) => ({ ...state, messages, loaded: true }));
       } catch (reason) {
@@ -211,13 +295,18 @@ export function useAgentTurn(options: Options) {
         runtime.approvalVersion++;
         update(id, (state) => ({ ...state, running: false, starting: false, approvals: [],
           messages: state.messages.filter((message) => message.role !== "approval"),
+          subagents: Object.fromEntries(Object.entries(state.subagents).map(([childId, child]) => [childId,
+            { ...child, approvals: [], streamAssistantId: null,
+              messages: child.messages.filter((message) => message.role !== "approval" && message.id !== child.streamAssistantId),
+              status: child.status === "running" || child.status === "waiting_approval" ? "unknown" : child.status,
+            }])),
         }));
         // 后台会话完成只刷新列表，不能改写用户此刻的选择。
         if (alive.current) void refreshWorkspaces().catch(() => undefined);
       }
     })();
     return connected;
-  }, [getRuntime, loadHistory, refreshWorkspaces, update]);
+  }, [getRuntime, loadHistory, refreshSubagents, refreshWorkspaces, update]);
 
   const sendPrompt = useCallback(async (prompt: string, permissionMode: PermissionMode, effort: ThinkingEffort, modelId: string) => {
     const value = prompt.trim();
@@ -272,6 +361,36 @@ export function useAgentTurn(options: Options) {
     if (activeId && modelId) await startRun(activeId, { prompt: "", permissionMode, effort, modelId }, true);
   }, [activeId, startRun]);
 
+  const openSubagent = useCallback(async (childId: string) => {
+    if (!activeId) return;
+    const parentId = activeId;
+    const runtime = getRuntime(parentId);
+    const child = runtime.state.subagents[childId];
+    if (!child) return;
+    update(parentId, (state) => ({ ...state, selectedSubagentId: childId }));
+    if (child.live || child.loaded || child.loading) return;
+    update(parentId, (state) => ({ ...state, subagents: { ...state.subagents,
+      [childId]: { ...state.subagents[childId], loading: true, error: null } } }));
+    try {
+      const messages = await fetchConversation(childId);
+      update(parentId, (state) => {
+        const current = state.subagents[childId];
+        if (current.live) return state;
+        return { ...state, subagents: { ...state.subagents,
+          [childId]: { ...current, messages, loaded: true, loading: false } } };
+      });
+    } catch (reason) {
+      update(parentId, (state) => ({ ...state, subagents: { ...state.subagents,
+        [childId]: { ...state.subagents[childId], loading: false, error: errorText(reason, "加载子任务历史失败") } } }));
+    }
+  }, [activeId, getRuntime, update]);
+
+  const visibleChildId = views[activeId ?? DRAFT]?.selectedSubagentId;
+  const visibleChild = views[activeId ?? DRAFT]?.subagents[visibleChildId ?? ""];
+  useEffect(() => {
+    if (visibleChildId) void openSubagent(visibleChildId);
+  }, [visibleChildId, visibleChild?.loaded, visibleChild?.live, openSubagent]);
+
   const resolveApproval = useCallback(async (requestId: string, approved: boolean) => {
     if (!activeId) return;
     const runtime = getRuntime(activeId);
@@ -283,6 +402,9 @@ export function useAgentTurn(options: Options) {
       update(activeId, (state) => ({ ...state,
         approvals: state.approvals.filter((item) => item.request_id !== requestId),
         messages: state.messages.filter((message) => message.approval?.request_id !== requestId),
+        subagents: Object.fromEntries(Object.entries(state.subagents).map(([childId, child]) => [childId, {
+          ...child, approvals: child.approvals.filter((item) => item.request_id !== requestId),
+        }])),
       }));
     } catch (reason) {
       update(activeId, (state) => ({ ...state, error: errorText(reason, "处理审批失败") }));
@@ -303,7 +425,8 @@ export function useAgentTurn(options: Options) {
   return {
     ...current, creatingSession, indicators,
     canResume: !current.running && (last?.role === "user" || last?.role === "toolResult"),
-    sendPrompt, abortRun, resumeRun, resolveApproval,
+    sendPrompt, abortRun, resumeRun, resolveApproval, openSubagent,
+    closeSubagent: () => update(key, (state) => ({ ...state, selectedSubagentId: null })),
     setPrompt: (action: SetStateAction<string>) => update(key, (state) => ({ ...state, prompt: apply(state.prompt, action) })),
     setPermissionMode: (permissionMode: PermissionMode) => update(key, (state) => ({ ...state, permissionMode })),
     setEffort: (effort: ThinkingEffort) => update(key, (state) => ({ ...state, effort })),

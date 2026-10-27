@@ -7,7 +7,7 @@ import pytest
 
 from camel_backend.orchestration import RunService, SessionService
 from camel_backend.settings_store import SettingsStore
-from camel_harness.agent import Agent, AgentBusyError
+from camel_harness.agent import Agent, AgentBusyError, AgentEventListener, Unsubscribe
 from camel_harness.agent.config import AgentSettings, ModelInput
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
@@ -86,6 +86,10 @@ class FakeAgent:
     def __init__(self) -> None:
         self.is_running = False
         self.closed = False
+
+    def subscribe(self, listener: AgentEventListener) -> Unsubscribe:
+        self.listener = listener
+        return lambda: None
 
     async def close(self) -> None:
         self.closed = True

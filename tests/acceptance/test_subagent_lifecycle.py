@@ -414,3 +414,23 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
     assert result.succeeded and result.content == "仅收到注入的只读记忆"
     assert adapter.requests == 2
     assert (await memory_manager.snapshot("user")).entries == ()
+
+
+async def test_broken_progress_observer_cannot_hide_child_terminal(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from camel_harness.agent.tools.types import SubagentProgress
+
+    subagent_runner, subagent_request, session_manager = await make_runner(
+        tmp_path, ChildLlm(False)
+    )
+
+    async def broken_observer(progress: SubagentProgress) -> None:
+        raise RuntimeError("模拟观察端故障")
+
+    result = await subagent_runner.run(replace(subagent_request, on_event=broken_observer))
+    metadata = await session_manager.get(result.session_id)
+    assert metadata is not None and metadata.task_outcome is not None
+    assert metadata.task_outcome.status == "failed"
+    assert metadata.task_outcome.error == "模型失败"
+    assert not result.succeeded
