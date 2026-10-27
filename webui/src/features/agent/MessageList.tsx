@@ -19,6 +19,7 @@ type Props = {
   showToolCalls?: boolean;
   subagents?: SubagentView[];
   onOpenSubagent?: (sessionId: string) => void;
+  onOpenTool?: (message: Message) => void;
 };
 
 export function MessageList({
@@ -33,6 +34,7 @@ export function MessageList({
   showToolCalls = false,
   subagents = [],
   onOpenSubagent,
+  onOpenTool,
 }: Props) {
   const outcomeLabels = { completed: "已完成", failed: "执行失败", cancelled: "已取消", unknown: "结果未知" };
   const scrollRef = useRef<HTMLElement>(null);
@@ -75,7 +77,7 @@ export function MessageList({
         </div>}
         {messages.map((message) => {
           if (message.role === "toolResult") {
-            return <ToolMessage key={message.id} message={message} />;
+            return <ToolMessage key={message.id} message={message} onOpen={onOpenTool} />;
           }
           if (message.role === "approval") {
             return (
@@ -118,7 +120,7 @@ function Welcome({
   return (
     <div className="welcome">
       <div className="welcome-icon">🐫</div>
-      <div className="eyebrow">CAMEL HARNESS · PYTHON EDITION</div>
+      <div className="eyebrow">CAMEL HARNESS · LOCAL WORKSPACE</div>
       <h1>开始新对话</h1>
       <p>
         {activeWorkspace
@@ -239,7 +241,7 @@ function ThinkingMessage({
   );
 }
 
-function ToolMessage({ message }: { message: Message }) {
+function ToolMessage({ message, onOpen }: { message: Message; onOpen?: (message: Message) => void }) {
   const block = message.content[0];
   const statusLabels = {
     not_executed: "未执行", succeeded: "已完成", failed: "执行失败", unknown: "结果未知",
@@ -255,6 +257,7 @@ function ToolMessage({ message }: { message: Message }) {
         <span className="tool-state">{statusLabel}</span>
       </summary>
       <div className="tool-detail">{block?.content ?? "无结果"}</div>
+      {onOpen && <button className="tool-open" onClick={() => onOpen(message)}>在侧栏查看</button>}
       {block?.details?.content_ref && (
         <div className="tool-detail">
           完整结果：{block.details.content_ref.path}

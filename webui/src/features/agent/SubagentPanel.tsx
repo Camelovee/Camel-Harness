@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { Approval, SubagentView } from "../../shared/model";
 import { MessageList } from "./MessageList";
 
@@ -8,6 +9,13 @@ export function SubagentPanel({ child, workspace, resolvingApprovalId, onResolve
   onResolveApproval: (requestId: string, approved: boolean) => void;
   onClose: () => void;
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
   const known = new Set(child.messages.flatMap((message) => message.approval ? [message.approval.request_id] : []));
   const pending: Approval[] = child.approvals.filter((approval) => !known.has(approval.request_id));
   const messages = [...child.messages, ...pending.map((approval) => ({
@@ -20,10 +28,10 @@ export function SubagentPanel({ child, workspace, resolvingApprovalId, onResolve
     cancelled: "运行已取消", timeout: "运行超时",
   };
   const running = child.status === "running" || child.status === "waiting_approval";
-  return <aside className="subagent-panel" aria-label="子任务详情">
+  return <aside className="detail-panel subagent-panel" aria-label="子任务详情">
     <header className="subagent-panel-head">
       <div><strong>{child.agent_type} 子任务</strong><p>{child.task}</p></div>
-      <button aria-label="关闭子任务详情" onClick={onClose}>×</button>
+      <button ref={closeRef} aria-label="关闭子任务详情" onClick={onClose}>×</button>
     </header>
     <div className="subagent-phase" role="status">{child.phase}{child.turn > 0 ? ` · 第 ${child.turn} 轮` : ""}</div>
     {child.loading && <p className="subagent-notice">正在加载历史…</p>}

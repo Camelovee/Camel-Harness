@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { ModelInput, WebSettings } from "../../shared/model";
+import type { ModelInput, ThemePreference, WebSettings } from "../../shared/model";
 import { errorText } from "../../shared/presentation";
 import { addModel, deleteModel, fetchSettings, savePreferences, updateModel } from "./api";
 
@@ -35,6 +35,7 @@ export function useWebSettings(onError: (message: string) => void) {
     saving,
     savePreferences: (modelId: string) =>
       apply(() => savePreferences(modelId)),
+    saveTheme: (theme: ThemePreference) => apply(() => savePreferences(undefined, theme)),
     saveModel: (modelId: string | null, body: ModelInput) =>
       apply(() => modelId ? updateModel(modelId, body) : addModel(body)),
     deleteModel: (modelId: string) => apply(() => deleteModel(modelId)),

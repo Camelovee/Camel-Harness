@@ -17,7 +17,9 @@ def create_settings_router(dependencies: HttpDependencies) -> APIRouter:
 
     @router.put("/settings/preferences")
     async def update_preferences(body: PreferencesBody) -> dict[str, object]:
-        await dependencies.require_settings().update_preferences(body.default_model_id)
+        await dependencies.require_settings().update_preferences(
+            default_model_id=body.default_model_id, theme=body.theme
+        )
         return await dependencies.require_settings().snapshot()
 
     @router.post("/settings/models", status_code=201)

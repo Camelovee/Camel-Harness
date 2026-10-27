@@ -42,7 +42,6 @@ export function WorkspaceSidebar({
           <div className="brand-wordmark">
             <strong>camel</strong>
             <span>HARNESS</span>
-            <em>Python</em>
           </div>
         </div>
       </div>

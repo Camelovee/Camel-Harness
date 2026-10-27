@@ -31,9 +31,12 @@ export type ModelProfile = {
   has_api_key: boolean;
 };
 
+export type ThemePreference = "system" | "light" | "dark";
+
 export type WebSettings = {
   models: ModelProfile[];
   default_model_id: string;
+  theme: ThemePreference;
 };
 
 export type ThinkingEffort = "low" | "high" | "max";

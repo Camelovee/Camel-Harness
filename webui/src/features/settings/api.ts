@@ -1,14 +1,14 @@
 import { apiJson } from "../../shared/api";
-import type { ModelInput, WebSettings } from "../../shared/model";
+import type { ModelInput, ThemePreference, WebSettings } from "../../shared/model";
 
 export function fetchSettings(): Promise<WebSettings> {
   return apiJson<WebSettings>("/settings");
 }
 
-export function savePreferences(defaultModelId: string): Promise<WebSettings> {
+export function savePreferences(defaultModelId?: string, theme?: ThemePreference): Promise<WebSettings> {
   return apiJson<WebSettings>("/settings/preferences", {
     method: "PUT",
-    body: JSON.stringify({ default_model_id: defaultModelId }),
+    body: JSON.stringify({ default_model_id: defaultModelId, theme }),
   });
 }
 

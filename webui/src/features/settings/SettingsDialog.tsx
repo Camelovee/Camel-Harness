@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { ModelInput, WebSettings } from "../../shared/model";
+import type { ModelInput, ThemePreference, WebSettings } from "../../shared/model";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 
-type Section = "models" | "skills" | "mcp";
+type Section = "models" | "appearance" | "skills" | "mcp";
 
 type Props = {
   settings: WebSettings | null;
   saving: boolean;
   onClose: () => void;
   onSavePreferences: (modelId: string) => Promise<boolean>;
+  onSaveTheme: (theme: ThemePreference) => Promise<boolean>;
   onSaveModel: (modelId: string | null, body: ModelInput) => Promise<boolean>;
   onDeleteModel: (modelId: string) => Promise<boolean>;
 };
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "models", label: "模型" },
+  { id: "appearance", label: "外观" },
   { id: "skills", label: "Skills" },
   { id: "mcp", label: "MCP" },
 ];
@@ -26,6 +28,7 @@ export function SettingsDialog({
   saving,
   onClose,
   onSavePreferences,
+  onSaveTheme,
   onSaveModel,
   onDeleteModel,
 }: Props) {
@@ -72,6 +75,26 @@ export function SettingsDialog({
               ))}
             </nav>
             <div className="settings-content">
+              {section === "appearance" && (
+                <section className="appearance-settings">
+                  <h3>外观与操作</h3>
+                  <label className="settings-field">界面主题
+                    <select aria-label="界面主题" value={settings.theme ?? "system"} disabled={saving}
+                      onChange={(event) => { void onSaveTheme(event.target.value as ThemePreference); }}>
+                      <option value="system">跟随系统</option>
+                      <option value="light">浅色</option>
+                      <option value="dark">深色</option>
+                    </select>
+                  </label>
+                  <p className="settings-footnote">主题保存在本机配置中，桌面与浏览器使用相同偏好。</p>
+                  <dl className="shortcut-list">
+                    <dt>新建对话</dt><dd>⌘ / Ctrl + N</dd>
+                    <dt>打开项目</dt><dd>⌘ / Ctrl + O</dd>
+                    <dt>切换侧栏</dt><dd>⌘ / Ctrl + B</dd>
+                    <dt>设置</dt><dd>⌘ / Ctrl + ,</dd>
+                  </dl>
+                </section>
+              )}
               {section === "models" && (
                 <ModelSettingsPanel
                   settings={settings}

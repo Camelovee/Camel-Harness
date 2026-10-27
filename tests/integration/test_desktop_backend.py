@@ -59,6 +59,13 @@ async def test_desktop_real_process_authentication_and_shutdown(
             assert (await client.get("/api/health")).json() == {"status": "ok"}
             assert (await client.get("/api/desktop/status")).json() == {"active_runs": 0}
             assert (await client.get("/api/settings")).status_code == 200
+            themed = await client.put("/api/settings/preferences", json={"theme": "dark"})
+            assert themed.status_code == 200
+            assert themed.json()["theme"] == "dark"
+            assert json.loads((tmp_path / ".camel" / "config.json").read_text())["theme"] == "dark"
+            assert (
+                await client.put("/api/settings/preferences", json={"theme": "invalid"})
+            ).status_code == 422
             assert (
                 await client.get("/api/health", headers={"Origin": "https://untrusted.example"})
             ).status_code == 401

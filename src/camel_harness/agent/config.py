@@ -133,6 +133,7 @@ class AgentSettings(BaseModel):
     mcp_config: str = ".mcp.json"
     models: list[ModelProfile] = Field(default_factory=list)
     default_model_id: str = ""
+    theme: Literal["system", "light", "dark"] = "system"
 
     @model_validator(mode="before")
     @classmethod

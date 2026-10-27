@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from camel_harness.agent.config import AgentSettings, ModelInput, ModelProfile
@@ -57,6 +58,7 @@ class SettingsStore:
                     for profile in agent_settings.models
                 ],
                 "default_model_id": agent_settings.default_model_id,
+                "theme": agent_settings.theme,
             }
 
     async def add_model(self, body: ModelInput) -> None:
@@ -112,7 +114,11 @@ class SettingsStore:
                 )
             agent_settings.save(self._path)
 
-    async def update_preferences(self, default_model_id: str) -> None:
+    async def update_preferences(
+        self,
+        default_model_id: str | None = None,
+        theme: Literal["system", "light", "dark"] | None = None,
+    ) -> None:
         async with self._lock:
             agent_settings = self._load()
             if default_model_id:
@@ -123,5 +129,8 @@ class SettingsStore:
                     raise ValueError("默认模型配置不存在")
                 if not profile.api_key:
                     raise ValueError("默认模型缺少 API Key")
-            agent_settings.default_model_id = default_model_id
+            if default_model_id is not None:
+                agent_settings.default_model_id = default_model_id
+            if theme is not None:
+                agent_settings.theme = theme
             agent_settings.save(self._path)

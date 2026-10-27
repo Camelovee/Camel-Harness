@@ -43,9 +43,10 @@ class ResumeBody(BaseModel):
 
 
 class PreferencesBody(BaseModel):
-    """用户的 Web 默认模型。"""
+    """用户默认模型与界面偏好；未提供的字段保留原值。"""
 
-    default_model_id: str = Field(min_length=1, max_length=64)
+    default_model_id: str | None = Field(default=None, min_length=1, max_length=64)
+    theme: Literal["system", "light", "dark"] | None = None
 
 
 class SteerBody(BaseModel):
