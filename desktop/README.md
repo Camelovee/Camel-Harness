@@ -1,0 +1,84 @@
+# Camel Harness 桌面预览版
+
+Electron 客户端复用 React WebUI 与 Python/FastAPI 后端，提供 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。
+
+## 下载安装
+
+从 [GitHub Releases](https://github.com/Camelovee/Camel-Harness/releases) 选择对应安装包；维护者尚未发布时可从源码构建。
+
+| 系统 | 文件 |
+| --- | --- |
+| Apple Silicon Mac | `Camel-Harness-<版本>-mac-arm64.dmg` |
+| Intel Mac | `Camel-Harness-<版本>-mac-x64.dmg` |
+| Windows x64 | `Camel-Harness-<版本>-win-x64.exe` |
+
+macOS 打开 DMG，将应用拖到 Applications；Windows 运行安装程序，可选择安装目录。使用者无需另外安装 Python、Node.js 或 uv。
+
+当前未完成正式签名：macOS 只有 ad-hoc 本地签名，没有开发者身份签名和公证；Windows 没有证书签名。系统可能阻止打开，请核验来源和校验和，再按系统提供的单应用授权流程操作；受组织策略管理的电脑可能无法运行预览版。
+
+Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Windows PowerShell 使用 `Get-FileHash <安装包> -Algorithm SHA256` 比对摘要。
+
+## 首次使用
+
+1. 在首次启动的模型设置中添加 Anthropic 或 OpenAI 模型和自己的 API Key。
+2. 选择本地项目，输入任务。配置和打开目录本身不会调用模型。
+3. 在消息中核对工具的目录、命令和参数，决定是否批准。
+4. 可在运行中追加指令、停止或按提示恢复。关闭窗口时，活动任务需确认后才停止退出。
+
+配置和会话仍位于 `~/.camel/config.json`、`~/.camel/sessions/`，Windows 对应 `%USERPROFILE%\.camel\`。更新和卸载程序不主动删除这些文件。主题写入配置的 `theme` 字段，支持 `system`、`light`、`dark`。
+
+快捷键：新对话 `⌘/Ctrl+N`、打开项目 `⌘/Ctrl+O`、切换侧栏 `⌘/Ctrl+B`、设置 `⌘/Ctrl+,`。首版不提供托盘后台任务或自动更新。
+
+应用内置自己的 Python 后端；执行项目命令所需的 Git、语言环境、编译器及可选 MCP 程序仍由用户按需安装。
+
+## 源码开发与打包
+
+在仓库根目录执行，需要 Python 3.11+、Node.js 24 和 uv：
+
+```bash
+uv sync --locked --extra dev --extra desktop --python 3.11
+npm ci --prefix webui
+npm ci --prefix desktop
+npm run build --prefix webui
+npm run dev --prefix desktop
+```
+
+开发模式自动启动仓库内后端，不需要另外打开后端终端。修改 React 后重新构建 WebUI 并重开桌面窗口；浏览器开发仍使用根目录 README 的 Vite 流程。
+
+在目标操作系统和 CPU 架构上生成安装包：
+
+```bash
+npm run build --prefix webui
+uv run python scripts/build_desktop_backend.py
+npm run dist --prefix desktop -- --publish never
+uv run python scripts/desktop_checksums.py desktop/release
+```
+
+产物在 `desktop/release/`。不能用一个 Python 可执行文件跨平台分发。Windows 后端保留控制台模式以支持管道，由 Electron 隐藏窗口，不能改为 PyInstaller 无控制台模式。
+
+离线验收使用临时用户目录和本机模型协议替身，不读取私人配置，不调用外部模型：
+
+```bash
+npm run test:smoke --prefix desktop
+# 打包后的 Apple Silicon 应用；Intel 将 mac-arm64 改为 mac
+node desktop/scripts/smoke.cjs "desktop/release/mac-arm64/Camel Harness.app/Contents/MacOS/Camel Harness"
+# Windows
+node desktop/scripts/smoke.cjs "desktop/release/win-unpacked/Camel Harness.exe"
+```
+
+## GitHub 发布
+
+2026-10-27 本机验证：Apple Silicon Mac 已完成独立后端构建、DMG 生成、只读挂载、复制到临时安装目录，以及移除开发工具路径后的真实应用验收。Anthropic/OpenAI 均使用本机协议替身，审批写入、主题、详情缩放、取消退出、确认退出和未完成响应不落盘通过。Windows、Intel Mac 的原生构建及实际安装尚待对应平台验证，不能视为已通过。
+
+Desktop 工作流在三个原生 runner 上检查、打包并验证真实应用。PR 和手动运行只上传 Actions 产物。维护者推送与工程版本一致的 `v<版本>` 标签后，工作流汇总安装包和摘要，创建 **draft + prerelease**，等待维护者检查后发布，不自动改写已发布的 Release。
+
+取得证书后另行接入 macOS Developer ID 签名、公证和 Windows 签名。发布前应补齐三个平台的实际安装检查，不能以其他系统的模拟结果代替。
+
+## 故障排查
+
+- **服务启动失败**：检查配置是否为合法 JSON、重新安装能否补齐资源。故障页只主动重启服务，不重放任务。启动等待上限 30 秒。
+- **退出超时**：15 秒后请求强制结束所属进程并提示，重新打开后先核验文件和命令结果，再决定是否恢复。
+- **命令找不到**：确认项目工具或 MCP 程序已安装，且桌面进程的 PATH 能找到。macOS 从 Finder 启动可能看不到终端设置的路径，可从配置好 PATH 的终端直接执行应用的 `Contents/MacOS/Camel Harness`；MCP 配置优先填写程序绝对路径。
+- **Windows Shell**：工具仍使用 `cmd.exe` 语法，不是 PowerShell。
+
+Electron 渲染进程隔离不等于 Agent 工具的 OS 沙箱。文件和 Shell 操作继续遵守原有工作区与审批边界。

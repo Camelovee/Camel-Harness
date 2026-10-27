@@ -1,7 +1,9 @@
 # Camel Harness
 
 受 pi-agent 启发的轻量 Python Agent Runtime，用于在本地工作区读取、修改代码并执行任务。
-通过 WebUI 提供本地交互。
+通过 Electron 桌面客户端和 WebUI 提供本地交互。
+
+桌面预览版支持 macOS Apple Silicon、macOS Intel 和 Windows x64，内置 Python 后端。下载安装、源码运行与打包见 [桌面客户端说明](desktop/README.md)。预览安装包需由维护者完成原生平台验证后发布。
 
 ## 核心能力
 
@@ -12,6 +14,12 @@
 - 会话：本地 JSONL 历史树，保存完整消息、模型和用量，子会话与大工具结果归属对应会话。
 
 ## 界面预览
+
+桌面预览版浅色与深色界面，截图使用临时项目和本机模拟模型服务，无真实密钥或模型调用。
+
+![Camel Harness 桌面浅色主题](docs/images/desktop-light.png)
+
+![Camel Harness 桌面深色主题](docs/images/desktop-dark.png)
 
 实际 WebUI 默认模型设置截图，使用临时工作区与空白配置，未调用模型。
 

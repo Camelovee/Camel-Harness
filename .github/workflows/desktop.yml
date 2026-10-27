@@ -1,0 +1,143 @@
+name: Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "webui/**"
+      - "src/**"
+      - "scripts/*desktop*"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: mac
+            arch: arm64
+            executable: desktop/release/mac-arm64/Camel Harness.app/Contents/MacOS/Camel Harness
+          - runner: macos-15-intel
+            platform: mac
+            arch: x64
+            executable: desktop/release/mac/Camel Harness.app/Contents/MacOS/Camel Harness
+          - runner: windows-latest
+            platform: win
+            arch: x64
+            executable: desktop/release/win-unpacked/Camel Harness.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.11.7"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            webui/package-lock.json
+            desktop/package-lock.json
+      - name: 安装锁定依赖
+        run: |
+          uv sync --locked --extra dev --extra desktop --python 3.11
+          npm ci --prefix webui
+          npm ci --prefix desktop
+      - name: 检查原生架构与版本
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          node -e "require('node:assert/strict').equal(process.arch, process.env.EXPECTED_ARCH)"
+          uv run python scripts/check_desktop_version.py "$GITHUB_REF_NAME"
+      - name: 后端检查与生命周期回归
+        run: |
+          uv run ruff check src tests scripts desktop/backend_entry.py
+          uv run ruff format --check src tests scripts desktop/backend_entry.py
+          uv run mypy src
+          uv run lint-imports
+      - name: macOS 全量回归
+        if: runner.os == 'macOS'
+        run: uv run pytest -q
+      - name: Windows 平台与桌面回归
+        if: runner.os == 'Windows'
+        run: >-
+          uv run pytest -q
+          tests/unit/test_platform_io.py
+          tests/unit/test_windows_shell.py
+          tests/unit/test_workspace_picker.py
+          tests/integration/test_platform_compatibility.py
+          tests/integration/test_shell_output.py
+          tests/integration/test_tool_storage_failure.py
+          tests/integration/test_session_tree.py
+          tests/integration/test_session_write_cancellation.py
+          tests/integration/test_mcp_lifecycle.py
+          tests/integration/test_desktop_backend.py
+          tests/integration/test_memory_store.py::test_cross_process_adds_are_both_preserved
+          tests/integration/test_memory_store.py::test_queued_cancel_does_not_execute
+          tests/integration/test_memory_store.py::test_inflight_cancel_waits_for_commit
+          tests/unit/test_web_settings.py::test_theme_preferences_preserve_models_and_runtime_settings
+      - name: 前端与桌面检查
+        run: |
+          npm test --prefix webui
+          npm run build --prefix webui
+          npm test --prefix desktop
+          npm run build --prefix desktop
+      - name: 打包内置后端
+        run: uv run python scripts/build_desktop_backend.py
+      - name: 生成安装包
+        run: npm run dist --prefix desktop -- --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: 验证打包后的真实应用
+        run: node desktop/scripts/smoke.cjs "${{ matrix.executable }}"
+      - name: 生成校验和
+        run: uv run python scripts/desktop_checksums.py desktop/release
+      - uses: actions/upload-artifact@v6
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.blockmap
+            desktop/release/SHA256SUMS.txt
+
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: desktop-*
+          path: release
+          merge-multiple: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: 汇总安装包校验和
+        run: python scripts/desktop_checksums.py release
+      - name: 创建或更新草稿，等待维护者发布
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft > /tmp/camel-release.json 2>/dev/null; then
+            python -c 'import json; assert json.load(open("/tmp/camel-release.json"))["isDraft"], "禁止自动修改已发布版本"'
+          else
+            gh release create "$RELEASE_TAG" --draft --prerelease --title "Camel Harness $RELEASE_TAG 桌面预览版" --notes-file desktop/RELEASE_NOTES.md
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber

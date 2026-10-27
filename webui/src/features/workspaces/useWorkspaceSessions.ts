@@ -14,6 +14,8 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [defaultWorkspace, setDefaultWorkspace] = useState<string | null>(null);
   const [selectingWorkspace, setSelectingWorkspace] = useState(false);
+  const [openingWorkspace, setOpeningWorkspace] = useState(false);
+  const workspaceSelectionInFlight = useRef(false);
   const [switchingModels, setSwitchingModels] = useState(new Set<string>());
   const switchingModel = activeId !== null && switchingModels.has(activeId);
   const refreshVersion = useRef(0);
@@ -88,20 +90,28 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
   }, [onError, onStatus, selectingWorkspace]);
 
   const selectWorkspace = useCallback(async () => {
-    const selected = await pickWorkspace();
-    if (!selected) return false;
-    const existing = workspaces.find((workspace) => workspace.workspace === selected);
-    setActiveWorkspace(selected);
-    setActiveId(existing?.sessions[0]?.session_id ?? null);
-    if (!existing) {
-      try {
-        await createForWorkspace(selected);
-      } catch (reason) {
-        onError(reason instanceof Error ? reason.message : "创建工作区会话失败");
-        return false;
+    if (workspaceSelectionInFlight.current) return false;
+    workspaceSelectionInFlight.current = true;
+    setOpeningWorkspace(true);
+    try {
+      const selected = await pickWorkspace();
+      if (!selected) return false;
+      const existing = workspaces.find((workspace) => workspace.workspace === selected);
+      setActiveWorkspace(selected);
+      setActiveId(existing?.sessions[0]?.session_id ?? null);
+      if (!existing) {
+        try {
+          await createForWorkspace(selected);
+        } catch (reason) {
+          onError(reason instanceof Error ? reason.message : "创建工作区会话失败");
+          return false;
+        }
       }
+      return true;
+    } finally {
+      workspaceSelectionInFlight.current = false;
+      setOpeningWorkspace(false);
     }
-    return true;
   }, [createForWorkspace, onError, pickWorkspace, workspaces]);
 
   const createSession = useCallback(
@@ -186,7 +196,7 @@ export function useWorkspaceSessions({ onError, onStatus }: Options) {
     defaultWorkspace,
     activeId,
     activeSession,
-    selectingWorkspace,
+    selectingWorkspace: selectingWorkspace || openingWorkspace,
     switchingModel,
     setActiveWorkspace,
     setActiveId,

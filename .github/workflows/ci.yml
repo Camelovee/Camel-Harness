@@ -23,6 +23,8 @@ jobs:
         run: uv sync --locked --extra dev --python 3.11
       - name: 安装 WebUI 依赖
         run: npm ci --prefix webui
+      - name: 安装桌面开发依赖
+        run: npm ci --prefix desktop
       - name: Python 检查
         run: |
           uv run --no-sync ruff check src tests scripts
@@ -34,6 +36,11 @@ jobs:
         run: |
           npm test --prefix webui
           npm run build --prefix webui
+      - name: 桌面测试与类型检查
+        run: |
+          npm test --prefix desktop
+          npm run build --prefix desktop
+          uv run python scripts/check_desktop_version.py
       - name: Python 发布包
         run: uv build
       - name: Diff 格式

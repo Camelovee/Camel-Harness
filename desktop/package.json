@@ -1,20 +1,22 @@
 {
   "name": "camel-harness-desktop",
   "productName": "Camel Harness",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "Camel Harness 本地编程助手",
   "author": "Camel Harness contributors",
   "license": "MIT",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/create-icon.cjs && tsc -p tsconfig.json",
     "dev": "npm run build && electron .",
     "test": "vitest run",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "pack": "npm run build && install-electron && electron-builder --dir",
+    "dist": "npm run build && install-electron && electron-builder",
+    "test:smoke": "npm run build && node scripts/smoke.cjs"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
     "@types/node": "26.6.5",
     "electron": "45.0.0",
     "electron-builder": "26.18.0",

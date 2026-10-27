@@ -5,6 +5,7 @@ import json
 import socket
 import sys
 import threading
+from io import TextIOWrapper
 from pathlib import Path
 
 import uvicorn
@@ -54,7 +55,17 @@ async def run_backend(startup: DesktopStartup) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
-        server = uvicorn.Server(uvicorn.Config(application, log_level="warning", access_log=False))
+        server = uvicorn.Server(
+            uvicorn.Config(
+                application,
+                log_level="warning",
+                access_log=False,
+                loop="asyncio",
+                http="h11",
+                ws="none",
+                lifespan="on",
+            )
+        )
         server_task = asyncio.create_task(server.serve(sockets=[listener]))
         try:
             while not server.started and not server_task.done() and not stopped.is_set():
@@ -79,6 +90,10 @@ async def run_backend(startup: DesktopStartup) -> None:
 def main() -> None:
     """桌面专用入口，不读取环境变量或持久化临时凭据。"""
 
+    # 管道协议固定 UTF-8，不依赖 Windows 控制台代码页或启动器环境。
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
     try:
         startup = DesktopStartup.model_validate_json(sys.stdin.readline())
         asyncio.run(run_backend(startup))

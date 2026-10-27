@@ -1,0 +1,34 @@
+appId: io.github.camelovee.camel-harness
+productName: Camel Harness
+artifactName: Camel-Harness-${version}-${os}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/**/*
+  - assets/**/*
+  - package.json
+extraResources:
+  - from: backend/camel-backend
+    to: backend
+  - from: ../webui/dist
+    to: webui
+asar: true
+electronDist: node_modules/electron/dist
+npmRebuild: false
+publish: null
+mac:
+  icon: assets/icon.icns
+  category: public.app-category.developer-tools
+  identity: "-"
+  hardenedRuntime: false
+  target:
+    - dmg
+win:
+  icon: assets/icon.ico
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false

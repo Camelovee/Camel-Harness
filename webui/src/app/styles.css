@@ -151,7 +151,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 
 @media (max-width: 600px) { .settings-dialog { width: 100%; }.settings-header { padding: 17px; }.settings-body { grid-template-columns: 1fr; }.settings-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--border); }.settings-content { padding: 17px; }.settings-form-grid { grid-template-columns: 1fr; }.settings-model-row { flex-wrap: wrap; }.settings-model-actions { margin-left: auto; } }
 
-@media (max-width: 900px) { body { min-width: 0; }.app-shell { grid-template-columns: 240px minmax(0, 1fr); }.main-header { padding: 0 18px; }.messages-inner, .approval-message, .composer-box, .composer-hint { width: calc(100% - 32px); } }
+@media (max-width: 900px) { body { min-width: 0; }.app-shell { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }.main-header { padding: 0 18px; }.messages-inner, .approval-message, .composer-box, .composer-hint { width: calc(100% - 32px); } }
 .settings-config { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 20px; }
 .settings-config-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 

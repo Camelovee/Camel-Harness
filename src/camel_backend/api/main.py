@@ -27,7 +27,7 @@ def create_api_app(
 
     application = FastAPI(
         title="Camel Harness Web",
-        version="1.0.1",
+        version="1.1.0",
         lifespan=lifespan,
         docs_url=None if desktop_token else "/docs",
         redoc_url=None if desktop_token else "/redoc",

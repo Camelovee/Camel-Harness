@@ -31,7 +31,11 @@ async def _start_backend(
     assert process.stdin is not None
     process.stdin.write(
         (
-            json.dumps({"token": "test-token-" * 5, "frontend_dist": str(frontend_dist)}) + "\n"
+            json.dumps(
+                {"token": "test-token-" * 5, "frontend_dist": str(frontend_dist)},
+                ensure_ascii=False,
+            )
+            + "\n"
         ).encode()
     )
     await process.stdin.drain()

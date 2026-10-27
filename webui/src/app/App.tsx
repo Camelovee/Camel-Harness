@@ -40,7 +40,7 @@ export default function App() {
     firstSettingsLoaded.current = true;
     if (!webSettings.settings.models.some((model) => model.configured)) setSettingsOpen(true);
   }, [webSettings.settings]);
-  const chatWorkspace = workspace.activeSession?.workspace ?? draftWorkspace ?? workspace.defaultWorkspace;
+  const chatWorkspace = workspace.activeSession?.workspace ?? draftWorkspace ?? workspace.activeWorkspace ?? workspace.defaultWorkspace;
   const agent = useAgentTurn({
     activeId: workspace.activeId,
     activeWorkspace: chatWorkspace,
@@ -181,7 +181,7 @@ export default function App() {
         />
         <Composer
           key={`composer-${workspace.activeId ?? "new-chat"}`}
-          active={true}
+          active={!workspace.selectingWorkspace && webSettings.settings !== null}
           activeWorkspace={chatWorkspace}
           running={agent.running}
           switchingModel={workspace.switchingModel}
