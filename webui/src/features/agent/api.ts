@@ -6,6 +6,7 @@ import type {
   PermissionMode,
   ThinkingEffort,
   WireMessage,
+  SubagentSnapshot,
 } from "../../shared/model";
 
 export async function fetchConversation(sessionId: string): Promise<Message[]> {
@@ -170,4 +171,10 @@ function emitFrame(frame: string, onEvent: (event: AgentEvent) => void): void {
     .map((line) => line.slice(6))
     .join("\n");
   if (data) onEvent(JSON.parse(data) as AgentEvent);
+}
+
+
+export async function fetchSubagents(sessionId: string): Promise<SubagentSnapshot[]> {
+  const result = await apiJson<{ subagents: SubagentSnapshot[] }>(`/sessions/${sessionId}/subagents`);
+  return result.subagents;
 }

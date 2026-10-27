@@ -61,6 +61,10 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
     async def delete_session(session_id: str) -> None:
         await dependencies.require_session_service().delete_cascade(session_id)
 
+    @router.get("/sessions/{session_id}/subagents")
+    async def subagents(session_id: str) -> dict[str, object]:
+        return {"subagents": await dependencies.require_runs().subagents(session_id)}
+
     @router.get("/sessions/{session_id}/messages")
     async def session_messages(session_id: str) -> SessionMessagesResponse:
         manager = dependencies.require_sessions()

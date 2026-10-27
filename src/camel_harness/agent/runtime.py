@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from camel_harness.llm import (
@@ -19,7 +20,9 @@ from .resources import ProjectRules, Skills
 from .session import SessionManager
 from .session.jsonl import JsonlSessionStorage
 from .state import AgentOptions
-from .subagent.runner import LocalSubagentRunner, SubagentProviderFactory
+from .subagent.creation import build_subagent
+from .subagent.runner import LocalSubagentRunner
+from .subagent.types import SubagentProviderFactory
 from .tools import (
     ApprovalHandler,
     PermissionService,
@@ -115,12 +118,16 @@ async def build_agent(
         if agent_extensions.subagent_provider is not None:
             # 子 Agent 与主 Agent 共享客户端、注册表、权限和上下文；所有权仍归组装层。
             subagent_runner = LocalSubagentRunner(
-                llm_client=llm_client,
+                build_subagent=partial(
+                    build_subagent,
+                    llm_client=llm_client,
+                    session_manager=session_manager,
+                    tool_registry=tool_registry,
+                    permission_service=permission_service,
+                    context_manager=context_manager,
+                    agent_options=agent_options,
+                ),
                 session_manager=session_manager,
-                tool_registry=tool_registry,
-                permission_service=permission_service,
-                context_manager=context_manager,
-                agent_options=agent_options,
             )
             await tool_registry.register_provider(
                 agent_extensions.subagent_provider(subagent_runner.run)

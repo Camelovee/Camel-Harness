@@ -29,7 +29,9 @@ from .context import CompactionTrigger, ContextManager, ContextResourceError, Co
 from .events import (
     AgentEvent,
     ApprovalRequestedEvent,
+    ApprovalResolvedEvent,
     MessageUpdateEvent,
+    SubagentEvent,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     TurnEndEvent,
@@ -46,6 +48,8 @@ from .tools import (
     ToolExecutor,
     ToolResult,
 )
+from .tools.permissions import PermissionAction, PermissionDecision
+from .tools.types import SubagentProgress
 
 EmitEvent = Callable[[AgentEvent], Awaitable[None]]
 
@@ -327,13 +331,53 @@ class TurnRunner:
                     )
                 )
 
+            async def on_approval_resolved(
+                request_id: str,
+                permission_request: PermissionRequest,
+                decision: PermissionDecision,
+                current_tool_call: ToolCall = tool_call,
+            ) -> None:
+                await self._emit(
+                    ApprovalResolvedEvent(
+                        session_id=agent_run.session_id,
+                        run_id=agent_run.run_id,
+                        sequence=agent_run.next_sequence(),
+                        turn_id=turn_id,
+                        request_id=request_id,
+                        call_id=current_tool_call.call_id,
+                        approved=decision.action is PermissionAction.ALLOW,
+                        reason=decision.reason,
+                    )
+                )
+
+            async def on_subagent_event(
+                progress: SubagentProgress,
+                current_tool_call: ToolCall = tool_call,
+            ) -> None:
+                await self._emit(
+                    SubagentEvent(
+                        session_id=agent_run.session_id,
+                        run_id=agent_run.run_id,
+                        sequence=agent_run.next_sequence(),
+                        turn_id=turn_id,
+                        call_id=current_tool_call.call_id,
+                        agent_type=progress["agent_type"],
+                        event=progress["event"],
+                    )
+                )
+
             try:
                 tool_result = await self._tool_executor.execute(
                     tool_call,
                     ToolContext(
-                        agent_run.session_id, self._workspace, permission_mode, model=model
+                        agent_run.session_id,
+                        self._workspace,
+                        permission_mode,
+                        model=model,
+                        on_subagent_event=on_subagent_event,
                     ),
                     on_approval=on_approval,
+                    on_approval_resolved=on_approval_resolved,
                 )
             except Exception:
                 # ToolExecutor 已把工具失败归一化为 ToolResult；这里捕获的是基础设施或

@@ -5,11 +5,12 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, TypeAlias
 
 from camel_harness.llm import AssistantMessage, LlmStreamEvent, Message, ToolResultMessage
 
+from .session.events import message_to_dict
 from .state import StopReason
 from .tools.types import ToolResult
 
@@ -183,6 +184,27 @@ class ApprovalRequestedEvent(TurnEventBase):
     type: Literal["approval_requested"] = field(default="approval_requested", init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalResolvedEvent(TurnEventBase):
+    """审批已经决定，执行或拒绝结果随后交付。"""
+
+    request_id: str
+    call_id: str
+    approved: bool
+    reason: str
+    type: Literal["approval_resolved"] = field(default="approval_resolved", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentEvent(TurnEventBase):
+    """父运行承载子事件，内外身份和事件序号各自独立。"""
+
+    call_id: str
+    agent_type: str
+    event: dict[str, Any]
+    type: Literal["subagent_event"] = field(default="subagent_event", init=False)
+
+
 AgentEvent: TypeAlias = (
     AgentStartEvent
     | AgentEndEvent
@@ -194,4 +216,18 @@ AgentEvent: TypeAlias = (
     | ToolExecutionStartEvent
     | ToolExecutionEndEvent
     | ApprovalRequestedEvent
+    | ApprovalResolvedEvent
+    | SubagentEvent
 )
+
+
+def agent_event_to_dict(agent_event: AgentEvent) -> dict[str, Any]:
+    """将消息和嵌套子事件统一投影为可传输的公开字典。"""
+
+    payload = asdict(agent_event)
+    if isinstance(agent_event, MessageEndEvent):
+        payload["message"] = message_to_dict(agent_event.message)
+    elif isinstance(agent_event, TurnEndEvent):
+        payload["message"] = message_to_dict(agent_event.message)
+        payload["tool_results"] = [message_to_dict(item) for item in agent_event.tool_results]
+    return payload

@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from camel_backend.settings_store import SettingsStore
 from camel_harness.agent import Agent, AgentBusyError, AgentNotRunningError
 from camel_harness.agent.config import AgentSettings
+from camel_harness.agent.events import AgentEvent
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.state import SteerResult
-from camel_harness.llm import LlmModel
+from camel_harness.llm import AssistantMessage, LlmModel, ToolUseBlock
 
 AgentBuilder = Callable[[str, Path, AgentSettings], Awaitable[Agent]]
 
@@ -29,6 +32,80 @@ class RunService:
         self._settings_store = settings_store
         self._agents_by_session_id: dict[str, Agent] = {}
         self._lock = asyncio.Lock()
+        self._subagents_by_parent: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def _observe(self, session_id: str, agent_event: AgentEvent) -> None:
+        """只维护子任务当前视图，完整过程由子会话消息保存。"""
+
+        if agent_event.type == "subagent_event":
+            child = agent_event.event
+            child_id = str(child["session_id"])
+            snapshots = self._subagents_by_parent.setdefault(session_id, {})
+            snapshot = snapshots.setdefault(
+                child_id, {"status": "running", "turn": 0, "phase": "正在启动"}
+            )
+            kind = child["type"]
+            if kind == "turn_start":
+                snapshot.update(phase="分析中", turn=child["turn"])
+            elif kind == "message_update":
+                update = child["assistant_event"]
+                if update["type"] in {"text_delta", "reasoning_delta"}:
+                    snapshot["phase"] = "生成回答" if update["type"] == "text_delta" else "思考中"
+            elif kind == "tool_execution_start":
+                snapshot["phase"] = f"调用 {child['name']}"
+            elif kind == "approval_requested":
+                snapshot.update(status="waiting_approval", phase="等待工具审批")
+            elif kind == "approval_resolved":
+                snapshot.update(
+                    status="running", phase="已批准，执行中" if child["approved"] else "未获批准"
+                )
+            elif kind == "agent_end":
+                snapshot.update(
+                    status=child["status"],
+                    phase="已结束",
+                    stop_reason=child["stop_reason"],
+                    error=child["error"],
+                )
+        elif agent_event.type == "agent_end":
+            for snapshot in self._subagents_by_parent.get(session_id, {}).values():
+                if snapshot["status"] in {"running", "waiting_approval"}:
+                    snapshot.update(status="unknown", phase="运行已停止，结果未知")
+
+    async def subagents(self, session_id: str) -> list[dict[str, Any]]:
+        """按父会话当前分支的委派调用查询子任务，避免混入其他分支。"""
+
+        if await self._session_manager.get(session_id) is None:
+            raise KeyError("会话不存在")
+        calls = {
+            block.call_id: block
+            for message in await self._session_manager.bind(session_id).messages()
+            if isinstance(message, AssistantMessage)
+            for block in message.content
+            if isinstance(block, ToolUseBlock) and block.name == "delegate_task"
+        }
+        result: list[dict[str, Any]] = []
+        for metadata in await self._session_manager.list():
+            if metadata.parent_session_id != session_id:
+                continue
+            call = calls.get(metadata.parent_tool_call_id or "")
+            if call is None:
+                continue
+            outcome = metadata.task_outcome
+            snapshot = self._subagents_by_parent.get(session_id, {}).get(metadata.session_id, {})
+            result.append(
+                {
+                    "session_id": metadata.session_id,
+                    "parent_session_id": session_id,
+                    "parent_tool_call_id": metadata.parent_tool_call_id,
+                    "agent_type": call.arguments.get("agent_type", "未知"),
+                    "task": call.arguments.get("task", ""),
+                    "status": outcome.status if outcome else snapshot.get("status", "unknown"),
+                    "phase": "已结束" if outcome else snapshot.get("phase", "历史状态未记录"),
+                    "turn": snapshot.get("turn", 0),
+                    "task_outcome": asdict(outcome) if outcome else None,
+                }
+            )
+        return result
 
     async def require_agent(self, session_id: str, model_id: str | None = None) -> Agent:
         """返回绑定指定 Session 的唯一 Agent，必要时惰性创建。"""
@@ -105,5 +182,6 @@ class RunService:
         agent = await self._build_agent(
             session_id, Path(metadata.workspace), await self._settings_store.base_settings()
         )
+        agent.subscribe(lambda event: self._observe(session_id, event))
         self._agents_by_session_id[session_id] = agent
         return agent, model

@@ -13,6 +13,7 @@ from camel_harness.llm import ToolDefinition
 from .file_result_storage import ToolResultStorageError
 from .permissions import (
     ApprovalPendingListener,
+    ApprovalResolvedListener,
     PermissionAction,
     PermissionRequest,
     PermissionService,
@@ -64,6 +65,7 @@ class ToolExecutor:
         tool_call: ToolCall,
         tool_context: ToolContext,
         on_approval: ApprovalPendingListener | None = None,
+        on_approval_resolved: ApprovalResolvedListener | None = None,
     ) -> ToolResult:
         # 参数深拷贝：审批快照与执行各持一份，工具实现无法原地改写审批看到的内容。
         tool_call = replace(tool_call, arguments=deepcopy(tool_call.arguments))
@@ -94,12 +96,22 @@ class ToolExecutor:
             session_id=tool_context.session_id,
             execution_context=execution_context,
         )
+        pending_request_id: str | None = None
+
+        async def pending(request_id: str, request: PermissionRequest, reason: str) -> None:
+            nonlocal pending_request_id
+            pending_request_id = request_id
+            if on_approval is not None:
+                await on_approval(request_id, request, reason)
+
         try:
-            decision = await self._permission_service.authorize(permission_request, on_approval)
+            decision = await self._permission_service.authorize(permission_request, pending)
         except Exception as exc:
             return _error_result(
                 tool_call, f"工具审批失败：{exc}", ToolExecutionStatus.NOT_EXECUTED
             )
+        if pending_request_id is not None and on_approval_resolved is not None:
+            await on_approval_resolved(pending_request_id, permission_request, decision)
         if decision.action is PermissionAction.DENY:
             return _error_result(
                 tool_call, f"权限拒绝：{decision.reason}", ToolExecutionStatus.NOT_EXECUTED

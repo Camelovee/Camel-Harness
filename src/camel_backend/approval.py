@@ -59,7 +59,11 @@ class WebApproval(ApprovalHandler):
 
     async def list_pending(self) -> tuple[PendingApproval, ...]:
         async with self._lock:
-            return tuple(pending.item for pending in self._approvals_by_request_id.values())
+            return tuple(
+                pending.item
+                for pending in self._approvals_by_request_id.values()
+                if not pending.future.done()
+            )
 
     async def resolve(self, request_id: str, approved: bool) -> bool:
         async with self._lock:

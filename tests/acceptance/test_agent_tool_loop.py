@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from camel_harness.agent.subagent import (
     LocalSubagentRunner,
     SubagentRequest,
     SubagentType,
+    build_subagent,
 )
 from camel_harness.agent.tools import (
     PermissionMode,
@@ -352,14 +354,18 @@ async def test_local_subagent_persists_parent_link(tmp_path, content) -> None:
     tool_registry = ToolRegistry()
     await tool_registry.register_provider(BuiltinToolProvider())
     runner = LocalSubagentRunner(
-        llm_client=llm_client,
-        session_manager=session_manager,
-        tool_registry=tool_registry,
-        permission_service=PermissionService(),
-        context_manager=ContextManager(
-            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=PermissionService(),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
+            agent_options=AgentOptions(),
         ),
-        agent_options=AgentOptions(),
+        session_manager=session_manager,
     )
 
     result = await runner.run(
@@ -659,14 +665,18 @@ async def test_subagent_follows_parent_run_model(tmp_path) -> None:
     tool_registry = ToolRegistry()
     await tool_registry.register_provider(BuiltinToolProvider())
     runner = LocalSubagentRunner(
-        llm_client=llm_client,
-        session_manager=session_manager,
-        tool_registry=tool_registry,
-        permission_service=PermissionService(),
-        context_manager=ContextManager(
-            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=PermissionService(),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
+            agent_options=AgentOptions(),
         ),
-        agent_options=AgentOptions(),
+        session_manager=session_manager,
     )
     from camel_harness.agent.subagent import SubagentToolProvider
 

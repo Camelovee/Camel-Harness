@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { Composer } from "../features/agent/Composer";
+import { SubagentPanel } from "../features/agent/SubagentPanel";
 import { MessageList } from "../features/agent/MessageList";
 import { useAgentTurn } from "../features/agent/useAgentTurn";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
@@ -131,6 +132,8 @@ export default function App() {
               void agent.resolveApproval(requestId, approved)
             }
             onStart={start}
+            subagents={Object.values(agent.subagents)}
+            onOpenSubagent={(id) => { void agent.openSubagent(id); }}
         />
         <Composer
           key={`composer-${workspace.activeId ?? "new-chat"}`}
@@ -169,6 +172,12 @@ export default function App() {
           onResume={agent.resumeRun}
         />
       </main>
+
+      {agent.selectedSubagentId && agent.subagents[agent.selectedSubagentId] && (
+        <SubagentPanel child={agent.subagents[agent.selectedSubagentId]} workspace={chatWorkspace}
+          resolvingApprovalId={agent.resolvingApprovalId} onClose={agent.closeSubagent}
+          onResolveApproval={(requestId, approved) => { void agent.resolveApproval(requestId, approved); }} />
+      )}
 
       {(error || agent.error) && <ErrorToast message={error || agent.error!} onClose={() => { setError(null); agent.clearError(); }} />}
       {settingsOpen && (

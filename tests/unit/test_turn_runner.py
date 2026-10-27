@@ -11,6 +11,8 @@ from camel_harness.agent.session import Session
 from camel_harness.agent.session_committer import SessionCommitter
 from camel_harness.agent.state import AgentRun, StopReason
 from camel_harness.agent.tools import PermissionMode, ToolCall, ToolResult
+from camel_harness.agent.tools.permissions import ApprovalPendingListener, ApprovalResolvedListener
+from camel_harness.agent.tools.types import ToolContext
 from camel_harness.agent.turn_runner import TurnOutcome, TurnRunner
 from camel_harness.llm import (
     LlmAdapter,
@@ -77,7 +79,14 @@ class RecordingToolExecutor:
     def llm_definitions(self):
         return ()
 
-    async def execute(self, tool_call, tool_context, *, on_approval=None) -> ToolResult:
+    async def execute(
+        self,
+        tool_call: ToolCall,
+        tool_context: ToolContext,
+        *,
+        on_approval: ApprovalPendingListener | None = None,
+        on_approval_resolved: ApprovalResolvedListener | None = None,
+    ) -> ToolResult:
         self.calls.append(tool_call)
         return self.result
 

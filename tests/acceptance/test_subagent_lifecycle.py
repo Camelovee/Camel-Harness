@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from camel_harness.agent.subagent import (
     SubagentRequest,
     SubagentResult,
     SubagentType,
+    build_subagent,
 )
 from camel_harness.agent.tools import PermissionMode, PermissionService, ToolExecutor, ToolRegistry
 from camel_harness.llm import (
@@ -109,12 +111,16 @@ async def test_concurrent_roles_keep_independent_prompts_and_shared_resources(
         context_manager=context_manager,
     )
     subagent_runner = LocalSubagentRunner(
-        llm_client=llm_client,
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=permission_service,
+            context_manager=context_manager,
+            agent_options=AgentOptions(),
+        ),
         session_manager=session_manager,
-        tool_registry=tool_registry,
-        permission_service=permission_service,
-        context_manager=context_manager,
-        agent_options=AgentOptions(),
     )
     try:
         results = await asyncio.wait_for(
@@ -207,14 +213,18 @@ async def make_runner(tmp_path, adapter):
     await session_manager.create("parent", tmp_path, "父会话")
     llm_client = LlmClient(adapter)
     subagent_runner = LocalSubagentRunner(
-        llm_client=llm_client,
-        session_manager=session_manager,
-        tool_registry=ToolRegistry(),
-        permission_service=PermissionService(),
-        context_manager=ContextManager(
-            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=ToolRegistry(),
+            permission_service=PermissionService(),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
+            agent_options=AgentOptions(),
         ),
-        agent_options=AgentOptions(),
+        session_manager=session_manager,
     )
     subagent_request = SubagentRequest(
         "子任务",
@@ -305,14 +315,18 @@ async def test_child_reads_its_own_archived_result(tmp_path):
     adapter = ReadingLlm()
     llm_client = LlmClient(adapter)
     subagent_runner = LocalSubagentRunner(
-        llm_client=llm_client,
-        session_manager=session_manager,
-        tool_registry=tool_registry,
-        permission_service=PermissionService(),
-        context_manager=ContextManager(
-            system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=PermissionService(),
+            context_manager=ContextManager(
+                system_prompt="测试提示", compaction_engine=CompactionEngine(llm_client=llm_client)
+            ),
+            agent_options=AgentOptions(),
         ),
-        agent_options=AgentOptions(),
+        session_manager=session_manager,
     )
     result = await subagent_runner.run(
         SubagentRequest(
@@ -389,16 +403,20 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
     adapter = MemoryLlm()
     llm_client = LlmClient(adapter)
     subagent_runner = LocalSubagentRunner(
-        llm_client=llm_client,
-        session_manager=session_manager,
-        tool_registry=tool_registry,
-        permission_service=PermissionService(),
-        context_manager=ContextManager(
-            system_prompt="测试提示",
-            compaction_engine=CompactionEngine(llm_client=llm_client),
-            memory_manager=memory_manager,
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=PermissionService(),
+            context_manager=ContextManager(
+                system_prompt="测试提示",
+                compaction_engine=CompactionEngine(llm_client=llm_client),
+                memory_manager=memory_manager,
+            ),
+            agent_options=AgentOptions(),
         ),
-        agent_options=AgentOptions(),
+        session_manager=session_manager,
     )
     result = await subagent_runner.run(
         SubagentRequest(
@@ -414,3 +432,23 @@ async def test_child_sees_injected_memory_but_has_no_memory_tool(tmp_path, kind)
     assert result.succeeded and result.content == "仅收到注入的只读记忆"
     assert adapter.requests == 2
     assert (await memory_manager.snapshot("user")).entries == ()
+
+
+async def test_broken_progress_observer_cannot_hide_child_terminal(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from camel_harness.agent.tools.types import SubagentProgress
+
+    subagent_runner, subagent_request, session_manager = await make_runner(
+        tmp_path, ChildLlm(False)
+    )
+
+    async def broken_observer(progress: SubagentProgress) -> None:
+        raise RuntimeError("模拟观察端故障")
+
+    result = await subagent_runner.run(replace(subagent_request, on_event=broken_observer))
+    metadata = await session_manager.get(result.session_id)
+    assert metadata is not None and metadata.task_outcome is not None
+    assert metadata.task_outcome.status == "failed"
+    assert metadata.task_outcome.error == "模型失败"
+    assert not result.succeeded

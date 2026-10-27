@@ -54,6 +54,7 @@ class PermissionDecision:
 
 
 ApprovalPendingListener = Callable[[str, PermissionRequest, str], Awaitable[None]]
+ApprovalResolvedListener = Callable[[str, PermissionRequest, PermissionDecision], Awaitable[None]]
 
 
 class ApprovalHandler(ABC):

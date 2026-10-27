@@ -13,6 +13,27 @@ def _utc_now() -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskOutcome:
+    """子任务结束事实，不持有运行对象或运行事件。"""
+
+    status: str
+    stop_reason: str | None
+    error: str | None
+    finished_at: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"completed", "failed", "cancelled", "unknown"}:
+            raise ValueError("子任务终态无效")
+        if not isinstance(self.finished_at, str) or not self.finished_at:
+            raise ValueError("子任务结束时间无效")
+        if any(
+            value is not None and not isinstance(value, str)
+            for value in (self.stop_reason, self.error)
+        ):
+            raise ValueError("子任务停止原因与错误必须是字符串或空值")
+
+
+@dataclass(frozen=True, slots=True)
 class SessionMetadata:
     """一个会话唯一对应的元数据。"""
 
@@ -28,6 +49,7 @@ class SessionMetadata:
     parent_session_id: str | None = None
     parent_tool_call_id: str | None = None
     schema_version: int = SCHEMA_VERSION
+    task_outcome: TaskOutcome | None = None
 
     @classmethod
     def create(
@@ -59,6 +81,7 @@ class SessionMetadata:
         workspace: str | None = None,
         archived: bool | None = None,
         model_id: str | None = None,
+        task_outcome: TaskOutcome | None = None,
     ) -> SessionMetadata:
         """返回更新后的不可变元数据，并保留创建时间。"""
 
@@ -72,4 +95,5 @@ class SessionMetadata:
             archived=self.archived if archived is None else archived,
             model_id=self.model_id if model_id is None else model_id,
             updated_at=_utc_now(),
+            task_outcome=self.task_outcome if task_outcome is None else task_outcome,
         )
