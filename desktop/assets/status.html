@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
+    <title>Camel Harness</title>
+    <style>
+      :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+      body { margin: 0; display: grid; place-items: center; height: 100vh; background: light-dark(#f7f7f5, #19191a); color: light-dark(#252523, #eee); }
+      main { max-width: 480px; padding: 36px; text-align: center; }
+      h1 { font-size: 28px; font-weight: 600; } p { color: light-dark(#72726a, #aaa); line-height: 1.8; }
+      button { padding: 10px 22px; border: 0; border-radius: 8px; background: #a26736; color: white; font: inherit; cursor: pointer; }
+      small { display: block; margin-top: 30px; color: light-dark(#72726a, #aaa); }
+    </style>
+    <script src="status.js" defer></script>
+  </head>
+  <body><main><h1>Camel Harness</h1><p id="message">正在启动本地服务…</p><button id="retry" hidden>重新启动后端</button><small>数据保存在本机 · 你的项目，你的工作区</small></main></body>
+</html>

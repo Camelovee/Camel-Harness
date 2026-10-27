@@ -32,6 +32,7 @@ class RunService:
         self._settings_store = settings_store
         self._agents_by_session_id: dict[str, Agent] = {}
         self._lock = asyncio.Lock()
+        self._closing = False
         self._subagents_by_parent: dict[str, dict[str, dict[str, Any]]] = {}
 
     def _observe(self, session_id: str, agent_event: AgentEvent) -> None:
@@ -144,6 +145,12 @@ class RunService:
         agent = self._agents_by_session_id.get(session_id)
         return agent is not None and agent.is_running
 
+    @property
+    def active_count(self) -> int:
+        """返回当前主任务数量；子任务由其父 Agent 持有。"""
+
+        return sum(agent.is_running for agent in self._agents_by_session_id.values())
+
     @asynccontextmanager
     async def mutation(self) -> AsyncIterator[None]:
         """入口写用例共用启动锁，覆盖检查、改绑或删除的完整区间。"""
@@ -164,6 +171,7 @@ class RunService:
     async def close(self) -> None:
         """关闭所有按需创建的 Agent。"""
         async with self._lock:
+            self._closing = True
             agents = tuple(self._agents_by_session_id.values())
             self._agents_by_session_id.clear()
         await asyncio.gather(*(agent.close() for agent in agents))
@@ -171,6 +179,8 @@ class RunService:
     async def _require_agent_locked(
         self, session_id: str, model_id: str | None
     ) -> tuple[Agent, LlmModel]:
+        if self._closing:
+            raise AgentBusyError("应用正在退出，不能启动新任务")
         metadata = await self._session_manager.get(session_id)
         if metadata is None:
             raise KeyError(f"会话不存在：{session_id}")

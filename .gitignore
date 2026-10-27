@@ -11,6 +11,9 @@ dist/
 build/
 *.egg-info/
 webui/node_modules/
+desktop/node_modules/
+desktop/release/
+desktop/backend/
 webui/*.tsbuildinfo
 webui/vite.config.js
 webui/vite.config.d.ts

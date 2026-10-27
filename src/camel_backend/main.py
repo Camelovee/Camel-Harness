@@ -53,7 +53,12 @@ async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> A
     )
 
 
-def create_app(workspace: Path | None = None) -> FastAPI:
+def create_app(
+    workspace: Path | None = None,
+    *,
+    frontend_dist: Path | None = None,
+    desktop_token: str | None = None,
+) -> FastAPI:
     """创建 Web 应用；Agent 依赖在 lifespan 内启动和关闭。"""
 
     resolved_workspace = (workspace or Path.home()).resolve()
@@ -106,8 +111,10 @@ def create_app(workspace: Path | None = None) -> FastAPI:
         finally:
             await dependencies.close()
 
-    frontend_dist = Path(__file__).resolve().parents[2] / "webui" / "dist"
-    return create_api_app(dependencies, lifespan, frontend_dist)
+    frontend_dist = frontend_dist or Path(__file__).resolve().parents[2] / "webui" / "dist"
+    application = create_api_app(dependencies, lifespan, frontend_dist, desktop_token=desktop_token)
+    application.state.dependencies = dependencies
+    return application
 
 
 app = create_app()
