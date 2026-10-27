@@ -1,16 +1,20 @@
 """隔离子 Agent 委派：运行机器与可选委派工具。"""
 
-from .runner import (
-    LocalSubagentRunner,
+from .creation import build_subagent
+from .runner import LocalSubagentRunner
+from .tool import DelegateTaskTool, SubagentToolProvider
+from .types import (
+    SubagentBuilder,
     SubagentProviderFactory,
     SubagentRequest,
     SubagentResult,
     SubagentRunner,
     SubagentType,
 )
-from .tool import DelegateTaskTool, SubagentToolProvider
 
 __all__ = [
+    "build_subagent",
+    "SubagentBuilder",
     "DelegateTaskTool",
     "LocalSubagentRunner",
     "SubagentProviderFactory",

@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from camel_harness.agent.context import CompactionEngine, ContextManager
 from camel_harness.agent.events import AgentEvent
 from camel_harness.agent.session import SessionManager
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
-from camel_harness.agent.subagent import LocalSubagentRunner
+from camel_harness.agent.subagent import LocalSubagentRunner, build_subagent
 from camel_harness.agent.subagent.tool import DelegateTaskTool
 from camel_harness.agent.tools import PermissionService, ToolExecutor, ToolRegistry
 from camel_harness.agent.tools.builtin import BuiltinToolProvider
@@ -110,12 +111,16 @@ async def build_parent(
     web_approval = WebApproval(approval_timeout)
     permission_service = PermissionService(web_approval)
     subagent_runner = LocalSubagentRunner(
-        llm_client,
-        session_manager,
-        tool_registry,
-        permission_service,
-        context_manager,
-        AgentOptions(),
+        build_subagent=partial(
+            build_subagent,
+            llm_client=llm_client,
+            session_manager=session_manager,
+            tool_registry=tool_registry,
+            permission_service=permission_service,
+            context_manager=context_manager,
+            agent_options=AgentOptions(),
+        ),
+        session_manager=session_manager,
     )
     delegate = DelegateTaskTool(subagent_runner.run)
     delegate.timeout_seconds = delegation_timeout

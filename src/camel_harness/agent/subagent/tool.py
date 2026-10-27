@@ -8,7 +8,7 @@ from ..tools.types import (
     ToolResult,
     ToolRisk,
 )
-from .runner import SubagentRequest, SubagentRunner, SubagentType
+from .types import SubagentRequest, SubagentRunner, SubagentType
 
 
 class DelegateTaskTool(Tool):

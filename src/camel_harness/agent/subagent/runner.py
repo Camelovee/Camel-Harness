@@ -1,147 +1,37 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
-from pathlib import Path
-from uuid import uuid4
 
-from camel_harness.llm import AssistantMessage, LlmClient, LlmModel, TextBlock
+from camel_harness.llm import AssistantMessage, TextBlock
 
-from ..agent import Agent
-from ..context import ContextManager
-from ..context.system_prompt import SUBAGENT_SYSTEM_PROMPTS
 from ..events import AgentEndEvent, AgentEvent, agent_event_to_dict
 from ..session import SessionManager
 from ..session.types import TaskOutcome
-from ..state import AgentOptions
-from ..tools import (
-    PermissionMode,
-    PermissionService,
-    ToolExecutor,
-    ToolProvider,
-    ToolRegistry,
-)
-from ..tools.file_result_storage import FileToolResultStorage, ToolResultStorageError
-from ..tools.filesystem import ReadFileTool
-from ..tools.types import SubagentObserver
-
-_READ_ONLY_TOOLS = frozenset({"read_file", "load_skill"})
-_GENERAL_TOOLS = _READ_ONLY_TOOLS | frozenset({"write_file", "edit_file", "run_shell"})
-
-
-class SubagentType(StrEnum):
-    """内置子 Agent 的最小任务预设。"""
-
-    EXPLORE = "explore"
-    PLAN = "plan"
-    GENERAL = "general"
-
-
-@dataclass(frozen=True, slots=True)
-class SubagentRequest:
-    """父 Agent 发起的一次隔离委派。"""
-
-    task: str
-    agent_type: SubagentType
-    workspace: Path
-    permission_mode: PermissionMode
-    parent_session_id: str
-    parent_tool_call_id: str
-    model: LlmModel
-    on_event: SubagentObserver | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SubagentResult:
-    """被委派 Agent 回传给父 Agent 的最终文本。"""
-
-    session_id: str
-    content: str
-    succeeded: bool
-
-
-SubagentRunner = Callable[[SubagentRequest], Awaitable[SubagentResult]]
-SubagentProviderFactory = Callable[[SubagentRunner], ToolProvider]
+from ..tools import PermissionMode
+from ..tools.file_result_storage import ToolResultStorageError
+from .types import SubagentBuilder, SubagentRequest, SubagentResult, SubagentType
 
 
 class LocalSubagentRunner:
-    """复用 Agent 执行隔离任务，但不向子 Agent 暴露二次委派能力。"""
+    """管理子 Agent 的执行、观察、清理与终态保存，创建过程由组装层注入。"""
 
     def __init__(
         self,
-        llm_client: LlmClient,
+        build_subagent: SubagentBuilder,
         session_manager: SessionManager,
-        tool_registry: ToolRegistry,
-        permission_service: PermissionService,
-        context_manager: ContextManager,
-        agent_options: AgentOptions,
     ) -> None:
-        self._llm_client = llm_client
+        self._build_subagent = build_subagent
         self._session_manager = session_manager
-        self._tool_registry = tool_registry
-        self._permission_service = permission_service
-        self._context_manager = context_manager
-        self._agent_options = agent_options
 
     async def run(self, subagent_request: SubagentRequest) -> SubagentResult:
-        # 显式白名单默认拒绝：排除二次委派、memory 与 MCP，避免递归和越权写入。
-        allowed_tool_names = (
-            _GENERAL_TOOLS
-            if subagent_request.agent_type is SubagentType.GENERAL
-            else _READ_ONLY_TOOLS
-        )
-        session_id = f"sub-{uuid4().hex}"
+        agent = await self._build_subagent(subagent_request)
+        session_id = agent.session_id
         # 非 general 强制 PLAN，是工具白名单之外的第二道兜底。
         permission_mode = (
             subagent_request.permission_mode
             if subagent_request.agent_type is SubagentType.GENERAL
             else PermissionMode.PLAN
-        )
-        system_prompt = SUBAGENT_SYSTEM_PROMPTS[subagent_request.agent_type.value]
-        await self._session_manager.create(
-            session_id,
-            subagent_request.workspace,
-            "子 Agent",
-            parent_session_id=subagent_request.parent_session_id,
-            parent_tool_call_id=subagent_request.parent_tool_call_id,
-        )
-        session = self._session_manager.bind(session_id)
-
-        async def registered_paths(requested_id: str) -> frozenset[Path]:
-            # 结果读取只认子会话自身 ID，父会话与兄弟会话都不能借用。
-            if requested_id != session_id:
-                raise ValueError("结果读取必须使用子 Agent 自身会话")
-            return await self._session_manager.tool_result_paths(requested_id)
-
-        tool_result_storage = FileToolResultStorage(
-            self._session_manager.directory, registered_paths=registered_paths
-        )
-        selected_tool_registry = self._tool_registry.subset(allowed_tool_names)
-        tool_registry = ToolRegistry()
-        for tool_definition in selected_tool_registry.llm_definitions():
-            tool = selected_tool_registry.resolve(tool_definition.name)
-            # 内置读取工具绑定子会话，其他扩展工具保留注册者提供的实现。
-            # 其余实例与父 Agent 共享，只有读取工具需要换会话绑定。
-            tool_registry.register(
-                ReadFileTool(tool_result_storage.resolve_read_path)
-                if type(tool) is ReadFileTool
-                else tool
-            )
-        tool_executor = ToolExecutor(
-            tool_registry=tool_registry,
-            permission_service=self._permission_service,
-            normalize_result=tool_result_storage.normalize,
-        )
-        agent = Agent(
-            session=session,
-            workspace=subagent_request.workspace,
-            agent_options=self._agent_options,
-            llm_client=self._llm_client,
-            tool_executor=tool_executor,
-            context_manager=self._context_manager.with_system_prompt(system_prompt),
         )
 
         content = ""
