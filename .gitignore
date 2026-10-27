@@ -19,3 +19,6 @@ webui/vite.config.d.ts
 .mcp.json
 docs/学习/
 docs/images/webui-overview.png
+
+# 本地生成的项目 Wiki 不纳入版本控制。
+/wiki/
