@@ -21,7 +21,13 @@ class DesktopApiGuard:
         headers = Headers(scope=scope)
         if scope["path"] == "/api" or scope["path"].startswith("/api/"):
             supplied = headers.get("x-camel-desktop-token", "")
-            if not compare_digest(supplied.encode(), self._token.encode()):
+            server = scope.get("server")
+            expected_host = f"127.0.0.1:{server[1]}" if server else ""
+            if (
+                not compare_digest(supplied.encode(), self._token.encode())
+                or headers.get("host") != expected_host
+                or headers.get("origin") not in (None, f"http://{expected_host}")
+            ):
                 await JSONResponse({"detail": "桌面连接验证失败，请重新启动应用"}, 401)(
                     scope, receive, send
                 )

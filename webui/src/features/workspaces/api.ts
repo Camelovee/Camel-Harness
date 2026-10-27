@@ -1,4 +1,5 @@
 import { apiJson } from "../../shared/api";
+import "../../shared/platform";
 import type { Session, Workspace } from "../../shared/model";
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
@@ -10,6 +11,7 @@ export async function fetchDefaultWorkspace(): Promise<string> {
 }
 
 export async function chooseLocalWorkspace(): Promise<string | null> {
+  if (window.camelDesktop) return window.camelDesktop.selectDirectory();
   return (await apiJson<{ workspace: string | null }>("/workspaces/select", { method: "POST" }))
     .workspace;
 }

@@ -33,6 +33,7 @@ class RunService:
         self._agents_by_session_id: dict[str, Agent] = {}
         self._lock = asyncio.Lock()
         self._closing = False
+        self._accepting_runs = True
         self._subagents_by_parent: dict[str, dict[str, dict[str, Any]]] = {}
 
     def _observe(self, session_id: str, agent_event: AgentEvent) -> None:
@@ -151,6 +152,20 @@ class RunService:
 
         return sum(agent.is_running for agent in self._agents_by_session_id.values())
 
+    async def prepare_exit(self) -> int:
+        """在启动锁内暂停新任务并读取数量，避免退出确认期间漏掉新 Run。"""
+
+        async with self._lock:
+            self._accepting_runs = False
+            return self.active_count
+
+    async def cancel_exit(self) -> None:
+        """用户取消退出后恢复接收任务，不撤销已经开始的关闭。"""
+
+        async with self._lock:
+            if not self._closing:
+                self._accepting_runs = True
+
     @asynccontextmanager
     async def mutation(self) -> AsyncIterator[None]:
         """入口写用例共用启动锁，覆盖检查、改绑或删除的完整区间。"""
@@ -179,7 +194,7 @@ class RunService:
     async def _require_agent_locked(
         self, session_id: str, model_id: str | None
     ) -> tuple[Agent, LlmModel]:
-        if self._closing:
+        if self._closing or not self._accepting_runs:
             raise AgentBusyError("应用正在退出，不能启动新任务")
         metadata = await self._session_manager.get(session_id)
         if metadata is None:

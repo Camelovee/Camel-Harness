@@ -40,6 +40,14 @@ def create_api_app(
         async def desktop_status() -> dict[str, int]:
             return {"active_runs": dependencies.require_runs().active_count}
 
+        @application.post("/api/desktop/exit")
+        async def prepare_exit() -> dict[str, int]:
+            return {"active_runs": await dependencies.require_runs().prepare_exit()}
+
+        @application.delete("/api/desktop/exit", status_code=204)
+        async def cancel_exit() -> None:
+            await dependencies.require_runs().cancel_exit()
+
     else:
         application.add_middleware(
             CORSMiddleware,

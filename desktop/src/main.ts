@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { BackendProcess, type BackendConnection } from "./backend";
+import { prepareExit } from "./exit";
 
 let mainWindow: BrowserWindow | undefined;
 let backend: BackendProcess | undefined;
@@ -75,34 +76,28 @@ async function startBackend(): Promise<void> {
 async function requestQuit(): Promise<void> {
   if (quitPending || quitting) return;
   quitPending = true;
+  mainWindow?.setEnabled(false);
   try {
-    let activeRuns: number | null = 0;
-    if (connection) {
-      try {
-        const response = await fetch(`${connection.origin}/api/desktop/status`, {
-          headers: { "X-Camel-Desktop-Token": connection.token },
-          signal: AbortSignal.timeout(2000), redirect: "error",
-        });
-        if (!response.ok) throw new Error("无法查询任务");
-        const status = await response.json() as { active_runs: number };
-        activeRuns = status.active_runs;
-      } catch { activeRuns = null; }
-    }
-    if (activeRuns === null || activeRuns > 0) {
+    const askToStop = async (activeRuns: number | null): Promise<boolean> => {
       const result = await dialog.showMessageBox(mainWindow!, {
         type: "question", buttons: ["继续运行", "停止并退出"], defaultId: 0, cancelId: 0,
         message: activeRuns === null ? "暂时无法确认任务状态，仍要退出吗？" : `还有 ${activeRuns} 个任务正在运行，要停止并退出吗？`,
         detail: "退出会中断任务，已经完成的文件修改和命令操作不会撤销。",
       });
-      if (result.response === 0) return;
-    }
+      return result.response !== 0;
+    };
+    if (connection && !await prepareExit(connection, askToStop)) return;
     quitting = true;
-    mainWindow?.setEnabled(false);
     try { await backend?.stop(); } catch {
       await dialog.showMessageBox({ type: "warning", message: "后端未在 15 秒内完成清理，已请求强制结束。", detail: "下次启动前请核验正在修改的文件和命令结果。" });
     }
     app.quit();
-  } finally { quitPending = false; }
+  } catch {
+    await dialog.showMessageBox({ type: "warning", message: "无法恢复新任务入口，请重新启动应用。", detail: "现有任务不会自动重试。" });
+  } finally {
+    quitPending = false;
+    if (!quitting) mainWindow?.setEnabled(true);
+  }
 }
 
 function setupMenu(): void {

@@ -49,7 +49,9 @@ async def test_desktop_real_process_authentication_and_shutdown(
         assert process.stdout is not None
         ready = json.loads(await asyncio.wait_for(process.stdout.readline(), 15))
         assert ready["type"] == "ready"
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{ready['port']}") as client:
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{ready['port']}", trust_env=False
+        ) as client:
             assert (await client.get("/api/health")).status_code == 401
             denied = await client.get("/api/settings", headers={"X-Camel-Desktop-Token": "wrong"})
             assert denied.status_code == 401
@@ -57,6 +59,18 @@ async def test_desktop_real_process_authentication_and_shutdown(
             assert (await client.get("/api/health")).json() == {"status": "ok"}
             assert (await client.get("/api/desktop/status")).json() == {"active_runs": 0}
             assert (await client.get("/api/settings")).status_code == 200
+            assert (
+                await client.get("/api/health", headers={"Origin": "https://untrusted.example"})
+            ).status_code == 401
+            assert (
+                await client.get("/api/health", headers={"Host": "untrusted.example"})
+            ).status_code == 401
+            assert (await client.post("/api/desktop/exit")).json() == {"active_runs": 0}
+            denied_run = await client.post("/api/sessions/missing/runs", json={"prompt": "测试"})
+            assert denied_run.status_code == 409
+            assert (await client.delete("/api/desktop/exit")).status_code == 204
+            resumed_run = await client.post("/api/sessions/missing/runs", json={"prompt": "测试"})
+            assert resumed_run.status_code == 404
             page = await client.get("/")
             assert page.text == "<h1>Camel</h1>"
             assert "script-src 'self'" in page.headers["content-security-policy"]
