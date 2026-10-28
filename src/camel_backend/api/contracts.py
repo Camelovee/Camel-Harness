@@ -24,7 +24,7 @@ class SessionUpdateBody(BaseModel):
 
 
 class RunBody(BaseModel):
-    """浏览器发起一次 Agent Run 的 HTTP 请求体。"""
+    """桌面界面发起一次 Agent Run 的 HTTP 请求体。"""
 
     prompt: str = Field(min_length=1, max_length=100_000)
     permission_mode: Literal["default", "plan", "yolo"] = "default"
@@ -34,7 +34,7 @@ class RunBody(BaseModel):
 
 
 class ResumeBody(BaseModel):
-    """浏览器恢复一个可继续 Session 的请求体。"""
+    """桌面界面恢复一个可继续 Session 的请求体。"""
 
     permission_mode: Literal["default", "plan", "yolo"] = "default"
     max_turns: int = Field(default=20, ge=1, le=100)
@@ -50,19 +50,19 @@ class PreferencesBody(BaseModel):
 
 
 class SteerBody(BaseModel):
-    """浏览器在活动 Run 中追加的用户输入。"""
+    """桌面界面在活动 Run 中追加的用户输入。"""
 
     content: str = Field(min_length=1, max_length=100_000)
 
 
 class ResolveApprovalBody(BaseModel):
-    """浏览器提交审批决定的 HTTP 请求体。"""
+    """桌面界面提交审批决定的 HTTP 请求体。"""
 
     approved: bool
 
 
 class SessionResponse(BaseModel):
-    """浏览器可见的会话投影；字段与会话元数据一一对应，不泄露存储细节之外的信息。"""
+    """桌面界面可见的会话投影；字段与会话元数据一一对应，不泄露存储细节之外的信息。"""
 
     session_id: str
     name: str

@@ -7,7 +7,7 @@ from ..dependencies import HttpDependencies
 
 
 def create_settings_router(dependencies: HttpDependencies) -> APIRouter:
-    """提供本机模型配置与 Web 默认偏好接口。"""
+    """提供本机模型配置与 界面默认偏好接口。"""
 
     router = APIRouter()
 

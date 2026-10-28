@@ -10,16 +10,12 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-webui/node_modules/
 desktop/node_modules/
 desktop/release/
 desktop/backend/
 desktop/assets/icon.png
 desktop/assets/icon.icns
 desktop/assets/icon.ico
-webui/*.tsbuildinfo
-webui/vite.config.js
-webui/vite.config.d.ts
 
 # 本机集成配置、个人投递材料及未脱敏截图只保留在本地。
 .mcp.json

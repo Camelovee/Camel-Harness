@@ -44,11 +44,11 @@ def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
 
 ## 基本项目约束
 
-- Python 分为 `camel_harness`、`camel_backend` 两个根包；WebUI 通过 Backend 使用 Harness。
+- Python 分为 `camel_harness`、`camel_backend` 两个根包；桌面渲染界面通过 Backend 使用 Harness。
 - Harness 分为 `agent` 与 `llm`；依赖方向为 `Backend -> Agent -> LLM`，禁止反向依赖。
 - Agent 负责运行编排，LLM 负责厂商适配；会话、上下文和工具各自承担独立职责，不混入入口层逻辑。
 - 一个 Agent 绑定一个会话和工作区，同一时间只运行一个任务；运行与事件观察分离。
-- WebUI 依赖方向为 `app -> features -> shared`，feature 之间禁止直接导入。
+- 桌面渲染界面依赖方向为 `app -> features -> shared`，feature 之间禁止直接导入。
 - 默认使用 Anthropic，同时支持 OpenAI；厂商适配使用官方 Python SDK。
 - 配置统一使用 `~/.camel/config.json`，不读取环境变量或项目 `.env`；会话使用全局本地 JSONL 存储，不引入数据库。
 - 遵守工作区和权限边界；敏感操作经过审批，不自动重试已产生副作用的操作。
@@ -59,7 +59,7 @@ def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
 ## 测试与文档
 
 - 不得通过删除、跳过或弱化测试使构建通过。
-- 提交前运行 Ruff、Mypy、Pytest、Import Linter、WebUI build 和 `git diff --check`。
+- 提交前运行 Ruff、Mypy、Pytest、Import Linter、桌面测试与 build 和 `git diff --check`。
 - 版本更新在 `CHANGELOG.md` 中按版本号记录变更；架构变化更新 `docs/项目架构.md`，计划变化更新 `docs/路书.md`；方案设计放在 `docs/方案设计/`。
 
 ## Git 提交

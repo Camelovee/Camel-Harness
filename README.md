@@ -1,7 +1,7 @@
 # Camel Harness
 
 受 pi-agent 启发的轻量 Python Agent Runtime，用于在本地工作区读取、修改代码并执行任务。
-通过 Electron 桌面客户端和 WebUI 提供本地交互。
+通过 Electron 桌面客户端提供本地交互，React 渲染界面与内置 Python 后端由桌面工程统一管理。
 
 桌面预览版支持 macOS Apple Silicon、macOS Intel 和 Windows x64，内置 Python 后端。下载安装、源码运行与打包见 [桌面客户端说明](desktop/README.md)。预览安装包需由维护者完成原生平台验证后发布。
 
@@ -21,10 +21,6 @@
 
 ![Camel Harness 桌面深色主题](docs/images/desktop-dark.png)
 
-实际 WebUI 默认模型设置截图，使用临时工作区与空白配置，未调用模型。
-
-![Camel Harness 默认模型设置](docs/images/webui-settings.jpg)
-
 ## 快速启动
 
 需要 Python 3.11+、Node.js 24 和 [uv](https://docs.astral.sh/uv/)。
@@ -38,39 +34,17 @@ git clone https://github.com/Camelovee/Camel-Harness.git
 cd Camel-Harness
 ```
 
-### 后端启动
-
-在第一个终端安装 Python 依赖并启动 FastAPI：
+安装依赖并打开桌面客户端：
 
 ```bash
-uv sync --locked --extra dev --python 3.11
-uv run camel-harness-web
+uv sync --locked --extra dev --extra desktop --python 3.11
+npm ci --prefix desktop
+npm run dev --prefix desktop
 ```
 
-后端地址为 `http://127.0.0.1:8000`，API 文档为 `http://127.0.0.1:8000/docs`。后端可独立启动，无需先构建前端。
+桌面工程会构建 React 界面并自动启动后端，只需一个终端。修改界面后关闭应用并重新执行启动命令。在首次模型设置中添加模型和密钥，保存后选择项目并开始任务；配置和选择目录不会触发模型调用。
 
-### 前端启动
-
-在第二个终端进入仓库根目录，安装前端依赖并启动 Vite：
-
-```bash
-npm ci --prefix webui
-npm run dev --prefix webui -- --host 127.0.0.1
-```
-
-访问 `http://127.0.0.1:5173`；前端通过 Vite 将 `/api` 请求代理到后端 `8000` 端口，需要保持两个终端运行。在“设置 → 模型”中添加模型并填写密钥，保存后立即生效，无需重启后端。
-
-### 构建后由后端托管前端
-
-不使用 Vite 开发服务时，先安装并构建前端，再启动后端；已运行的后端需重启才能加载构建产物：
-
-```bash
-npm ci --prefix webui
-npm run build --prefix webui
-uv run camel-harness-web
-```
-
-此时访问 `http://127.0.0.1:8000` 即可使用 WebUI，无需额外启动前端服务。
+后端只作为桌面内部服务运行，通过管道接收临时凭据、监听动态本机端口，不提供独立浏览器入口、固定端口服务或公开 API 文档。安装包用户无需安装开发工具，详见 [下载安装与打包](desktop/README.md)。
 
 ## 配置与数据
 
@@ -96,7 +70,7 @@ Windows 对应 `%USERPROFILE%\.camel\config.json`；会话和用户记忆也位�
 }
 ```
 
-OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `base_url`。`default_model_id` 指定默认模型，WebUI 可在会话间随时切换。完整字段见 [配置示例](config.example.json)。每个模型单独维护上下文窗口、单次输出预算和思考模式，需按服务商能力确认。输出预算包含服务商计入的思考 Token；`provider_default` 省略思考参数，不等于关闭思考。`anthropic_adaptive` 与 `openai_reasoning` 仅适用于对应 Provider 且支持这些参数的模型。
+OpenAI 模型使用 `provider: "openai"`；兼容端点可设置该模型的 `base_url`。`default_model_id` 指定默认模型，桌面界面可在会话间随时切换。完整字段见 [配置示例](config.example.json)。每个模型单独维护上下文窗口、单次输出预算和思考模式，需按服务商能力确认。输出预算包含服务商计入的思考 Token；`provider_default` 省略思考参数，不等于关闭思考。`anthropic_adaptive` 与 `openai_reasoning` 仅适用于对应 Provider 且支持这些参数的模型。
 
 旧版全局输出预算和压缩窗口读取时迁入缺少字段的模型，已有显式值优先，保存只写新结构。`compaction` 仅维护压缩策略及摘要预算，窗口跟随当前模型；主请求与摘要额外保留 4096 Token 安全余量，压缩预留至少覆盖主输出预算与安全余量。Token 读数仍是 usage 优先、估算兜底的近似值。
 
@@ -125,19 +99,20 @@ MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制
 回归覆盖与维护原则见 [测试说明](tests/README.md)。
 
 ```bash
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
+uv run ruff check src tests scripts desktop/backend_entry.py
+uv run ruff format --check src tests scripts desktop/backend_entry.py
 uv run mypy src
 uv run pytest -q
 uv run lint-imports
-npm run test --prefix webui -- --run
-npm run build --prefix webui
+npm test --prefix desktop
+npm run build --prefix desktop
+npm run test:smoke --prefix desktop
 git diff --check
 ```
 
 ## 项目文档
 
-- [项目架构](docs/项目架构.md)：当前 WebUI、Backend 与 Harness 的职责、依赖和运行流程。
+- [项目架构](docs/项目架构.md)：当前桌面端、Backend 与 Harness 的职责、依赖和运行流程。
 - [路书](docs/路书.md)：已实现能力、待验证事项及按需扩展范围。
 - 方案设计：[上下文管理](docs/方案设计/上下文管理设计.md)、[工具安全](docs/方案设计/工具安全设计.md)、[会话](docs/方案设计/会话系统设计.md)、[上下文压缩](docs/方案设计/上下文压缩设计.md)、[记忆](docs/方案设计/记忆系统设计.md)。
 - [会话性能基准](docs/会话性能基准.md)：本机全量重放测量方式及环境限制。

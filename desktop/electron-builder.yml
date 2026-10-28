@@ -5,13 +5,14 @@ directories:
   output: release
 files:
   - dist/**/*
+  - "!dist/renderer/**/*"
   - assets/**/*
   - package.json
 extraResources:
   - from: backend/camel-backend
     to: backend
-  - from: ../webui/dist
-    to: webui
+  - from: dist/renderer
+    to: renderer
 asar: true
 electronDist: node_modules/electron/dist
 npmRebuild: false

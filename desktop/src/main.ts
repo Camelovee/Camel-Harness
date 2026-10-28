@@ -44,7 +44,7 @@ async function startBackend(): Promise<void> {
       : "uv",
     args: app.isPackaged ? [] : ["run", "--no-sync", "python", "-m", "camel_backend.desktop"],
     cwd: app.isPackaged ? app.getPath("home") : join(desktopRoot, ".."),
-    frontendDist: app.isPackaged ? join(process.resourcesPath, "webui") : join(desktopRoot, "..", "webui", "dist"),
+    frontendDist: app.isPackaged ? join(process.resourcesPath, "renderer") : join(desktopRoot, "dist", "renderer"),
   });
   backend = ownedBackend;
   ownedBackend.on("crash", () => {

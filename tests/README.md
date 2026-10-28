@@ -10,9 +10,9 @@
 | Agent 运行 | `acceptance/`、`unit/test_turn_runner.py`、`unit/test_session_committer.py` | steering、并发启动、取消与恢复、事件保存顺序、超限和截断恢复、子任务资源所有权 |
 | 文件与 Shell | `integration/test_file_mutations.py`、`test_shell_output.py`、`test_tool_storage_failure.py` | 原子替换、排队/在途取消、进程树清理及归档失败后不重复副作用 |
 | 会话与记忆 | `integration/test_session_*`、`test_jsonl_session_store.py`、`test_memory_manager.py`、`test_memory_store.py`、`test_migrate_memory.py` | 分支重放、损坏日志、跨进程竞争、记忆字符上限、权限、路径边界和旧数据迁移 |
-| Web 入口 | HTTP/SSE、设置与多会话测试，`webui/tests/` | 请求契约、断连取消、审批与并行会话隔离 |
+| 渲染界面与 HTTP | HTTP/SSE、设置与多会话测试，`desktop/tests/renderer/` | 请求契约、断连取消、审批与并行会话隔离 |
 | 桌面入口 | `integration/test_desktop_backend.py`、`desktop/tests/`、`desktop/scripts/smoke.cjs` | 临时鉴权、管道退出、确认门控、原生目录、双厂商 SDK 打包、真实窗口与未完成消息不落盘 |
-| 模块依赖 | `uv run lint-imports`、`unit/test_webui_architecture.py` | Python 单向依赖和前端 `app → features → shared` 边界 |
+| 模块依赖 | `uv run lint-imports`、`unit/test_desktop_architecture.py` | Python 单向依赖和前端 `app → features → shared` 边界 |
 
 ## 精简原则
 
@@ -27,11 +27,10 @@
 ```bash
 uv run pytest -q
 uv run lint-imports
-npm test --prefix webui
 npm test --prefix desktop
 npm run test:smoke --prefix desktop
 ```
 
 测试使用临时工作区、假模型、本地 HTTP/SSE 或本地 MCP Server，不调用真实模型 Provider。
 
-桌面窗口验收前需构建 WebUI。对打包应用的验收会移除开发工具路径，使用临时 HOME 和本机模型协议服务。三平台打包流程见 [桌面说明](../desktop/README.md)；Windows 沿用平台专项测试，并增加后端管道和打包窗口验收。
+`npm run build --prefix desktop` 统一构建主进程、预加载和 React 渲染界面，`test:smoke` 会先执行该构建。对打包应用的验收会移除开发工具路径，使用临时 HOME 和本机模型协议服务。三平台打包流程见 [桌面说明](../desktop/README.md)；Windows 沿用平台专项测试，并增加后端管道和打包窗口验收。

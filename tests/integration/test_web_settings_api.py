@@ -22,7 +22,7 @@ def _settings_store(config: Path, **fields: object) -> SettingsStore:
 
 
 async def test_settings_api_and_session_model_selection(tmp_path: Path) -> None:
-    """浏览器只能看到密钥状态，会话选择须真实写入元数据。"""
+    """桌面界面只能看到密钥状态，会话选择须真实写入元数据。"""
 
     path = tmp_path / "config.json"
     settings_store = _settings_store(

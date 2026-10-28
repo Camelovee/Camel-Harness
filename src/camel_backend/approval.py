@@ -20,7 +20,7 @@ class _Pending:
 
 
 class WebApproval(ApprovalHandler):
-    """把需要确认的工具调用挂起，交给浏览器审批后再恢复。"""
+    """把需要确认的工具调用挂起，交给桌面界面审批后再恢复。"""
 
     def __init__(self, timeout_seconds: float = 300) -> None:
         self._timeout_seconds = timeout_seconds

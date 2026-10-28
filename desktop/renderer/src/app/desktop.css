@@ -1,0 +1,93 @@
+/* 桌面布局集中在入口层；原生桥接不进入 feature 的运行状态。 */
+body { font-size: 14px; }
+.app-shell { background: var(--surface); }
+.app-shell.sidebar-collapsed { --sidebar-width: 0px; }
+.sidebar-container { grid-column: 1; min-height: 0; min-width: 0; }
+.main-area { grid-column: 2; }
+.sidebar { padding: 22px 14px 14px; background: var(--surface-subtle); }
+.brand-logo { box-shadow: none; background: transparent; font-size: 23px; }
+.brand-wordmark strong { font-size: 16px; letter-spacing: -.03em; }
+.brand-wordmark span { font-size: 9px; }
+.new-chat { margin-top: 10px; height: 40px; box-shadow: none; font-size: 13px; }
+.new-workspace { background: transparent; height: 36px; font-size: 12px; }
+.new-chat:hover, .primary-button:hover { filter: brightness(.95); }
+.workspace-heading { margin-top: 28px; font-size: 11px; }
+.workspace-copy strong { font-size: 13px; }
+.session-copy strong { font-size: 12px; }
+.session-copy small, .workspace-copy small { font-size: 11px; }
+.workspace-group.active { background: transparent; }
+.session-item.active { background: var(--accent-soft); color: var(--text); box-shadow: none; }
+.session-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.settings-entry { font-size: 13px; }
+.sidebar-note { font-size: 10px; }
+.main-header { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 14px; padding: 0 24px; }
+.sidebar-toggle { height: 32px; width: 32px; border-radius: 6px; background: transparent; color: var(--secondary); font-size: 18px; }
+.sidebar-toggle:hover { background: var(--surface-subtle); color: var(--text); }
+.main-header-title { font-size: 14px; }
+.main-header-sub { font-size: 11px; }
+.online-dot { display: none; }
+.usage-disclosure { position: relative; color: var(--secondary); font-size: 12px; }
+.usage-disclosure > summary { cursor: pointer; padding: 8px; list-style-position: inside; }
+.usage-summary { position: absolute; right: 0; top: 34px; z-index: 5; display: grid; gap: 8px; min-width: 220px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 24px var(--shadow-color); }
+.usage-summary span { border: 0; background: transparent; font-size: 12px; }
+.messages-inner { max-width: 800px; width: calc(100% - 64px); padding-top: 30px; }
+.message { margin-bottom: 30px; }
+.message-content, .markdown-body { font-size: 15px; line-height: 1.85; overflow-wrap: anywhere; }
+.message.user .message-content { background: var(--surface-subtle); color: var(--text); border-radius: 14px; padding: 12px 18px; }
+.message-meta { font-size: 11px; color: var(--muted); }
+.welcome { padding: clamp(35px, 9vh, 100px) 0 45px; }
+.welcome h1 { color: var(--text); font-size: 32px; font-weight: 550; letter-spacing: -.04em; }
+.welcome-icon { background: transparent; box-shadow: none; font-size: 38px; }
+.welcome p { font-size: 14px; line-height: 1.8; }
+.welcome-action { font-size: 12px; background: var(--surface); color: var(--secondary); border-color: var(--border); }
+.composer-area { padding-top: 12px; border-top: 0; background: var(--surface); }
+.composer-box { max-width: 800px; width: calc(100% - 64px); border-radius: 16px; padding: 16px 18px 12px; border: 1px solid var(--border); background: var(--surface); box-shadow: 0 4px 18px var(--shadow-color); }
+.composer-box:focus-within { border-color: var(--accent); }
+.composer-box textarea { color: var(--text); font-size: 14px; line-height: 1.7; min-height: 68px; }
+.composer-toolbar { flex-wrap: wrap; gap: 8px; }
+.composer-right { flex-wrap: wrap; gap: 7px; }
+.composer-right .model-select, .composer-right select { color: var(--secondary); background: var(--surface-subtle); font-size: 12px; border-color: var(--border); }
+.composer-directory { max-width: 32%; font-size: 12px; }
+.composer-hint { max-width: 800px; width: calc(100% - 64px); font-size: 11px; }
+.tool-message { border-color: var(--border); background: var(--surface-subtle); }
+.tool-message summary, .thinking-message summary { font-size: 12px; }
+.thinking-shimmer { background-image: linear-gradient(100deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%); }
+.tool-detail { font-size: 12px; line-height: 1.7; }
+.tool-open { margin: 4px 12px 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--secondary); font-size: 12px; }
+.approval-message { background: var(--warning-bg); border-color: var(--warning-border); }
+.approval-message-head strong, .approval-message p { font-size: 13px; }
+.approval-message-actions button { font-size: 12px; padding: 8px 13px; }
+.settings-header { padding: 23px; }
+.settings-field { font-size: 12px; }
+.settings-field input, .settings-field select { font-size: 13px; min-height: 39px; }
+.settings-nav-item { font-size: 13px; font-weight: 500; }
+.settings-nav-item.active { background: var(--accent-soft); color: var(--text); }
+.settings-model-info strong, .settings-section-heading h3, .settings-toggle-row strong { font-size: 13px; }
+.settings-model-info small, .settings-footnote, .settings-toggle-row small { font-size: 11px; }
+.settings-model-actions button { font-size: 12px; }
+.shortcut-list { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding-top: 24px; margin-top: 28px; border-top: 1px solid var(--border); color: var(--secondary); font-size: 13px; }
+.shortcut-list dd { margin: 0; color: var(--muted); }
+.model-onboarding { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 24px 32px 0; padding: 18px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-subtle); }
+.model-onboarding p { color: var(--secondary); margin: 6px 0 0; font-size: 13px; }
+.primary-button { background: var(--accent); color: var(--on-accent); }
+.detail-panel { position: relative; grid-column: 3; width: 360px; height: 100%; min-height: 0; z-index: 10; display: flex; flex-direction: column; background: var(--surface); color: var(--text); border-left: 1px solid var(--border); box-shadow: none; }
+.app-shell:has(.detail-panel) { grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 360px; }
+.subagent-panel-head { border-color: var(--border); padding: 20px; }
+.subagent-panel-head button { color: var(--secondary); }
+.subagent-panel .messages-inner { padding: 16px 0; width: calc(100% - 32px); }
+.tool-panel-content { padding: 20px; overflow: auto; font-size: 12px; }
+.tool-panel-content pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.tool-panel-content p { color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 1179px) {
+  .app-shell:has(.detail-panel) { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
+  .detail-panel { position: fixed; top: 0; right: 0; width: min(420px, 90vw); box-shadow: -12px 0 40px var(--shadow-color); }
+  .messages-inner, .composer-box, .composer-hint { width: calc(100% - 40px); }
+  .composer-directory { max-width: 100%; }
+  .composer-right { margin-left: auto; }
+}
+@media (max-width: 700px) {
+  .app-shell { --sidebar-width: 220px; }
+  .app-shell.sidebar-collapsed { --sidebar-width: 0px; }
+  .main-header { gap: 8px; padding: 0 12px; }
+  .model-onboarding { margin: 12px; padding: 14px; flex-wrap: wrap; }
+}

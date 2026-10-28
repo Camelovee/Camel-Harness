@@ -33,9 +33,6 @@ dev = [
   "ruff>=0.15,<1",
 ]
 
-[project.scripts]
-camel-harness-web = "camel_backend.main:main"
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/camel_harness", "src/camel_backend"]
 

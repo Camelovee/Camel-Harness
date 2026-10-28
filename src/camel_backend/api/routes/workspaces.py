@@ -7,7 +7,7 @@ from ..dependencies import HttpDependencies
 
 
 def create_workspaces_router(dependencies: HttpDependencies) -> APIRouter:
-    """创建工作区查询与本机目录选择路由。"""
+    """创建工作区查询路由；原生目录选择由 Electron 承担。"""
 
     router = APIRouter()
 
@@ -30,11 +30,6 @@ def create_workspaces_router(dependencies: HttpDependencies) -> APIRouter:
         """返回新对话使用的本地默认工作目录。"""
 
         return {"workspace": str(dependencies.workspace)}
-
-    @router.post("/workspaces/select")
-    async def select_workspace() -> dict[str, str | None]:
-        result = await dependencies.select_workspace()
-        return {"workspace": str(result) if result else None}
 
     return router
 

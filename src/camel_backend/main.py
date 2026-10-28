@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import uvicorn
 from fastapi import FastAPI
 
 from camel_backend.api import (
@@ -15,7 +14,6 @@ from camel_backend.api import (
 from camel_backend.approval import WebApproval
 from camel_backend.orchestration import RunService, SessionService, SettingsService
 from camel_backend.settings_store import SettingsStore
-from camel_backend.workspace import NativeWorkspacePicker
 from camel_harness.agent import Agent
 from camel_harness.agent.config import AgentSettings
 from camel_harness.agent.memory import MemoryManager
@@ -31,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> AgentExtensions:
-    """Web 入口注入的本地可选能力：Skill、Memory、MCP 与子 Agent 委派。"""
+    """桌面入口注入的本地可选能力：Skill、Memory、MCP 与子 Agent 委派。"""
 
     skills = Skills(workspace)
     memory_manager = (
@@ -56,10 +54,10 @@ async def _local_extensions(agent_settings: AgentSettings, workspace: Path) -> A
 def create_app(
     workspace: Path | None = None,
     *,
-    frontend_dist: Path | None = None,
-    desktop_token: str | None = None,
+    frontend_dist: Path,
+    desktop_token: str,
 ) -> FastAPI:
-    """创建 Web 应用；Agent 依赖在 lifespan 内启动和关闭。"""
+    """创建桌面内部服务；Agent 依赖在 lifespan 内启动和关闭。"""
 
     resolved_workspace = (workspace or Path.home()).resolve()
     dependencies = HttpDependencies(resolved_workspace)
@@ -70,7 +68,6 @@ def create_app(
         web_approval = WebApproval()
         session_manager = build_session_manager(agent_settings)
         settings_store = SettingsStore()
-        workspace_picker = NativeWorkspacePicker()
 
         async def create_session_agent(
             session_id: str, agent_workspace: Path, agent_settings: AgentSettings
@@ -104,30 +101,12 @@ def create_app(
             ),
             settings_store=settings_store,
             web_approval=web_approval,
-            select_workspace=workspace_picker.select,
         )
         try:
             yield
         finally:
             await dependencies.close()
 
-    frontend_dist = frontend_dist or Path(__file__).resolve().parents[2] / "webui" / "dist"
     application = create_api_app(dependencies, lifespan, frontend_dist, desktop_token=desktop_token)
     application.state.dependencies = dependencies
     return application
-
-
-app = create_app()
-
-
-def main() -> None:
-    """启动本地 FastAPI Web Server。"""
-
-    print(f"Camel Harness Web｜workspace={Path.home().resolve()}")
-    uvicorn.run(
-        "camel_backend.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=False,
-        log_level="info",
-    )

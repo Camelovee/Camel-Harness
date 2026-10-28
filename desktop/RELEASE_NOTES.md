@@ -1,5 +1,6 @@
 Camel Harness 桌面预览版，内置 Python 后端，无需另装 Python、Node.js 或 uv。
 
+- 仅提供桌面产品入口，React 界面与 Electron 统一构建；不再提供独立浏览器入口。
 - 提供 macOS Apple Silicon、macOS Intel、Windows x64 安装包。
 - 支持工作区、会话、流式对话、工具审批、子任务、停止与恢复。
 - 新增明暗主题、可收起侧栏、工具详情、首次配置引导及快捷键。

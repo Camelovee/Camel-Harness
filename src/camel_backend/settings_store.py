@@ -37,7 +37,7 @@ class SettingsStore:
             return self._load().resolve_model(model_id)
 
     async def snapshot(self) -> dict[str, object]:
-        """返回不包含任何密钥内容的浏览器设置。"""
+        """返回不包含任何密钥内容的桌面界面设置。"""
 
         async with self._lock:
             agent_settings = self._load()

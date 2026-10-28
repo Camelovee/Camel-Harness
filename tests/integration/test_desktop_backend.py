@@ -86,6 +86,9 @@ async def test_desktop_real_process_authentication_and_shutdown(
             assert page.text == "<h1>Camel</h1>"
             assert "script-src 'self'" in page.headers["content-security-policy"]
             assert (await client.get("/docs")).status_code == 404
+            assert (await client.get("/openapi.json")).status_code == 404
+            assert (await client.get("/api/workspaces/select")).status_code == 404
+            assert (await client.post("/api/workspaces/select")).status_code == 405
         assert process.stdin is not None
         if not close_pipe:
             process.stdin.write(b'{"type":"shutdown"}\n')

@@ -1,6 +1,6 @@
 # Camel Harness 桌面预览版
 
-Electron 客户端复用 React WebUI 与 Python/FastAPI 后端，提供 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。
+Electron 是唯一产品入口，工程内包含 React 渲染界面和 Python/FastAPI 后端集成，提供 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。
 
 ## 下载安装
 
@@ -37,18 +37,15 @@ Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Win
 
 ```bash
 uv sync --locked --extra dev --extra desktop --python 3.11
-npm ci --prefix webui
 npm ci --prefix desktop
-npm run build --prefix webui
 npm run dev --prefix desktop
 ```
 
-开发模式自动启动仓库内后端，不需要另外打开后端终端。修改 React 后重新构建 WebUI 并重开桌面窗口；浏览器开发仍使用根目录 README 的 Vite 流程。
+开发模式先构建主进程、预加载与 React 渲染界面，再自动启动仓库内后端。修改代码后关闭应用并重新执行启动命令。`desktop/renderer/src/` 保持 `app → features → shared` 分层，`desktop/tests/renderer/` 维护界面回归；全部依赖、类型检查和构建使用同一份 npm 清单与锁文件，不再保留独立 Web 工程或浏览器启动方式。
 
 在目标操作系统和 CPU 架构上生成安装包：
 
 ```bash
-npm run build --prefix webui
 uv run python scripts/build_desktop_backend.py
 npm run dist --prefix desktop -- --publish never
 uv run python scripts/desktop_checksums.py desktop/release
@@ -68,7 +65,7 @@ node desktop/scripts/smoke.cjs "desktop/release/win-unpacked/Camel Harness.exe"
 
 ## GitHub 发布
 
-2026-10-27 本机验证：Apple Silicon Mac 已完成独立后端构建、DMG 生成、只读挂载、复制到临时安装目录，以及移除开发工具路径后的真实应用验收。Anthropic/OpenAI 均使用本机协议替身，审批写入、主题、详情缩放、取消退出、确认退出和未完成响应不落盘通过。Windows、Intel Mac 的原生构建及实际安装尚待对应平台验证，不能视为已通过。
+2026-10-28 桌面工程收敛后本机验证：Apple Silicon Mac 已完成独立后端构建、DMG 生成、只读挂载、复制到带中文和空格的临时安装目录，以及移除开发工具路径后的真实应用验收。Anthropic/OpenAI 均使用本机协议替身，审批写入、主题、详情缩放、取消退出、确认退出和未完成响应不落盘通过。Windows、Intel Mac 的原生构建及实际安装尚待对应平台验证，不能视为已通过。
 
 Desktop 工作流在三个原生 runner 上检查、打包并验证真实应用。PR 和手动运行只上传 Actions 产物。维护者推送与工程版本一致的 `v<版本>` 标签后，工作流汇总安装包和摘要，创建 **draft + prerelease**，等待维护者检查后发布，不自动改写已发布的 Release。
 

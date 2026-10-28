@@ -7,7 +7,6 @@ on:
   pull_request:
     paths:
       - "desktop/**"
-      - "webui/**"
       - "src/**"
       - "scripts/*desktop*"
       - "pyproject.toml"
@@ -45,13 +44,10 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: |
-            webui/package-lock.json
-            desktop/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
       - name: 安装锁定依赖
         run: |
           uv sync --locked --extra dev --extra desktop --python 3.11
-          npm ci --prefix webui
           npm ci --prefix desktop
       - name: 检查原生架构与版本
         shell: bash
@@ -75,7 +71,6 @@ jobs:
           uv run pytest -q
           tests/unit/test_platform_io.py
           tests/unit/test_windows_shell.py
-          tests/unit/test_workspace_picker.py
           tests/integration/test_platform_compatibility.py
           tests/integration/test_shell_output.py
           tests/integration/test_tool_storage_failure.py
@@ -89,8 +84,6 @@ jobs:
           tests/unit/test_web_settings.py::test_theme_preferences_preserve_models_and_runtime_settings
       - name: 前端与桌面检查
         run: |
-          npm test --prefix webui
-          npm run build --prefix webui
           npm test --prefix desktop
           npm run build --prefix desktop
       - name: 打包内置后端
