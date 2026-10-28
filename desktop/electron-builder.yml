@@ -9,7 +9,7 @@ files:
   - assets/**/*
   - package.json
 extraResources:
-  - from: backend/camel-backend
+  - from: build/backend/camel-backend
     to: backend
   - from: dist/renderer
     to: renderer

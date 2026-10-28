@@ -43,6 +43,17 @@ npm run dev --prefix desktop
 
 开发模式先构建主进程、预加载与 React 渲染界面，再自动启动仓库内后端。修改代码后关闭应用并重新执行启动命令。`desktop/renderer/src/` 保持 `app → features → shared` 分层，`desktop/tests/renderer/` 维护界面回归；全部依赖、类型检查和构建使用同一份 npm 清单与锁文件，不再保留独立 Web 工程或浏览器启动方式。
 
+源码与产物分布如下，所有生成目录均不纳入 Git：
+
+| 位置 | 内容 |
+| --- | --- |
+| `src/` | Electron 主进程、预加载与后端进程管理 |
+| `bridge.d.ts` | 主进程、预加载与渲染界面共用的桥接类型，无运行时代码 |
+| `renderer/src/` | React 界面，设置状态由 `useSettings` 管理 |
+| `assets/`、`scripts/`、`tests/` | 应用静态资源、构建/验收脚本与回归测试 |
+| `build/backend/`、`build/pyinstaller/` | 独立后端产物与 PyInstaller 中间文件 |
+| `dist/`、`release/` | 编译后的桌面代码与界面、可分发安装包 |
+
 在目标操作系统和 CPU 架构上生成安装包：
 
 ```bash

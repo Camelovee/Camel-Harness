@@ -46,7 +46,7 @@ it("原生菜单的四种操作会分发到当前回调，重新渲染后使用�
 it("桌面菜单事件只注册一次，卸载取消订阅", () => {
   const unsubscribe = vi.fn();
   const onAction = vi.fn(() => unsubscribe);
-  window.camelDesktop = { selectDirectory: vi.fn(), appInfo: vi.fn(), onAction };
+  window.camelDesktop = { ...window.camelDesktop, selectDirectory: vi.fn(), appInfo: vi.fn(), onAction };
   const { rerender, unmount } = renderHook(() => useAppShortcuts({ "new-chat": vi.fn(), "open-project": vi.fn(), settings: vi.fn(), "toggle-sidebar": vi.fn() }));
   rerender();
   expect(onAction).toHaveBeenCalledTimes(1);

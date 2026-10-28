@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuIte
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import type { DesktopAction } from "../bridge";
 import { BackendProcess, type BackendConnection } from "./backend";
 import { prepareExit } from "./exit";
 
@@ -101,7 +102,7 @@ async function requestQuit(): Promise<void> {
 }
 
 function setupMenu(): void {
-  const action = (name: string) => () => mainWindow?.webContents.send("desktop:action", name);
+  const action = (name: DesktopAction) => () => mainWindow?.webContents.send("desktop:action", name);
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
     { label: "文件", submenu: [

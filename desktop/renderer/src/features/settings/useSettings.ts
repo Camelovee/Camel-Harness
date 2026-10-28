@@ -4,7 +4,7 @@ import type { ModelInput, ThemePreference, WebSettings } from "../../shared/mode
 import { errorText } from "../../shared/presentation";
 import { addModel, deleteModel, fetchSettings, savePreferences, updateModel } from "./api";
 
-export function useWebSettings(onError: (message: string) => void) {
+export function useSettings(onError: (message: string) => void) {
   const [settings, setSettings] = useState<WebSettings | null>(null);
   const [saving, setSaving] = useState(false);
 

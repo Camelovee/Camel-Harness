@@ -9,7 +9,7 @@ it("原生目录返回后，等待会话创建完成才解除发送保护", asyn
   let finishCreation!: (response: Response) => void;
   let created = false;
   const session = { session_id: "new", workspace: "/中文 项目", name: "新对话", message_count: 0, model_id: null, updated_at: "", archived: false };
-  window.camelDesktop = { selectDirectory: vi.fn(async () => session.workspace), appInfo: vi.fn(), onAction: vi.fn() };
+  window.camelDesktop = { ...window.camelDesktop, selectDirectory: vi.fn(async () => session.workspace), appInfo: vi.fn(), onAction: vi.fn() };
   const request = vi.fn(async (path: string, init?: RequestInit) => {
     const json = (body: unknown) => new Response(JSON.stringify(body));
     if (path === "/api/workspaces/default") return json({ workspace: "/default" });

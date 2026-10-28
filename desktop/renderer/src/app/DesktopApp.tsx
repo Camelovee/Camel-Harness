@@ -6,7 +6,7 @@ import { MessageList } from "../features/agent/MessageList";
 import { useAgentTurn } from "../features/agent/useAgentTurn";
 import { ToolDetailsPanel } from "../features/agent/ToolDetailsPanel";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
-import { useWebSettings } from "../features/settings/useWebSettings";
+import { useSettings } from "../features/settings/useSettings";
 import { useAppearance } from "../features/settings/useAppearance";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
 import { useWorkspaceSessions } from "../features/workspaces/useWorkspaceSessions";
@@ -33,13 +33,13 @@ export default function DesktopApp() {
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const workspace = useWorkspaceSessions({ onError, onStatus });
-  const webSettings = useWebSettings(onError);
-  useAppearance(webSettings.settings?.theme);
+  const settingsState = useSettings(onError);
+  useAppearance(settingsState.settings?.theme);
   useEffect(() => {
-    if (!webSettings.settings || firstSettingsLoaded.current) return;
+    if (!settingsState.settings || firstSettingsLoaded.current) return;
     firstSettingsLoaded.current = true;
-    if (!webSettings.settings.models.some((model) => model.configured)) setSettingsOpen(true);
-  }, [webSettings.settings]);
+    if (!settingsState.settings.models.some((model) => model.configured)) setSettingsOpen(true);
+  }, [settingsState.settings]);
   const chatWorkspace = workspace.activeSession?.workspace ?? draftWorkspace ?? workspace.activeWorkspace ?? workspace.defaultWorkspace;
   const agent = useAgentTurn({
     activeId: workspace.activeId,
@@ -93,10 +93,10 @@ export default function DesktopApp() {
     .then((session) => workspace.refresh(session.workspace, session.session_id))
     .catch((reason: unknown) => onError(reason instanceof Error ? reason.message : "创建会话失败"));
 
-  const models = webSettings.settings?.models ?? [];
+  const models = settingsState.settings?.models ?? [];
   const selectedModel =
     models.find((model) => model.id === (workspace.activeSession?.model_id ?? draftModelId) && model.configured) ??
-    models.find((model) => model.id === webSettings.settings?.default_model_id && model.configured) ??
+    models.find((model) => model.id === settingsState.settings?.default_model_id && model.configured) ??
     models.find((model) => model.configured);
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -158,7 +158,7 @@ export default function DesktopApp() {
           </details>
         </header>
 
-        {webSettings.settings && !selectedModel && <div className="model-onboarding" role="region" aria-label="开始使用">
+        {settingsState.settings && !selectedModel && <div className="model-onboarding" role="region" aria-label="开始使用">
           <div><strong>连接模型，开始协作</strong><p>配置你的模型服务，再选择一个本地项目。</p></div>
           <button className="primary-button" onClick={() => setSettingsOpen(true)}>配置模型</button>
         </div>}
@@ -181,7 +181,7 @@ export default function DesktopApp() {
         />
         <Composer
           key={`composer-${workspace.activeId ?? "new-chat"}`}
-          active={!workspace.selectingWorkspace && webSettings.settings !== null}
+          active={!workspace.selectingWorkspace && settingsState.settings !== null}
           activeWorkspace={chatWorkspace}
           running={agent.running}
           switchingModel={workspace.switchingModel}
@@ -228,14 +228,14 @@ export default function DesktopApp() {
       {(error || agent.error) && <ErrorToast message={error || agent.error!} onClose={() => { setError(null); agent.clearError(); }} />}
       {settingsOpen && (
         <SettingsDialog
-          settings={webSettings.settings}
-          saving={webSettings.saving}
+          settings={settingsState.settings}
+          saving={settingsState.saving}
           onClose={closeSettings}
-          onSavePreferences={webSettings.savePreferences}
-          onSaveTheme={webSettings.saveTheme}
-          onSaveModel={webSettings.saveModel}
+          onSavePreferences={settingsState.savePreferences}
+          onSaveTheme={settingsState.saveTheme}
+          onSaveModel={settingsState.saveModel}
           onDeleteModel={async (modelId) => {
-            const saved = await webSettings.deleteModel(modelId);
+            const saved = await settingsState.deleteModel(modelId);
             if (saved) {
               try {
                 await workspace.refresh();
