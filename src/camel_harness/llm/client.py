@@ -125,8 +125,6 @@ class LlmClient:
                         break
                     emitted = True
                     yield llm_event
-            except asyncio.CancelledError:
-                raise
             except Exception as exc:
                 failure = StreamFailed(str(exc), isinstance(exc, ConnectionError | TimeoutError))
             finally:

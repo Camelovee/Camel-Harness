@@ -62,17 +62,17 @@ class RunShellTool(Tool):
 
         return {
             "working_directory": str(tool_context.workspace.resolve()),
-            "command": _build_shell_command(str(tool_call.arguments["command"])),
+            "command": _build_shell_command(tool_call.arguments["command"]),
         }
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        command = str(tool_call.arguments["command"])
+        command = tool_call.arguments["command"]
         # 启发式黑名单只拦常见危险命令，不是安全边界；命中即视为未执行。
         if any(pattern.search(command) for pattern in _DANGEROUS_SHELL_PATTERNS):
             return ToolResult(
                 tool_call.call_id, tool_call.name, "危险命令已被安全规则阻止", is_error=True
             ).with_execution_status(ToolExecutionStatus.NOT_EXECUTED)
-        timeout = float(tool_call.arguments.get("timeout_seconds", 30))
+        timeout = tool_call.arguments.get("timeout_seconds", 30)
         # 输出走临时文件，避免管道背压把父子进程一起卡死，也便于归档后复读。
         with tempfile.TemporaryFile() as output_file:
             output = cast(BinaryIO, output_file)
@@ -128,7 +128,7 @@ class RunShellTool(Tool):
                 is_error=process.returncode != 0,
                 metadata={
                     **tool_result.metadata,
-                    "argv_preview": _command_preview(str(tool_call.arguments["command"])),
+                    "argv_preview": _command_preview(tool_call.arguments["command"]),
                     "exit_code": process.returncode,
                 },
             ).with_execution_status(

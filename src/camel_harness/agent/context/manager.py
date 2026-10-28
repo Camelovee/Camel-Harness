@@ -95,7 +95,15 @@ class ContextManager:
             snapshot = await session.context_snapshot()
         except Exception as exc:
             raise ContextSessionError(str(exc)) from exc
-        system_prompt = await self._build_system_prompt(workspace)
+        try:
+            dynamic_context = await self.build_system_context(workspace)
+        except Exception as exc:
+            raise ContextResourceError(str(exc)) from exc
+        system_prompt = (
+            f"{self._system_prompt}\n\n{dynamic_context}"
+            if dynamic_context
+            else self._system_prompt
+        )
         compacted = await self.compact_if_needed(
             snapshot,
             model,
@@ -106,34 +114,17 @@ class ContextManager:
         )
         if compacted is not None:
             # 压缩计划必须由 Session 在锁内校验 revision 后再提交，不能直接改内存快照。
-            snapshot = await self._commit_compaction(session, snapshot, compacted)
+            try:
+                snapshot = await session.compact(
+                    compacted.summary,
+                    compacted.first_kept_entry_id,
+                    snapshot=snapshot,
+                    tokens_before=compacted.tokens_before,
+                    usage=compacted.usage,
+                )
+            except Exception as exc:
+                raise ContextSessionError(str(exc)) from exc
         return PreparedContext(system_prompt, snapshot.messages)
-
-    async def _build_system_prompt(self, workspace: Path) -> str:
-        """始终从基础提示组装资源，保留独立的资源故障边界。"""
-        try:
-            dynamic_context = await self.build_system_context(workspace)
-        except Exception as exc:
-            raise ContextResourceError(str(exc)) from exc
-        if dynamic_context:
-            return f"{self._system_prompt}\n\n{dynamic_context}"
-        return self._system_prompt
-
-    @staticmethod
-    async def _commit_compaction(
-        session: Session, snapshot: ContextSnapshot, compacted: CompactionResult
-    ) -> ContextSnapshot:
-        """提交一致性和在途取消语义仍由 Session 保证。"""
-        try:
-            return await session.compact(
-                compacted.summary,
-                compacted.first_kept_entry_id,
-                snapshot=snapshot,
-                tokens_before=compacted.tokens_before,
-                usage=compacted.usage,
-            )
-        except Exception as exc:
-            raise ContextSessionError(str(exc)) from exc
 
     async def build_system_context(self, workspace: Path) -> str:
         """组装项目规则、Skill 索引与完整的有界 Memory。"""

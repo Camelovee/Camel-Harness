@@ -8,8 +8,6 @@ from ..memory import (
     MemoryStorageError,
     MemoryTarget,
     MemoryValidationError,
-    memory_action,
-    memory_target,
 )
 from .registry import ToolProvider
 from .types import Tool, ToolCall, ToolContext, ToolNotExecutedError, ToolResult, ToolRisk
@@ -43,6 +41,11 @@ class MemoryTool(Tool):
             "old_text": {"type": "string", "minLength": 1},
         },
         "required": ["action", "target"],
+        "oneOf": [
+            {"properties": {"action": {"const": "add"}}, "required": ["content"]},
+            {"properties": {"action": {"const": "replace"}}, "required": ["content", "old_text"]},
+            {"properties": {"action": {"const": "remove"}}, "required": ["old_text"]},
+        ],
         "additionalProperties": False,
     }
 
@@ -51,47 +54,27 @@ class MemoryTool(Tool):
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
         arguments = tool_call.arguments
-        try:
-            action = memory_action(arguments["action"])
-            target = memory_target(arguments["target"])
-        except (KeyError, MemoryValidationError) as exc:
-            # 参数问题发生在任何写入之前，可安全标记为未执行。
-            raise ToolNotExecutedError(f"记忆参数无效，未执行修改：{exc}") from exc
-        content = arguments.get("content")
-        old_text = arguments.get("old_text")
-        if action in ("add", "replace") and not isinstance(content, str):
-            raise ToolNotExecutedError("该记忆操作必须提供 content，未执行修改")
-        if action in ("replace", "remove") and not isinstance(old_text, str):
-            raise ToolNotExecutedError("该记忆操作必须提供 old_text，未执行修改")
+        action = arguments["action"]
+        target: MemoryTarget = arguments["target"]
         try:
             if action == "add":
-                assert isinstance(content, str)
-                mutation = await self._memory_manager.add(target, content)
+                mutation = await self._memory_manager.add(target, arguments["content"])
             elif action == "replace":
-                assert isinstance(old_text, str) and isinstance(content, str)
-                mutation = await self._memory_manager.replace(target, old_text, content)
+                mutation = await self._memory_manager.replace(
+                    target, arguments["old_text"], arguments["content"]
+                )
             else:
-                assert isinstance(old_text, str)
-                mutation = await self._memory_manager.remove(target, old_text)
+                mutation = await self._memory_manager.remove(target, arguments["old_text"])
         except MemoryValidationError as exc:
             # 校验与匹配失败都没有写盘，归为未执行，模型可安全调整后重试。
             raise ToolNotExecutedError(str(exc)) from exc
         except MemoryStorageError as exc:
             # 存储故障可能是“已提交但确认失败”；抛普通异常让 executor 按 WRITE 判 UNKNOWN。
-            raise RuntimeError(await self._storage_failure_message(target, exc)) from exc
-        return ToolResult(tool_call.call_id, tool_call.name, _render_mutation(mutation))
-
-    async def _storage_failure_message(
-        self, target: MemoryTarget, error: MemoryStorageError
-    ) -> str:
-        """存储故障附上容错读取结果，供模型在 unknown 状态下核验。"""
-
-        details = str(error)
-        try:
             document = await self._memory_manager.snapshot(target, tolerant=True)
-        except Exception:
-            return details
-        return f"{details}\n当前记忆（容错读取，可能不是最新）：{document.text or '（空）'}"
+            raise RuntimeError(
+                f"{exc}\n当前记忆（容错读取，可能不是最新）：{document.text or '（空）'}"
+            ) from exc
+        return ToolResult(tool_call.call_id, tool_call.name, _render_mutation(mutation))
 
 
 class MemoryToolProvider(ToolProvider):

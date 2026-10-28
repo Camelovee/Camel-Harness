@@ -355,3 +355,20 @@ async def test_unknown_result_survives_stream_archive_and_session_reload(tmp_pat
         .startswith(UNKNOWN_EXECUTION_NOTICE)
     )
     assert tool.calls == 1
+
+
+async def test_pre_execution_programming_error_propagates_without_starting_tool(
+    tmp_path: Path,
+) -> None:
+    class BrokenContextTool(WriteFileTool):
+        def approval_context(
+            self, tool_call: ToolCall, tool_context: ToolContext
+        ) -> dict[str, str]:
+            raise TypeError("审批上下文实现错误")
+
+    with pytest.raises(TypeError, match="审批上下文实现错误"):
+        await _executor(BrokenContextTool()).execute(
+            ToolCall("write", "write_file", {"path": "sample.txt", "content": "内容"}),
+            ToolContext("session", tmp_path, PermissionMode.YOLO),
+        )
+    assert not (tmp_path / "sample.txt").exists()
