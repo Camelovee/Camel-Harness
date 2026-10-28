@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -110,8 +109,6 @@ class AnthropicLlmAdapter(LlmAdapter):
                         sdk_event, tool_blocks_by_index, completion, usage_state
                     ):
                         yield mapped_event
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             retryable = isinstance(exc, APIConnectionError) or (
                 isinstance(exc, APIStatusError)

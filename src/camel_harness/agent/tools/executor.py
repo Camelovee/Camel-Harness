@@ -70,18 +70,18 @@ class ToolExecutor:
         # 参数深拷贝：审批快照与执行各持一份，工具实现无法原地改写审批看到的内容。
         tool_call = replace(tool_call, arguments=deepcopy(tool_call.arguments))
         try:
-            # 审批与执行必须使用同一规范化工作区，否则展示路径和实际操作可能不同。
-            tool_context = replace(tool_context, workspace=tool_context.workspace.resolve())
             tool = self._tool_registry.resolve(tool_call.name)
-        except Exception as exc:
+        except KeyError as exc:
             return _error_result(tool_call, str(exc), ToolExecutionStatus.NOT_EXECUTED)
 
         try:
+            # 审批与执行必须使用同一规范化工作区。
+            tool_context = replace(tool_context, workspace=tool_context.workspace.resolve())
             errors = validate_tool_arguments(tool.to_definition(), tool_call.arguments)
             if errors:
                 return _error_result(tool_call, "；".join(errors), ToolExecutionStatus.NOT_EXECUTED)
             execution_context = tool.approval_context(tool_call, tool_context)
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             return _error_result(
                 tool_call, f"工具参数或执行上下文校验失败：{exc}", ToolExecutionStatus.NOT_EXECUTED
             )

@@ -55,18 +55,21 @@ class LocalSubagentRunner:
                 succeeded = agent_event.status == "completed"
                 error = agent_event.error or f"子 Agent 未完成：{agent_event.stop_reason}"
 
-        async def forward_event(agent_event: AgentEvent) -> None:
-            if subagent_request.on_event is not None:
-                await subagent_request.on_event(
+        unsubscribe = agent.subscribe(collect_text)
+        unsubscribe_progress = None
+        if subagent_request.on_event is not None:
+            on_event = subagent_request.on_event
+
+            async def forward_event(agent_event: AgentEvent) -> None:
+                await on_event(
                     {
                         "agent_type": subagent_request.agent_type.value,
                         "event": agent_event_to_dict(agent_event),
                     }
                 )
 
-        unsubscribe = agent.subscribe(collect_text)
-        # 转发观察者可能因背压被移除，不能连带丢掉内部终态收集。
-        unsubscribe_progress = agent.subscribe(forward_event) if subagent_request.on_event else None
+            # 转发观察者可能因背压被移除，不能连带丢掉内部终态收集。
+            unsubscribe_progress = agent.subscribe(forward_event)
         try:
             await agent.run(
                 subagent_request.task,
@@ -75,8 +78,6 @@ class LocalSubagentRunner:
                 max_turns=8,
                 permission_mode=permission_mode,
             )
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             error = f"子 Agent 执行失败：{exc}"
             succeeded = False
