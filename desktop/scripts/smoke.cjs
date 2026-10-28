@@ -19,23 +19,26 @@ async function main() {
       if (request.url.endsWith("/responses")) {
         const result = { id: "response-smoke", model: "desktop-openai-test", output: [], status: "completed", usage: { input_tokens: 10, output_tokens: 10 } };
         event("response.created", { sequence_number: 0, response: { ...result, status: "in_progress" } });
-        event("response.output_text.delta", { sequence_number: 1, item_id: "message-smoke", output_index: 0, content_index: 0, delta: "OpenAI 离线验收完成" });
+        event("response.output_text.delta", { sequence_number: 1, item_id: "message-smoke", output_index: 0, content_index: 0, delta: "OpenAI 离线验收完成\n\n```text\n" + "long_token_".repeat(180) + "\n```" });
         event("response.completed", { sequence_number: 2, response: result });
         response.end();
         return;
       }
       const requestIndex = modelRequests++;
-      event("message_start", { message: { id: `msg-${requestIndex}`, type: "message", role: "assistant", model: "desktop-test", content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } });
+      event("message_start", { message: { id: `msg-${requestIndex}`, type: "message", role: "assistant", model: "desktop-test", content: [], stop_reason: null, usage: { input_tokens: 34200, output_tokens: 0 } } });
       if (requestIndex === 0) {
-        event("content_block_start", { index: 0, content_block: { type: "tool_use", id: "smoke-write", name: "write_file", input: {} } });
-        event("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify({ path: join(project, "hello.txt"), content: "桌面离线验收完成" }) } });
+        event("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+        event("content_block_delta", { index: 0, delta: { type: "text_delta", text: "我会在当前工作区创建一个验收文件。写入前先请你确认权限，随后核验结果。" } });
+        event("content_block_stop", { index: 0 });
+        event("content_block_start", { index: 1, content_block: { type: "tool_use", id: "smoke-write", name: "write_file", input: {} } });
+        event("content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify({ path: join(project, "hello.txt"), content: "桌面离线验收完成" }) } });
       } else {
         event("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-        event("content_block_delta", { index: 0, delta: { type: "text_delta", text: requestIndex === 1 ? "桌面离线验收完成" : "尚未完成的测试响应" } });
+        event("content_block_delta", { index: 0, delta: { type: "text_delta", text: requestIndex === 1 ? "### 桌面离线验收完成\n\n已创建 `hello.txt`，内容已核验，文件保存在当前项目中。\n\n- 写入经过你的明确审批\n- 完整对话与工具结果已保存\n\n一切就绪，可以继续下一步。" : "尚未完成的测试响应" } });
       }
       if (requestIndex > 1) return;
-      event("content_block_stop", { index: 0 });
-      event("message_delta", { delta: { stop_reason: requestIndex === 0 ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 10 } });
+      event("content_block_stop", { index: requestIndex === 0 ? 1 : 0 });
+      event("message_delta", { delta: { stop_reason: requestIndex === 0 ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 640 } });
       event("message_stop", {});
       response.end();
     });
@@ -72,6 +75,13 @@ async function main() {
     assert.equal(await page.evaluate(() => typeof window.require), "undefined");
     const info = await page.evaluate(() => window.camelDesktop.appInfo());
     assert.ok(info.version);
+    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
+    const columns = await page.evaluate(() => [".sidebar-container", ".main-area", ".inspector-host"].map((selector) => {
+      const rectangle = document.querySelector(selector).getBoundingClientRect();
+      return { left: rectangle.left, right: rectangle.right, width: rectangle.width };
+    }));
+    assert.ok(columns.every((column) => column.width > 200));
+    assert.ok(columns[0].right < columns[1].left && columns[1].right < columns[2].left);
     const unauthorized = await fetch(`${new URL(page.url()).origin}/api/health`);
     assert.equal(unauthorized.status, 401);
     await application.evaluate(({ dialog }, projectPath) => {
@@ -87,11 +97,22 @@ async function main() {
     }, modelBaseUrl);
     assert.equal(createdModel, 201);
     await page.reload();
+    await page.getByRole("heading", { name: "今天，想构建些什么？" }).waitFor();
+    await page.waitForTimeout(360);
+    const welcomeBounds = await page.getByRole("button", { name: "创建空会话", exact: true }).boundingBox();
+    const messageBounds = await page.locator("main .messages").boundingBox();
+    assert.ok(welcomeBounds.y + welcomeBounds.height <= messageBounds.y + messageBounds.height, `欢迎操作被输入区遮挡：${JSON.stringify({ welcomeBounds, messageBounds })}`);
+    if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-welcome.png"), fullPage: true });
     await page.getByRole("button", { name: "选择本地工作区", exact: false }).click();
     await page.waitForFunction((projectPath) => document.querySelector(".main-header-sub")?.textContent === projectPath, project);
     await page.getByRole("textbox").fill("在临时项目中写入验收文件");
     await page.getByRole("textbox").press("Enter");
-    await page.getByRole("button", { name: "允许执行" }).click({ timeout: 30_000 });
+    await page.getByRole("button", { name: "允许执行" }).waitFor({ timeout: 30_000 });
+    if (process.argv[3]) {
+      await page.waitForTimeout(360);
+      await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-approval.png"), fullPage: true });
+    }
+    await page.getByRole("button", { name: "允许执行" }).click();
     await page.locator(".markdown-body").getByText("桌面离线验收完成").waitFor();
     await page.getByRole("button", { name: "暂停当前 Run" }).waitFor({ state: "hidden" });
     assert.equal(await readFile(join(project, "hello.txt"), "utf8"), "桌面离线验收完成");
@@ -101,24 +122,48 @@ async function main() {
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 640));
     await page.getByRole("complementary", { name: "工具详情" }).waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    await page.getByRole("dialog", { name: "执行详情面板" }).waitFor();
+    assert.equal(await page.locator("main").evaluate((element) => element.inert), true);
+    for (let index = 0; index < 8; index++) {
+      await page.keyboard.press("Tab");
+      assert.equal(await page.evaluate(() => document.querySelector(".inspector-host").contains(document.activeElement)), true);
+    }
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "执行详情面板" }).waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "展开执行详情", exact: true }).evaluate((element) => element === document.activeElement), true);
     await application.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].setSize(1280, 840);
       BrowserWindow.getAllWindows()[0].webContents.send("desktop:action", "toggle-sidebar");
     });
     await page.getByRole("button", { name: "展开侧栏" }).waitFor();
     await page.getByRole("button", { name: "展开侧栏" }).click();
+    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page.getByRole("button", { name: "外观", exact: true }).click();
+    for (let index = 0; index < 10; index++) {
+      await page.keyboard.press("Tab");
+      assert.equal(await page.evaluate(() => document.querySelector(".settings-dialog").contains(document.activeElement)), true);
+    }
     await page.getByLabel("界面主题").selectOption("dark");
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     await page.getByRole("button", { name: "关闭设置" }).click();
+    await page.waitForTimeout(360);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-dark.png"), fullPage: true });
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await page.getByRole("button", { name: "外观", exact: true }).click();
     await page.getByLabel("界面主题").selectOption("light");
     await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
     await page.getByRole("button", { name: "关闭设置" }).click();
+    await page.waitForTimeout(360);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]), fullPage: true });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.getByRole("button", { name: "收起执行详情", exact: true }).click();
+    assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
+    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
     const providerModels = await page.evaluate(async (baseUrl) => {
       const response = await fetch("/api/settings/models", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -132,6 +177,8 @@ async function main() {
     await page.getByRole("textbox").fill("验证 OpenAI 官方 SDK 打包");
     await page.getByRole("textbox").press("Enter");
     await page.getByText("OpenAI 离线验收完成", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+    assert.equal(await page.getByRole("textbox").isVisible(), true);
     await page.getByRole("button", { name: "暂停当前 Run" }).waitFor({ state: "hidden" });
     await page.getByLabel("选择模型").selectOption(providerModels.find((model) => model.provider === "anthropic").id);
     await page.waitForFunction(() => !document.querySelector(".model-select").disabled);

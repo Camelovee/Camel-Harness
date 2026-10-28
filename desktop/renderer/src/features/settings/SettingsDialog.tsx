@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { X } from "@phosphor-icons/react";
+import { ModalDialog } from "../../shared/ModalDialog";
 
 import type { ModelInput, ThemePreference, WebSettings } from "../../shared/model";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
@@ -37,24 +39,16 @@ export function SettingsDialog({
 
   useEffect(() => {
     closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, []);
 
   return (
-    <div className="modal-backdrop settings-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <ModalDialog className="settings-dialog" labelledBy="settings-title" onClose={onClose}>
         <header className="settings-header">
           <div>
             <span className="eyebrow">PREFERENCES</span>
             <h2 id="settings-title">设置</h2>
           </div>
-          <button ref={closeRef} type="button" className="modal-close" onClick={onClose} aria-label="关闭设置">×</button>
+          <button ref={closeRef} type="button" className="modal-close icon-button" onClick={onClose} aria-label="关闭设置"><X size={20} aria-hidden="true" /></button>
         </header>
 
         {!settings ? (
@@ -119,7 +113,6 @@ export function SettingsDialog({
             </div>
           </div>
         )}
-      </section>
-    </div>
+    </ModalDialog>
   );
 }

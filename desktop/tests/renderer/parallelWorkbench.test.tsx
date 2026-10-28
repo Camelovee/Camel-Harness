@@ -17,7 +17,7 @@ beforeEach(() => {
     requests.push(url);
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
     if (url === "/api/settings") return json({
-      models: [{ id: "model", name: "测试模型", model: "fake", provider: "anthropic", configured: true }],
+      models: [{ id: "model", name: "测试模型", model: "fake", provider: "anthropic", configured: true, context_window_tokens: 128000 }],
       default_model_id: "model",
     });
     if (url === "/api/workspaces") return json({ workspaces: [{
@@ -74,7 +74,7 @@ async function send(prompt: string) {
 it("实际工作台可在 A 运行时启动 B，切回查看实时输出，暂停 A 后 B 继续", async () => {
   await openWorkbench();
   await send("任务 A");
-  expect(screen.getByRole("button", { name: "＋ 新对话" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "新对话" }).hasAttribute("disabled")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "打开会话 会话 B" }));
   await send("任务 B");
   await act(async () => {
@@ -87,7 +87,7 @@ it("实际工作台可在 A 运行时启动 B，切回查看实时输出，暂�
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "B 的草稿" } });
   fireEvent.click(screen.getByRole("button", { name: "打开会话 会话 A" }));
   expect(screen.getByText("A 实时内容")).toBeTruthy();
-  expect(document.querySelector(".usage-summary")!.textContent).toContain("100");
+  expect(screen.getByLabelText("Token 用量").textContent).toContain("100");
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
   fireEvent.click(screen.getByRole("button", { name: "暂停当前 Run" }));
   await waitFor(() => expect(screen.getByText("已暂停")).toBeTruthy());

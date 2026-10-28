@@ -1,0 +1,5 @@
+export function CamelMark({ className = "" }: { className?: string }) {
+  return <svg className={className} viewBox="150 260 760 510" fill="currentColor" aria-hidden="true">
+    <path d="M216 566c-26-12-34-38-28-64 15 28 30 34 50 28 19-59 35-130 81-139 44-9 47 64 91 64 42 0 54-103 103-99 50 5 43 114 91 114h46l17-127c5-42 28-70 66-69h46l38 31 43 11-8 48-73 12-14 130c-3 35-19 59-48 75l-6 171h-47l-20-155H384l-26 155h-48l-2-179-30-4-20 183h-43l1-185Z" />
+  </svg>;
+}

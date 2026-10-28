@@ -27,6 +27,8 @@ Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Win
 
 配置和会话仍位于 `~/.camel/config.json`、`~/.camel/sessions/`，Windows 对应 `%USERPROFILE%\.camel\`。更新和卸载程序不主动删除这些文件。主题写入配置的 `theme` 字段，支持 `system`、`light`、`dark`。
 
+界面采用沙漠浅色 / 夜色的三栏布局：左侧工作区与会话、中间对话和输入、右侧真实执行概览。两侧可独立收起；窄窗口的详情作为模态面板打开。动效响应系统“减少动态效果”偏好，欢迎建议只填写草稿。
+
 快捷键：新对话 `⌘/Ctrl+N`、打开项目 `⌘/Ctrl+O`、切换侧栏 `⌘/Ctrl+B`、设置 `⌘/Ctrl+,`。首版不提供托盘后台任务或自动更新。
 
 应用内置自己的 Python 后端；执行项目命令所需的 Git、语言环境、编译器及可选 MCP 程序仍由用户按需安装。

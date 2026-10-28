@@ -415,6 +415,7 @@ export function useAgentTurn(options: Options) {
   }, [activeId, getRuntime, update]);
 
   const key = activeId ?? DRAFT;
+  const closeSubagent = useCallback(() => update(key, (state) => ({ ...state, selectedSubagentId: null })), [key, update]);
   const current = views[key] ?? emptyState();
   const conversation = current.messages.filter((message) => message.role !== "approval");
   const last = conversation[conversation.length - 1];
@@ -426,7 +427,7 @@ export function useAgentTurn(options: Options) {
     ...current, creatingSession, indicators,
     canResume: !current.running && (last?.role === "user" || last?.role === "toolResult"),
     sendPrompt, abortRun, resumeRun, resolveApproval, openSubagent,
-    closeSubagent: () => update(key, (state) => ({ ...state, selectedSubagentId: null })),
+    closeSubagent,
     setPrompt: (action: SetStateAction<string>) => update(key, (state) => ({ ...state, prompt: apply(state.prompt, action) })),
     setPermissionMode: (permissionMode: PermissionMode) => update(key, (state) => ({ ...state, permissionMode })),
     setEffort: (effort: ThinkingEffort) => update(key, (state) => ({ ...state, effort })),

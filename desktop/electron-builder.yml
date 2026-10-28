@@ -6,6 +6,7 @@ directories:
 files:
   - dist/**/*
   - "!dist/renderer/**/*"
+  - "!node_modules/**/*"
   - assets/**/*
   - package.json
 extraResources:

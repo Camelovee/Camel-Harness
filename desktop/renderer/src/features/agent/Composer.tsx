@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ArrowUp, ArrowBendDownRight, CaretDown, FolderOpen, Play, Square } from "@phosphor-icons/react";
 import type { Dispatch, SetStateAction } from "react";
 
 import type { ModelProfile, PermissionMode, ThinkingEffort } from "../../shared/model";
@@ -79,7 +80,10 @@ export function Composer({
   return (
     <div className="composer-area">
       <div className={`composer-box ${!active ? "disabled" : ""}`}>
+        <label className="composer-label" htmlFor="message-input">{running ? "继续引导这个任务" : "向 Camel 发送消息"}</label>
         <textarea
+          id="message-input"
+          aria-describedby="composer-shortcuts"
           ref={inputRef}
           disabled={!active || !selectedModelId}
           value={prompt}
@@ -104,9 +108,9 @@ export function Composer({
         />
         <div className="composer-toolbar">
           <button type="button" className="composer-directory" onClick={onChooseWorkspace} disabled={choosingWorkspace || running} title={`选择新会话的工作目录；当前：${activeWorkspace ?? "用户主目录"}`} aria-label="选择新会话工作目录">
-            <span aria-hidden="true">▱</span>
+            <FolderOpen size={16} aria-hidden="true" />
             <span>{choosingWorkspace ? "正在选择…" : activeWorkspace ? workspaceName(activeWorkspace) : "用户主目录"}</span>
-            <span aria-hidden="true">⌄</span>
+            <CaretDown size={12} aria-hidden="true" />
           </button>
           <div className="composer-right">
             <select
@@ -136,6 +140,7 @@ export function Composer({
               <option value="max">思考 · 高</option>
             </select>
             <select
+              aria-label="权限模式"
               value={permissionMode}
               onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
               disabled={!active || running}
@@ -150,8 +155,9 @@ export function Composer({
               disabled={!prompt.trim() || !active || !selectedModelId || switchingModel || starting}
               onClick={() => void submit()}
               title={running ? "追加运行中输入" : "发送消息"}
+              aria-label={running ? "追加运行中输入" : "发送消息"}
             >
-              {running ? "↳" : "↑"}
+              {running ? <ArrowBendDownRight size={19} aria-hidden="true" /> : <ArrowUp size={20} weight="bold" aria-hidden="true" />}
             </button>
             {running && (
               <button
@@ -162,7 +168,7 @@ export function Composer({
                 title="暂停当前 Run"
                 aria-label="暂停当前 Run"
               >
-                <span className="stop-icon" aria-hidden="true" />
+                <Square size={16} weight="fill" aria-hidden="true" />
               </button>
             )}
             {!running && canResume && (
@@ -172,14 +178,14 @@ export function Composer({
                 disabled={!selectedModelId || switchingModel}
                 title="从最后一个完整消息边界继续"
               >
-                继续
+                <Play size={14} aria-hidden="true" />继续
               </button>
             )}
           </div>
         </div>
       </div>
       <div className="composer-hint">
-        <span>Enter 发送 · Shift + Enter 换行</span>
+        <span id="composer-shortcuts"><kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行</span>
         <span className={running ? "status-running" : ""}>{status}</span>
       </div>
     </div>

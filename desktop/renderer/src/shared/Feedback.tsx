@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { WarningCircle, X } from "@phosphor-icons/react";
+import { ModalDialog } from "./ModalDialog";
 
 export function RenameSessionDialog({
   name,
@@ -24,11 +26,11 @@ export function RenameSessionDialog({
   }
 
   return (
-    <div className="modal-backdrop">
-      <form className="modal-card" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+    <ModalDialog className="modal-card" labelledBy="rename-session-title" onClose={onCancel}>
+      <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <div className="modal-header">
-          <div><span className="eyebrow">RENAME SESSION</span><h2>重命名会话</h2></div>
-          <button type="button" className="modal-close" onClick={onCancel} aria-label="关闭">×</button>
+          <div><span className="eyebrow">RENAME SESSION</span><h2 id="rename-session-title">重命名会话</h2></div>
+          <button type="button" className="modal-close icon-button" onClick={onCancel} aria-label="关闭"><X size={20} aria-hidden="true" /></button>
         </div>
         <label htmlFor="session-name">会话名称</label>
         <input id="session-name" autoFocus maxLength={120} value={value} onChange={(event) => setValue(event.target.value)} />
@@ -37,7 +39,7 @@ export function RenameSessionDialog({
           <button type="submit" className="primary-button" disabled={!value.trim() || saving}>保存</button>
         </div>
       </form>
-    </div>
+    </ModalDialog>
   );
 }
 
@@ -49,10 +51,10 @@ export function ErrorToast({
   onClose: () => void;
 }) {
   return (
-    <div className="error-toast">
-      {message}
+    <div className="error-toast" role="alert">
+      <WarningCircle size={20} aria-hidden="true" /><span>{message}</span>
       <button onClick={onClose} aria-label="关闭错误提示">
-        ×
+        <X size={18} aria-hidden="true" />
       </button>
     </div>
   );
@@ -68,15 +70,15 @@ export function DeleteSessionDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div className="modal-backdrop">
-      <div className="modal-card">
+    <ModalDialog className="modal-card" labelledBy="delete-session-title" onClose={onCancel}>
+      <div>
         <div className="modal-header">
           <div>
             <span className="eyebrow">DELETE SESSION</span>
-            <h2>确认删除会话</h2>
+            <h2 id="delete-session-title">确认删除会话</h2>
           </div>
-          <button className="modal-close" onClick={onCancel}>
-            ×
+          <button className="modal-close icon-button" onClick={onCancel} aria-label="关闭删除确认">
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
         <p className="delete-copy">确定删除“{name}”吗？此操作不可恢复。</p>
@@ -89,6 +91,6 @@ export function DeleteSessionDialog({
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

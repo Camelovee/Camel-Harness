@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, type MenuItemConstructorOptions } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -150,7 +150,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     mainWindow = new BrowserWindow({
       title: "Camel Harness", width: 1280, height: 840, minWidth: 960, minHeight: 640,
-      show: false, backgroundColor: "#f7f7f5",
+      show: false, backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1b17" : "#eee9df",
       webPreferences: {
         preload: join(__dirname, "preload.js"), session: privateSession,
         contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true,

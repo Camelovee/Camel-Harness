@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { ArrowRight, ArrowUpRight, Bug, CaretRight, CheckCircle, Code, Compass, WarningCircle, Wrench } from "@phosphor-icons/react";
+import { CamelMark } from "../../shared/CamelMark";
 
 import type { ApprovalStatus, Message, Session, SubagentView } from "../../shared/model";
 import {
@@ -16,6 +18,7 @@ type Props = {
   resolvingApprovalId: string | null;
   onResolveApproval: (requestId: string, approved: boolean) => void;
   onStart: () => void;
+  onSuggest?: (prompt: string) => void;
   showToolCalls?: boolean;
   subagents?: SubagentView[];
   onOpenSubagent?: (sessionId: string) => void;
@@ -31,6 +34,7 @@ export function MessageList({
   resolvingApprovalId,
   onResolveApproval,
   onStart,
+  onSuggest,
   showToolCalls = false,
   subagents = [],
   onOpenSubagent,
@@ -53,7 +57,7 @@ export function MessageList({
   useEffect(() => {
     const element = scrollRef.current;
     if (element && pinnedToBottom.current) {
-      element.scrollTop = element.scrollHeight;
+      element.scrollTop = messages.length ? element.scrollHeight : 0;
     }
   }, [messages, subagents]);
 
@@ -71,7 +75,7 @@ export function MessageList({
     >
       <div className="messages-inner">
         {!activeSession && (
-          <Welcome activeWorkspace={activeWorkspace} onStart={onStart} />
+          <Welcome activeWorkspace={activeWorkspace} onStart={onStart} onSuggest={onSuggest} />
         )}
         {messages.map((message) => {
           if (message.role === "toolResult") {
@@ -122,25 +126,28 @@ export function MessageList({
 function Welcome({
   activeWorkspace,
   onStart,
+  onSuggest,
 }: {
   activeWorkspace: string | null;
   onStart: () => void;
+  onSuggest?: (prompt: string) => void;
   showToolCalls?: boolean;
   subagents?: SubagentView[];
   onOpenSubagent?: (sessionId: string) => void;
 }) {
   return (
     <div className="welcome">
-      <div className="welcome-icon">🐫</div>
-      <div className="eyebrow">CAMEL HARNESS · LOCAL WORKSPACE</div>
-      <h1>开始新对话</h1>
-      <p>
-        {activeWorkspace
-          ? `直接输入消息即可开始，新的会话默认在 ${activeWorkspace} 中工作。也可以从左侧选择其他本地工作区。`
-          : "直接输入消息即可开始；也可以从左侧选择本地工作区。"}
-      </p>
+      <div className="welcome-landscape" aria-hidden="true"><svg viewBox="0 0 300 110"><circle cx="222" cy="32" r="19" /><path d="M0 99Q65 24 156 87T300 72V110H0Z" /><path d="M0 104Q112 66 204 99T300 91V110H0Z" /></svg><CamelMark className="welcome-camel" /></div>
+      <div className="eyebrow">A LITTLE SPACE. A GREAT NEXT STEP.</div>
+      <h2>今天，想构建些什么？</h2>
+      <p>从一个想法，到每一步落地。<br />Camel 与你一起探索{activeWorkspace ? "这个工作区" : "本地项目"}。</p>
+      {onSuggest && <div className="welcome-prompts">
+        <button onClick={() => onSuggest("帮我理解这个项目的结构和主要运行流程")}><Compass size={18} aria-hidden="true" /><span>理解项目<small>找到清晰的起点</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
+        <button onClick={() => onSuggest("帮我排查项目中的问题，先分析原因，再给出修复建议")}><Bug size={18} aria-hidden="true" /><span>定位问题<small>一起解开症结</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
+        <button onClick={() => onSuggest("我想实现一个新功能，请先分析现有代码并和我确认方案")}><Code size={18} aria-hidden="true" /><span>实现想法<small>从下一步开始</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
+      </div>}
       <button className="welcome-action" onClick={onStart}>
-        创建空会话 <span>→</span>
+        创建空会话 <ArrowRight size={14} aria-hidden="true" />
       </button>
     </div>
   );
@@ -159,6 +166,7 @@ function ConversationMessage({
   const reasoning = reasoningFromBlocks(message.content);
   return (
     <article className={`message ${message.role}`}>
+      {message.role === "assistant" && (content || reasoning || streaming) && <div className="assistant-identity"><span><CamelMark /></span><strong>Camel</strong><small>与你协作</small></div>}
       {streaming && <div className="message-meta">正在输出…</div>}
       <div className="message-content">
         {message.role === "assistant" && reasoning && (
@@ -241,7 +249,7 @@ function ThinkingMessage({
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        <span className="thinking-chevron">›</span>
+        <CaretRight className="thinking-chevron" size={14} aria-hidden="true" />
         <span className={`thinking-label ${thinking ? "thinking-shimmer" : ""}`}>
           {label}
         </span>
@@ -263,8 +271,8 @@ function ToolMessage({ message, onOpen }: { message: Message; onOpen?: (message:
   return (
     <details className={`tool-message ${block?.is_error ? "error" : ""}`}>
       <summary>
-        <span className="tool-chevron">›</span>
-        <span className="tool-symbol">⌁</span>
+        <CaretRight className="tool-chevron" size={14} aria-hidden="true" />
+        {executionStatus === "succeeded" || (!executionStatus && !block?.is_error) ? <CheckCircle className="tool-symbol" size={18} aria-hidden="true" /> : <Wrench className="tool-symbol" size={18} aria-hidden="true" />}
         <strong>{block?.name ?? "工具调用"}</strong>
         <span className="tool-state">{statusLabel}</span>
       </summary>
@@ -301,7 +309,7 @@ function ApprovalMessage({
   return (
     <article className={`approval-message approval-${approval.status}`}>
       <div className="approval-message-head">
-        <span className="approval-message-icon">⚠</span>
+        <span className="approval-message-icon"><WarningCircle size={21} aria-hidden="true" /></span>
         <div>
           <strong>工具请求</strong>
           <small>{approval.tool_name}</small>

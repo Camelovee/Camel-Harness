@@ -1,3 +1,4 @@
+import { ChatCircle, FolderOpen, GearSix, PencilSimple, Plus, ShieldCheck, Trash, SpinnerGap } from "@phosphor-icons/react";
 import type { SessionIndicator, Workspace } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
 
@@ -18,160 +19,46 @@ type Props = {
   onOpenSettings: () => void;
 };
 
-export function WorkspaceSidebar({
-  workspaces,
-  activeWorkspace,
-  activeId,
-  selectingWorkspace,
-  newChatDisabled,
-  indicators,
-  onSelectWorkspace,
-  onNewChat,
-  onActivateWorkspace,
-  onActivateSession,
-  onCreateSession,
-  onDeleteSession,
-  onRenameSession,
-  onOpenSettings,
-}: Props) {
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-brand">
-          <span className="brand-logo">🐫</span>
-          <div className="brand-wordmark">
-            <strong>camel</strong>
-            <span>HARNESS</span>
-          </div>
+export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, selectingWorkspace, newChatDisabled,
+  indicators, onSelectWorkspace, onNewChat, onActivateWorkspace, onActivateSession, onCreateSession, onDeleteSession,
+  onRenameSession, onOpenSettings }: Props) {
+  return <aside className="sidebar" aria-label="工作区与会话">
+    <div className="sidebar-heading"><span className="eyebrow">YOUR WORKSPACE</span><span className="count-badge">{workspaces.length}</span></div>
+    <button aria-label="新对话" className="new-chat" onClick={onNewChat} disabled={newChatDisabled}><Plus size={18} aria-hidden="true" />新对话<span className="shortcut-key" aria-hidden="true">⌘ N / Ctrl N</span></button>
+    <button className="new-workspace" disabled={selectingWorkspace} onClick={onSelectWorkspace}>
+      {selectingWorkspace ? <SpinnerGap className="spin" size={18} aria-hidden="true" /> : <FolderOpen size={18} aria-hidden="true" />}
+      {selectingWorkspace ? "正在选择…" : "选择本地工作区"}
+    </button>
+    <div className="workspace-heading"><span>工作区与会话</span><span className="sidebar-section-rule" /></div>
+    <nav className="workspace-list" aria-label="工作区导航">
+      {workspaces.map((workspace) => <div className={`workspace-group ${workspace.workspace === activeWorkspace ? "active" : ""}`} key={workspace.workspace}>
+        <div className="workspace-row">
+          <button className="workspace-select" aria-label={`打开工作区 ${workspaceName(workspace.workspace)}`} aria-expanded={workspace.workspace === activeWorkspace} onClick={() => onActivateWorkspace(workspace)} title={workspace.workspace}>
+            <span className="workspace-folder"><FolderOpen size={19} aria-hidden="true" /></span>
+            <span className="workspace-copy"><strong>{workspaceName(workspace.workspace)}</strong><small>{workspace.sessions.length} 个会话{workspace.sessions.some((session) => indicators[session.session_id]?.running) && " · 运行中"}</small></span>
+          </button>
+          <button className="workspace-action icon-button" aria-label={`在${workspaceName(workspace.workspace)}中创建会话`} title="新建会话" onClick={() => onCreateSession(workspace.workspace)}><Plus size={16} aria-hidden="true" /></button>
         </div>
-      </div>
-      <button className="new-chat" onClick={onNewChat} disabled={newChatDisabled}>
-        <span>＋</span> 新对话
-      </button>
-      <button
-        className="new-workspace"
-        disabled={selectingWorkspace}
-        onClick={onSelectWorkspace}
-      >
-        <span>{selectingWorkspace ? "…" : "＋"}</span>
-        {selectingWorkspace ? "正在选择…" : "选择本地工作区"}
-      </button>
-      <div className="workspace-heading">
-        <span>工作区</span>
-        <span className="workspace-total">{workspaces.length}</span>
-      </div>
-      <div className="workspace-list">
-        {workspaces.map((workspace) => (
-          <div
-            className={`workspace-group ${workspace.workspace === activeWorkspace ? "active" : ""}`}
-            key={workspace.workspace}
-          >
-            <div
-              className="workspace-row"
-              onClick={() => onActivateWorkspace(workspace)}
-              role="button"
-              aria-label={`打开工作区 ${workspaceName(workspace.workspace)}`}
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") onActivateWorkspace(workspace);
-              }}
-            >
-              <span className="folder-icon">▱</span>
-              <span className="workspace-copy">
-                <strong>{workspaceName(workspace.workspace)}</strong>
-                <small>{workspace.sessions.length} 个会话{workspace.sessions.some((session) => indicators[session.session_id]?.running) && " · 运行中"}</small>
-              </span>
-              <button
-                className="workspace-action"
-                aria-label={`在${workspaceName(workspace.workspace)}中创建会话`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onCreateSession(workspace.workspace);
-                }}
-              >
-                ＋
-              </button>
+        {workspace.workspace === activeWorkspace && <div className="session-list">{workspace.sessions.map((session) => {
+          const indicator = indicators[session.session_id];
+          const label = indicator?.approvalCount ? "等待审批" : indicator?.running ? "运行中" : indicator?.failed ? "运行失败"
+            : indicator?.cancelled ? "已暂停" : indicator?.unread ? "已完成 · 未读" : `${session.message_count} 条消息`;
+          return <div className={`session-item ${session.session_id === activeId ? "active" : ""}`} key={session.session_id}>
+            <button className="session-select" aria-label={`打开会话 ${session.name}`} aria-current={session.session_id === activeId ? "page" : undefined}
+              onClick={() => onActivateSession(workspace.workspace, session.session_id)} title={session.name}>
+              <ChatCircle size={16} aria-hidden="true" />
+              <span className="session-copy"><strong>{session.name}</strong><small className="session-status"><span className={`session-dot ${indicator?.approvalCount ? "waiting" : indicator?.running ? "running" : indicator?.unread ? "unread" : ""}`} aria-hidden="true" />{label}</small></span>
+            </button>
+            <div className="session-actions">
+              <button className="session-rename icon-button" aria-label={`重命名${session.name}`} title="重命名会话" onClick={() => onRenameSession(session.session_id, session.name)}><PencilSimple size={14} aria-hidden="true" /></button>
+              <button className="session-delete icon-button" disabled={indicator?.running} title={indicator?.running ? "运行结束后可删除" : "删除会话"} aria-label={`删除${session.name}`} onClick={() => onDeleteSession(session.session_id, session.name)}><Trash size={14} aria-hidden="true" /></button>
             </div>
-            {workspace.workspace === activeWorkspace && (
-              <div className="session-list">
-                {workspace.sessions.map((session) => (
-                  <div
-                    className={`session-item ${session.session_id === activeId ? "active" : ""}`}
-                    key={session.session_id}
-                    onClick={() => onActivateSession(workspace.workspace, session.session_id)}
-                    role="button"
-                    aria-label={`打开会话 ${session.name}`}
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        onActivateSession(workspace.workspace, session.session_id);
-                      }
-                    }}
-                  >
-                    <span className={`session-dot ${indicators[session.session_id]?.approvalCount ? "waiting" : indicators[session.session_id]?.running ? "running" : indicators[session.session_id]?.unread ? "unread" : ""}`} />
-                    <span className="session-copy">
-                      <strong>{session.name}</strong>
-                      <small className="session-status">
-                        {indicators[session.session_id]?.approvalCount
-                          ? "等待审批"
-                          : indicators[session.session_id]?.running
-                            ? "运行中"
-                            : indicators[session.session_id]?.failed
-                              ? "运行失败"
-                              : indicators[session.session_id]?.cancelled
-                                ? "已暂停"
-                                : indicators[session.session_id]?.unread
-                                  ? "已完成 · 未读"
-                                  : `${session.message_count} 条消息`}
-                      </small>
-                    </span>
-                    <button
-                      className="session-rename"
-                      aria-label={`重命名${session.name}`}
-                      title="重命名会话"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRenameSession(session.session_id, session.name);
-                      }}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      className="session-delete"
-                      disabled={indicators[session.session_id]?.running}
-                      title={indicators[session.session_id]?.running ? "运行结束后可删除" : "删除会话"}
-                      aria-label={`删除${session.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDeleteSession(session.session_id, session.name);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-        {!workspaces.length && (
-          <div className="empty-workspaces">
-            还没有会话
-            <br />
-            <span>输入消息将在用户主目录开始，或选择本地文件夹</span>
-          </div>
-        )}
-      </div>
-      <div className="sidebar-footer">
-        <button type="button" className="settings-entry" onClick={onOpenSettings}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9.7 2.8h4.6l.6 2.1 1.8.8 2-.9 3.2 3.2-.9 2 .8 1.8 2.1.6v4.6l-2.1.6-.8 1.8.9 2-3.2 3.2-2-.9-1.8.8-.6 2.1H9.7l-.6-2.1-1.8-.8-2 .9-3.2-3.2.9-2-.8-1.8-2.1-.6v-4.6l2.1-.6.8-1.8-.9-2 3.2-3.2 2 .9 1.8-.8z" transform="translate(0 -2) scale(.96)" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-          <span>设置</span>
-        </button>
-        <span className="sidebar-note">本机工作区</span>
-      </div>
-    </aside>
-  );
+          </div>;
+        })}</div>}
+      </div>)}
+      {!workspaces.length && <div className="empty-workspaces"><FolderOpen size={28} aria-hidden="true" /><strong>为想法找个落脚点</strong><p>选择本地项目，<br />你的会话会按工作区整理。</p></div>}
+    </nav>
+    <div className="sidebar-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>会话历史保存在本机</span></div>
+    <footer className="sidebar-footer"><button className="settings-entry" onClick={onOpenSettings}><GearSix size={19} aria-hidden="true" />设置</button><span className="sidebar-note">CAMEL / DESKTOP</span></footer>
+  </aside>;
 }
