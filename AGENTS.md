@@ -66,6 +66,9 @@ def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
 
 - 使用中文提交描述，格式为 `<type>(<scope>): <subject>`。
 - 开发、修复功能时在分支中进行，每完成一个任务就在分支中提交。
+- 长期开发分支固定为 `desktop-dev` 与 `harness-dev`，后续按任务职责切换，不再新建同类长期分支。
+- `desktop-dev` 承载 Electron、React 界面、桌面后端接入及打包发布；`harness-dev` 承载 Agent、LLM、工具、会话、上下文等核心能力及配套回归。
+- 跨端需求先在 `harness-dev` 完成可独立验证的核心改动，再合并到 `desktop-dev` 完成桌面接入与联合验证。
 - main分支的合并和提交远程git仓库需要用户命令，不擅自提交。
 
 ## MCP 集成
