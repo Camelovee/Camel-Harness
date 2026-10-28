@@ -137,10 +137,9 @@ function Welcome({
 }) {
   return (
     <div className="welcome">
-      <div className="welcome-landscape" aria-hidden="true"><svg viewBox="0 0 300 110"><circle cx="222" cy="32" r="19" /><path d="M0 99Q65 24 156 87T300 72V110H0Z" /><path d="M0 104Q112 66 204 99T300 91V110H0Z" /></svg><CamelMark className="welcome-camel" /></div>
-      <div className="eyebrow">A LITTLE SPACE. A GREAT NEXT STEP.</div>
+      <CamelMark className="welcome-camel" />
       <h2>今天，想构建些什么？</h2>
-      <p>从一个想法，到每一步落地。<br />Camel 与你一起探索{activeWorkspace ? "这个工作区" : "本地项目"}。</p>
+      <p>输入想法，或从{activeWorkspace ? "这个工作区" : "本地项目"}开始。</p>
       {onSuggest && <div className="welcome-prompts">
         <button onClick={() => onSuggest("帮我理解这个项目的结构和主要运行流程")}><Compass size={18} aria-hidden="true" /><span>理解项目<small>找到清晰的起点</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
         <button onClick={() => onSuggest("帮我排查项目中的问题，先分析原因，再给出修复建议")}><Bug size={18} aria-hidden="true" /><span>定位问题<small>一起解开症结</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>

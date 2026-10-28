@@ -23,7 +23,7 @@ export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, select
   indicators, onSelectWorkspace, onNewChat, onActivateWorkspace, onActivateSession, onCreateSession, onDeleteSession,
   onRenameSession, onOpenSettings }: Props) {
   return <aside className="sidebar" aria-label="工作区与会话">
-    <div className="sidebar-heading"><span className="eyebrow">YOUR WORKSPACE</span><span className="count-badge">{workspaces.length}</span></div>
+    <div className="sidebar-heading"><span className="eyebrow">工作空间</span><span className="count-badge">{workspaces.length}</span></div>
     <button aria-label="新对话" className="new-chat" onClick={onNewChat} disabled={newChatDisabled}><Plus size={18} aria-hidden="true" />新对话<span className="shortcut-key" aria-hidden="true">⌘ N / Ctrl N</span></button>
     <button className="new-workspace" disabled={selectingWorkspace} onClick={onSelectWorkspace}>
       {selectingWorkspace ? <SpinnerGap className="spin" size={18} aria-hidden="true" /> : <FolderOpen size={18} aria-hidden="true" />}

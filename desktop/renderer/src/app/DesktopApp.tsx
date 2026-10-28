@@ -8,6 +8,8 @@ import { CamelMark } from "../shared/CamelMark";
 import { ModalDialog } from "../shared/ModalDialog";
 import { workspaceName } from "../shared/presentation";
 import { usePanelMotion } from "./usePanelMotion";
+import { PanelDivider } from "./PanelDivider";
+import { defaultPanelWidths, usePanelSizes } from "./usePanelSizes";
 import { Composer } from "../features/agent/Composer";
 import { SubagentPanel } from "../features/agent/SubagentPanel";
 import { MessageList } from "../features/agent/MessageList";
@@ -34,7 +36,9 @@ export default function DesktopApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [narrowWindow, setNarrowWindow] = useState(() => window.matchMedia("(max-width: 1179px)").matches);
   const [inspectorOpen, setInspectorOpen] = useState(!narrowWindow);
+  const panelSizes = usePanelSizes(!sidebarCollapsed, inspectorOpen && !narrowWindow);
   const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const { panelRef, transition } = usePanelMotion();
   const [selectedTool, setSelectedTool] = useState<Message | null>(null);
   const firstSettingsLoaded = useRef(false);
@@ -87,6 +91,7 @@ export default function DesktopApp() {
   }
   useEffect(() => {
     const dismiss = (event: KeyboardEvent) => {
+      if (document.querySelector(":popover-open")) return;
       if (event.key === "Escape" && inspectorOpen && !settingsOpen) closeInspector();
     };
     window.addEventListener("keydown", dismiss);
@@ -151,14 +156,15 @@ export default function DesktopApp() {
                 permissionMode={agent.permissionMode} effort={agent.effort} workspace={chatWorkspace}
                 onOpenTool={openTool} onOpenSubagent={openSubagent} onClose={closeInspector} />);
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${inspectorOpen ? "inspector-open" : ""}`}>
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${inspectorOpen ? "inspector-open" : ""}`}
+      style={{ "--sidebar-width": `${panelSizes.sidebarWidth}px`, "--inspector-width": `${panelSizes.inspectorWidth}px` } as React.CSSProperties}>
       <a className="skip-link" href="#conversation">跳到对话</a>
       <header className="app-topbar" inert={modalInspector}>
         <div className="app-brand"><span className="app-brand-mark"><CamelMark /></span><strong>Camel <span>Harness</span></strong></div>
         <div className="app-breadcrumb" title={chatWorkspace ?? ""}><span>/</span>{chatWorkspace ? workspaceName(chatWorkspace) : "你的工作空间"}</div>
         <div className="topbar-actions">
           <span className="local-indicator"><span />本机工作区</span>
-          <button className="icon-button" aria-controls="workspace-navigation" aria-expanded={!sidebarCollapsed}
+          <button ref={sidebarToggleRef} className="icon-button" aria-controls="workspace-navigation" aria-expanded={!sidebarCollapsed}
             aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} title="切换侧栏（⌘ / Ctrl + B）"
             onClick={() => transition(() => setSidebarCollapsed((collapsed) => !collapsed))}><SidebarSimple size={20} aria-hidden="true" /></button>
           <button ref={inspectorToggleRef} className={`icon-button ${inspectorOpen ? "is-active" : ""}`} aria-controls={inspectorOpen ? "execution-inspector" : undefined} aria-expanded={inspectorOpen}
@@ -186,10 +192,14 @@ export default function DesktopApp() {
             onRenameSession={(sessionId, name) => setRenameTarget({ sessionId, name })} onOpenSettings={() => setSettingsOpen(true)} />
         </div>
 
+        {!sidebarCollapsed && <PanelDivider side="sidebar" width={panelSizes.sidebarWidth} minimum={200} maximum={panelSizes.sidebarMaximum}
+          defaultWidth={defaultPanelWidths.sidebar} onResize={panelSizes.resizeSidebar} onCollapse={() => {
+            transition(() => setSidebarCollapsed(true)); sidebarToggleRef.current?.focus();
+          }} />}
+
         <main className="main-area" id="conversation" tabIndex={-1} ref={panelRef} inert={modalInspector}>
           <header className="main-header">
             <div className="main-header-meta">
-              <span className="eyebrow">CONVERSATION</span>
               <div className="main-header-title-row"><h1 className="main-header-title">{workspace.activeSession?.name ?? "新对话"}</h1>
                 {workspace.activeSession && <button className="icon-button header-rename" aria-label="重命名会话" title="重命名会话"
                   onClick={() => setRenameTarget({ sessionId: workspace.activeSession!.session_id, name: workspace.activeSession!.name })}><PencilSimple size={15} aria-hidden="true" /></button>}
@@ -225,6 +235,9 @@ export default function DesktopApp() {
             onModelChange={(modelId) => { if (workspace.activeSession) void workspace.changeModel(modelId); else setDraftModelId(modelId); }}
             onSend={agent.sendPrompt} canResume={agent.canResume} onAbort={agent.abortRun} onResume={agent.resumeRun} />
         </main>
+
+        {inspectorOpen && !narrowWindow && <PanelDivider side="inspector" width={panelSizes.inspectorWidth} minimum={240} maximum={panelSizes.inspectorMaximum}
+          defaultWidth={defaultPanelWidths.inspector} onResize={panelSizes.resizeInspector} onCollapse={closeInspector} />}
 
         {inspectorOpen && (modalInspector ?
           <ModalDialog id="execution-inspector" className="inspector-host inspector-drawer" labelledBy="inspector-dialog-title" onClose={closeInspector}>

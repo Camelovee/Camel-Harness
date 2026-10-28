@@ -36,14 +36,13 @@ export function ExecutionPanel({ messages, approvals, subagents, running, state,
 
   return <aside className="detail-panel execution-panel" aria-label="执行详情">
     <header className="inspector-heading">
-      <div><span className="eyebrow">WORKSPACE INSIGHTS</span><h2>执行详情</h2></div>
+      <div><h2>执行详情</h2></div>
       <button className="icon-button" onClick={onClose} aria-label="关闭执行详情" title="收起执行详情"><X aria-hidden="true" size={18} /></button>
     </header>
     <div className="inspector-content">
-      <section className="run-overview" aria-label="当前运行状态">
+      <section className="run-overview" aria-label="当前运行状态" aria-busy={running}>
         <div className="section-label"><span>当前任务</span><RunStatus state={state} /></div>
         <p className="run-phase" key={phase}>{phase}</p>
-        <span className="inspector-caption">{running ? "过程实时更新，你始终掌握进展。" : "每一步执行，都有迹可循。"}</span>
       </section>
 
       <section className="inspector-section usage-section" aria-label="Token 用量">

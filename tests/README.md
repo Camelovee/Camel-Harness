@@ -11,7 +11,7 @@
 | 文件与 Shell | `integration/test_file_mutations.py`、`test_shell_output.py`、`test_tool_storage_failure.py` | 原子替换、排队/在途取消、进程树清理及归档失败后不重复副作用 |
 | 会话与记忆 | `integration/test_session_*`、`test_jsonl_session_store.py`、`test_memory_manager.py`、`test_memory_store.py`、`test_migrate_memory.py` | 分支重放、损坏日志、跨进程竞争、记忆字符上限、权限、路径边界和旧数据迁移 |
 | 渲染界面与 HTTP | HTTP/SSE、设置与多会话测试，`desktop/tests/renderer/` | 请求契约、断连取消、审批与并行会话隔离 |
-| 桌面入口 | `integration/test_desktop_backend.py`、`desktop/tests/`、`desktop/scripts/smoke.cjs` | 临时鉴权、管道退出、确认门控、原生目录、双厂商 SDK 打包、三栏几何、原生模态焦点、减少动态效果、真实活动投影与未完成消息不落盘 |
+| 桌面入口 | `integration/test_desktop_backend.py`、`desktop/tests/`、`desktop/scripts/smoke.cjs` | 临时鉴权、管道退出、确认门控、原生目录、双厂商 SDK 打包、三栏几何、分隔线拖动/键盘/点击调整与尺寸约束、原生模态焦点、减少动态效果、真实活动投影与未完成消息不落盘 |
 | 模块依赖 | `uv run lint-imports`、`unit/test_desktop_architecture.py` | Python 单向依赖和前端 `app → features → shared` 边界 |
 
 ## 精简原则

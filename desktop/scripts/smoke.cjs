@@ -103,6 +103,38 @@ async function main() {
     const messageBounds = await page.locator("main .messages").boundingBox();
     assert.ok(welcomeBounds.y + welcomeBounds.height <= messageBounds.y + messageBounds.height, `欢迎操作被输入区遮挡：${JSON.stringify({ welcomeBounds, messageBounds })}`);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-welcome.png"), fullPage: true });
+    const sidebarDivider = page.getByRole("separator", { name: "侧栏宽度", exact: true });
+    const inspectorDivider = page.getByRole("separator", { name: "执行详情宽度", exact: true });
+    for (const [divider, movement, expectedWidth] of [[sidebarDivider, 60, 296], [inspectorDivider, -60, 340]]) {
+      const bounds = await divider.boundingBox();
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 160);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width / 2 + movement, bounds.y + 160, { steps: 12 });
+      await page.mouse.up();
+      assert.equal(await divider.getAttribute("aria-valuenow"), String(expectedWidth));
+      assert.equal(await divider.getAttribute("data-resizing"), "false");
+      assert.equal(await page.locator(".divider-popover:popover-open").count(), 0);
+    }
+    await inspectorDivider.focus();
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await inspectorDivider.getAttribute("aria-valuenow"), "356");
+    await inspectorDivider.press("End");
+    await sidebarDivider.press("End");
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 840));
+    await page.waitForFunction(() => document.querySelector("main").getBoundingClientRect().width >= 420);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await sidebarDivider.dblclick();
+    await inspectorDivider.dblclick();
+    assert.equal(await sidebarDivider.getAttribute("aria-valuenow"), "236");
+    assert.equal(await inspectorDivider.getAttribute("aria-valuenow"), "280");
+    await sidebarDivider.click();
+    await page.getByRole("button", { name: "增大侧栏", exact: true }).click();
+    assert.equal(await sidebarDivider.getAttribute("aria-valuenow"), "252");
+    await page.getByRole("button", { name: "重置侧栏宽度", exact: true }).click();
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".divider-popover:popover-open").count(), 0);
+    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
     await page.getByRole("button", { name: "选择本地工作区", exact: false }).click();
     await page.waitForFunction((projectPath) => document.querySelector(".main-header-sub")?.textContent === projectPath, project);
     await page.getByRole("textbox").fill("在临时项目中写入验收文件");

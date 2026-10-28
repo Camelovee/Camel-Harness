@@ -150,7 +150,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     mainWindow = new BrowserWindow({
       title: "Camel Harness", width: 1280, height: 840, minWidth: 960, minHeight: 640,
-      show: false, backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1b17" : "#eee9df",
+      show: false, backgroundColor: nativeTheme.shouldUseDarkColors ? "#202020" : "#f6f5f3",
       webPreferences: {
         preload: join(__dirname, "preload.js"), session: privateSession,
         contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true,

@@ -19,12 +19,12 @@ h1, h2, h3, p { margin-top: 0; }
 .eyebrow { font-size: 10px; font-weight: 650; letter-spacing: .14em; color: var(--muted); }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: var(--control-radius); color: var(--secondary); }
 .icon-button:hover { background: var(--surface-hover); color: var(--text); }
-.icon-button.is-active { background: var(--accent-soft); color: var(--accent); }
+.icon-button.is-active { color: var(--accent); background: var(--surface-hover); }
 .count-badge { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 6px; font: 11px/1 var(--font-mono); color: var(--muted); background: var(--surface-subtle); }
 .primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 14px; border: 1px solid transparent; border-radius: var(--control-radius); font-size: 13px; font-weight: 550; }
 .primary-button { background: var(--accent); color: var(--on-accent); }
 .primary-button:hover { filter: brightness(1.08); }
-.secondary-button { background: var(--surface); border-color: var(--control-border); color: var(--text); }
+.secondary-button { color: var(--secondary); }
 .secondary-button:hover { background: var(--surface-hover); }
 .danger-button { color: var(--surface-raised); background: var(--danger); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -86,7 +86,7 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-field input, .settings-field select { width: 100%; min-height: 40px; padding: 8px 11px; border: 1px solid var(--control-border); border-radius: 8px; color: var(--text); background: var(--surface-raised); font-size: 13px; font-weight: 400; }
 .settings-field input::placeholder { color: var(--muted); }
 .settings-models-heading { align-items: center; margin-top: 28px; }
-.settings-add { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; flex: 0 0 auto; padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); background: var(--surface-subtle); font-size: 12px; }
+.settings-add { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; flex: 0 0 auto; padding: 7px 11px; border-radius: 8px; color: var(--accent); font-size: 12px; }
 .settings-add:hover { background: var(--accent-soft); }
 .settings-model-list { display: grid; gap: 10px; margin-top: 16px; }
 .settings-model-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }

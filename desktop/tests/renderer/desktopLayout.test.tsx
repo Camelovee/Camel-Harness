@@ -47,3 +47,19 @@ it("欢迎建议只填写草稿并聚焦输入，不创建会话或调用模型"
   expect(document.activeElement).toBe(input);
   expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
+
+it("分隔线可通过键盘调整两侧宽度，并在收起后转移焦点", async () => {
+  render(<DesktopApp />);
+  await screen.findByText("今天，想构建些什么？");
+  const sidebar = screen.getByRole("separator", { name: "侧栏宽度" });
+  const inspector = screen.getByRole("separator", { name: "执行详情宽度" });
+  fireEvent.keyDown(sidebar, { key: "ArrowRight" });
+  expect(sidebar.getAttribute("aria-valuenow")).toBe("252");
+  fireEvent.keyDown(inspector, { key: "ArrowLeft" });
+  expect(inspector.getAttribute("aria-valuenow")).toBe("296");
+  fireEvent.keyDown(sidebar, { key: "Home" });
+  expect(sidebar.getAttribute("aria-valuenow")).toBe("200");
+  fireEvent.keyDown(sidebar, { key: "Enter" });
+  expect(screen.queryByRole("separator", { name: "侧栏宽度" })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "展开侧栏" }));
+});
