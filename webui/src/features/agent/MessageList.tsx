@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import type { ApprovalStatus, Message, Session, SubagentView } from "../../shared/model";
 import {
@@ -39,6 +39,12 @@ export function MessageList({
   const outcomeLabels = { completed: "已完成", failed: "执行失败", cancelled: "已取消", unknown: "结果未知" };
   const scrollRef = useRef<HTMLElement>(null);
   const pinnedToBottom = useRef(true);
+  const subagentsByCallId = new Map<string, SubagentView[]>();
+  for (const child of subagents) {
+    const siblings = subagentsByCallId.get(child.parent_tool_call_id) ?? [];
+    siblings.push(child);
+    subagentsByCallId.set(child.parent_tool_call_id, siblings);
+  }
 
   useEffect(() => {
     pinnedToBottom.current = true;
@@ -49,7 +55,7 @@ export function MessageList({
     if (element && pinnedToBottom.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, subagents]);
 
   return (
     <section
@@ -67,14 +73,6 @@ export function MessageList({
         {!activeSession && (
           <Welcome activeWorkspace={activeWorkspace} onStart={onStart} />
         )}
-        {subagents.length > 0 && <div className="subagent-summaries" aria-label="委派任务">
-          {subagents.map((child) => <button key={child.session_id} className="subagent-summary"
-            onClick={() => onOpenSubagent?.(child.session_id)}>
-            <strong>{child.agent_type} 子任务</strong>
-            <span>{child.task}</span>
-            <small>{child.task_outcome ? outcomeLabels[child.task_outcome.status] : child.phase}{child.approvals.length > 0 ? ` · ${child.approvals.length} 项待审批` : ""} · 查看过程 ›</small>
-          </button>)}
-        </div>}
         {messages.map((message) => {
           if (message.role === "toolResult") {
             return <ToolMessage key={message.id} message={message} onOpen={onOpenTool} />;
@@ -89,17 +87,31 @@ export function MessageList({
               />
             );
           }
+          // 父调用决定卡片位置；历史快照和实时子事件的到达顺序不参与排序。
+          const messageSubagents = message.role === "assistant"
+            ? message.content.flatMap((block) => block.type === "tool_use" && block.name === "delegate_task" && block.call_id
+              ? subagentsByCallId.get(block.call_id) ?? [] : [])
+            : [];
           return (
-            <ConversationMessage
-              key={message.id}
-              message={message}
-              showToolCalls={showToolCalls}
-              streaming={
-                message.role === "assistant" &&
-                running &&
-                message.id === streamAssistantId
-              }
-            />
+            <Fragment key={message.id}>
+              <ConversationMessage
+                message={message}
+                showToolCalls={showToolCalls}
+                streaming={
+                  message.role === "assistant" &&
+                  running &&
+                  message.id === streamAssistantId
+                }
+              />
+              {messageSubagents.length > 0 && <div className="subagent-summaries" aria-label="委派任务">
+                {messageSubagents.map((child) => <button key={child.session_id} className="subagent-summary"
+                  onClick={() => onOpenSubagent?.(child.session_id)}>
+                  <strong>{child.agent_type} 子任务</strong>
+                  <span>{child.task}</span>
+                  <small>{child.task_outcome ? outcomeLabels[child.task_outcome.status] : child.phase}{child.approvals.length > 0 ? ` · ${child.approvals.length} 项待审批` : ""} · 查看过程 ›</small>
+                </button>)}
+              </div>}
+            </Fragment>
           );
         })}
       </div>
