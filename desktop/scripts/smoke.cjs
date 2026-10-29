@@ -138,6 +138,14 @@ async function main() {
     await page.getByRole("button", { name: "选择本地工作区", exact: false }).click();
     await page.waitForFunction((projectPath) => document.querySelector(".main-header-sub")?.textContent === projectPath, project);
     await page.getByRole("textbox").fill("在临时项目中写入验收文件");
+    const workspaceGroup = page.getByRole("button", { name: "打开工作区 中文 项目", exact: true });
+    await workspaceGroup.click();
+    assert.equal(await workspaceGroup.getAttribute("aria-expanded"), "false");
+    assert.equal(await page.getByRole("button", { name: "打开会话 新对话", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("textbox").inputValue(), "在临时项目中写入验收文件");
+    await workspaceGroup.click();
+    assert.equal(await workspaceGroup.getAttribute("aria-expanded"), "true");
+    await page.getByRole("button", { name: "打开会话 新对话", exact: true }).waitFor();
     await page.getByRole("textbox").press("Enter");
     await page.getByRole("button", { name: "允许执行" }).waitFor({ timeout: 30_000 });
     if (process.argv[3]) {

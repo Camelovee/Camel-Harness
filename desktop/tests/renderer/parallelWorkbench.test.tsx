@@ -110,3 +110,37 @@ it("组合输入 Enter 只确认候选词，不创建运行；Shift Enter 保留
   expect(channels.size).toBe(0);
   expect((input as HTMLTextAreaElement).value).toBe("输入中的中文");
 });
+
+it("工作区可反复折叠，保留当前 B 会话、草稿和持续输出", async () => {
+  await openWorkbench();
+  fireEvent.click(screen.getByRole("button", { name: "打开会话 会话 B" }));
+  await send("任务 B");
+  const input = screen.getByRole("textbox") as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: "B 的追加草稿" } });
+  const group = screen.getByRole("button", { name: "打开工作区 workspace" });
+  const messagesRequests = requests.filter((url) => url.endsWith("/messages"));
+
+  fireEvent.click(group);
+  expect(group.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("button", { name: "打开会话 会话 B" })).toBeNull();
+  expect(document.querySelector(".main-header-title")!.textContent).toBe("会话 B");
+  expect(input.value).toBe("B 的追加草稿");
+  await act(async () => {
+    channels.get("b")!.emit({ type: "message_update", message_id: "assistant", assistant_event: { type: "text_delta", text: "折叠时的实时输出" } });
+  });
+  expect(screen.getByText("折叠时的实时输出")).toBeTruthy();
+  expect(group.getAttribute("aria-expanded")).toBe("false");
+
+  fireEvent.click(group);
+  expect(group.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("button", { name: "打开会话 会话 B" }).getAttribute("aria-current")).toBe("page");
+  expect(input.value).toBe("B 的追加草稿");
+  expect(screen.getByRole("button", { name: "暂停当前 Run" })).toBeTruthy();
+  expect(requests.filter((url) => url.endsWith("/messages"))).toEqual(messagesRequests);
+  fireEvent.click(group);
+  expect(group.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+  fireEvent.click(group);
+  expect(group.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("button", { name: "打开会话 会话 A" }).getAttribute("aria-current")).toBe("page");
+});

@@ -1,4 +1,5 @@
-import { ChatCircle, FolderOpen, GearSix, PencilSimple, Plus, ShieldCheck, Trash, SpinnerGap } from "@phosphor-icons/react";
+import { CaretRight, ChatCircle, Folder, FolderOpen, GearSix, PencilSimple, Plus, ShieldCheck, Trash, SpinnerGap } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
 import type { SessionIndicator, Workspace } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
 
@@ -22,6 +23,10 @@ type Props = {
 export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, selectingWorkspace, newChatDisabled,
   indicators, onSelectWorkspace, onNewChat, onActivateWorkspace, onActivateSession, onCreateSession, onDeleteSession,
   onRenameSession, onOpenSettings }: Props) {
+  const [collapsed, setCollapsed] = useState(false);
+  // 折叠只影响导航；新选择或新建会话时重新展示对应分组。
+  useEffect(() => setCollapsed(false), [activeWorkspace, activeId]);
+
   return <aside className="sidebar" aria-label="工作区与会话">
     <div className="sidebar-heading"><span className="eyebrow">工作空间</span><span className="count-badge">{workspaces.length}</span></div>
     <button aria-label="新对话" className="new-chat" onClick={onNewChat} disabled={newChatDisabled}><Plus size={18} aria-hidden="true" />新对话<span className="shortcut-key" aria-hidden="true">⌘ N / Ctrl N</span></button>
@@ -31,15 +36,22 @@ export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, select
     </button>
     <div className="workspace-heading"><span>工作区与会话</span><span className="sidebar-section-rule" /></div>
     <nav className="workspace-list" aria-label="工作区导航">
-      {workspaces.map((workspace) => <div className={`workspace-group ${workspace.workspace === activeWorkspace ? "active" : ""}`} key={workspace.workspace}>
+      {workspaces.map((workspace) => {
+        const active = workspace.workspace === activeWorkspace;
+        const expanded = active && !collapsed;
+        return <div className={`workspace-group ${active ? "active" : ""}`} key={workspace.workspace}>
         <div className="workspace-row">
-          <button className="workspace-select" aria-label={`打开工作区 ${workspaceName(workspace.workspace)}`} aria-expanded={workspace.workspace === activeWorkspace} onClick={() => onActivateWorkspace(workspace)} title={workspace.workspace}>
-            <span className="workspace-folder"><FolderOpen size={19} aria-hidden="true" /></span>
+          <button className="workspace-select" aria-label={`打开工作区 ${workspaceName(workspace.workspace)}`} aria-expanded={expanded} onClick={() => {
+            if (active) setCollapsed((current) => !current);
+            else onActivateWorkspace(workspace);
+          }} title={workspace.workspace}>
+            <CaretRight className="workspace-chevron" size={12} aria-hidden="true" />
+            <span className="workspace-folder">{expanded ? <FolderOpen size={19} aria-hidden="true" /> : <Folder size={19} aria-hidden="true" />}</span>
             <span className="workspace-copy"><strong>{workspaceName(workspace.workspace)}</strong><small>{workspace.sessions.length} 个会话{workspace.sessions.some((session) => indicators[session.session_id]?.running) && " · 运行中"}</small></span>
           </button>
           <button className="workspace-action icon-button" aria-label={`在${workspaceName(workspace.workspace)}中创建会话`} title="新建会话" onClick={() => onCreateSession(workspace.workspace)}><Plus size={16} aria-hidden="true" /></button>
         </div>
-        {workspace.workspace === activeWorkspace && <div className="session-list">{workspace.sessions.map((session) => {
+        {expanded && <div className="session-list">{workspace.sessions.map((session) => {
           const indicator = indicators[session.session_id];
           const label = indicator?.approvalCount ? "等待审批" : indicator?.running ? "运行中" : indicator?.failed ? "运行失败"
             : indicator?.cancelled ? "已暂停" : indicator?.unread ? "已完成 · 未读" : `${session.message_count} 条消息`;
@@ -55,7 +67,7 @@ export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, select
             </div>
           </div>;
         })}</div>}
-      </div>)}
+      </div>; })}
       {!workspaces.length && <div className="empty-workspaces"><FolderOpen size={28} aria-hidden="true" /><strong>为想法找个落脚点</strong><p>选择本地项目，<br />你的会话会按工作区整理。</p></div>}
     </nav>
     <div className="sidebar-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>会话历史保存在本机</span></div>

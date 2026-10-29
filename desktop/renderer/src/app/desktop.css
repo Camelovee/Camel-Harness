@@ -33,6 +33,8 @@
 .workspace-group { margin-bottom: 12px; }.workspace-row { display: flex; align-items: center; min-width: 0; padding: 5px 4px; border-radius: 10px; }.workspace-group.active .workspace-row { background: transparent; }
 .workspace-select { display: flex; align-items: center; flex: 1; gap: 9px; min-width: 0; padding: 8px 5px; text-align: left; border-radius: 7px; }.workspace-select:hover { color: var(--accent); }.workspace-folder { display: grid; place-items: center; width: 28px; height: 30px; color: var(--accent); }
 .workspace-copy, .session-copy { display: grid; gap: 3px; min-width: 0; }.workspace-copy strong { font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }.workspace-copy small { color: var(--muted); font-size: 11px; }
+.workspace-chevron { color: var(--muted); transition: transform var(--motion-fast); }
+.workspace-select[aria-expanded="true"] .workspace-chevron { transform: rotate(90deg); }
 .workspace-action.icon-button { width: 28px; height: 30px; flex: 0 0 auto; }
 .session-list { display: grid; gap: 5px; margin-top: 7px; padding-left: 8px; border-left: 1px solid var(--border); margin-left: 15px; }
 .session-item { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 9px; }.session-item:hover { background: var(--surface-subtle); }.session-item.active { background: var(--surface-hover); }
