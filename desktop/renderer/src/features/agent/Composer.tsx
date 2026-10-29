@@ -80,9 +80,9 @@ export function Composer({
   return (
     <div className="composer-area">
       <div className={`composer-box ${!active ? "disabled" : ""}`}>
-        <label className="composer-label" htmlFor="message-input">{running ? "继续引导这个任务" : "向 Camel 发送消息"}</label>
         <textarea
           id="message-input"
+          aria-label={running ? "继续引导这个任务" : "向 Camel 发送消息"}
           aria-describedby="composer-shortcuts"
           ref={inputRef}
           disabled={!active || !selectedModelId}
@@ -104,7 +104,7 @@ export function Composer({
             }
           }}
           placeholder={!active ? "正在准备本地工作区" : selectedModelId ? "输入消息，开始与 Agent 协作…" : "请先在设置中配置模型"}
-          rows={2}
+          rows={1}
         />
         <div className="composer-toolbar">
           <button type="button" className="composer-directory" onClick={onChooseWorkspace} disabled={choosingWorkspace || running} title={`选择新会话的工作目录；当前：${activeWorkspace ?? "用户主目录"}`} aria-label="选择新会话工作目录">

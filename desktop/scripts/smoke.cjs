@@ -136,6 +136,15 @@ async function main() {
     await page.getByRole("heading", { name: "今天，想构建些什么？" }).waitFor();
     await page.waitForTimeout(360);
     await assertConversationAlignment(page);
+    const composerHeight = await page.locator(".composer-box").evaluate((element) => element.getBoundingClientRect().height);
+    assert.ok(composerHeight <= 100, `空输入框高度过大：${composerHeight}`);
+    const messageInput = page.getByRole("textbox", { name: "向 Camel 发送消息" });
+    await messageInput.fill("多行输入\n".repeat(12));
+    const inputHeight = await messageInput.evaluate((element) => element.getBoundingClientRect().height);
+    assert.equal(inputHeight, 180);
+    assert.ok(await messageInput.evaluate((element) => element.scrollHeight > element.clientHeight));
+    await messageInput.fill("");
+    assert.equal(await page.locator(".composer-box").evaluate((element) => element.getBoundingClientRect().height), composerHeight);
     const scrollbarStyle = await page.addStyleTag({ content: "main .messages { scrollbar-gutter: stable; }" });
     await assertConversationAlignment(page);
     await scrollbarStyle.evaluate((element) => element.remove());
