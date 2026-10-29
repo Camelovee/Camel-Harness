@@ -45,7 +45,6 @@ export function SettingsDialog({
     <ModalDialog className="settings-dialog" labelledBy="settings-title" onClose={onClose}>
         <header className="settings-header">
           <div>
-            <span className="eyebrow">PREFERENCES</span>
             <h2 id="settings-title">设置</h2>
           </div>
           <button ref={closeRef} type="button" className="modal-close icon-button" onClick={onClose} aria-label="关闭设置"><X size={20} aria-hidden="true" /></button>
@@ -68,7 +67,7 @@ export function SettingsDialog({
                 </button>
               ))}
             </nav>
-            <div className="settings-content">
+            <div className="settings-content" key={section}>
               {section === "appearance" && (
                 <section className="appearance-settings">
                   <h3>外观与操作</h3>

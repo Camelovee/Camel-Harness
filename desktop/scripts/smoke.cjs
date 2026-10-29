@@ -5,6 +5,42 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const assert = require("node:assert/strict");
 
+async function assertConversationAlignment(page) {
+  const bounds = await page.evaluate(() => ["main .messages-inner", ".composer-box"].map((selector) => {
+    const rectangle = document.querySelector(selector).getBoundingClientRect();
+    return { left: rectangle.left, right: rectangle.right, width: rectangle.width };
+  }));
+  assert.ok(Math.abs(bounds[0].left - bounds[1].left) < 1 && Math.abs(bounds[0].right - bounds[1].right) < 1,
+    `消息与输入框未对齐：${JSON.stringify(bounds)}`);
+  return bounds[0].width;
+}
+
+async function assertSettingsLayout(page) {
+  await page.waitForTimeout(240);
+  const snapshot = () => page.evaluate(() => [".settings-dialog", ".settings-header", ".settings-nav"].map((selector) => {
+    const rectangle = document.querySelector(selector).getBoundingClientRect();
+    return { x: rectangle.x, y: rectangle.y, width: rectangle.width, height: rectangle.height };
+  }));
+  const initial = await snapshot();
+  assert.equal(initial[0].y, 48);
+  for (const label of ["外观", "Skills", "MCP", "模型"]) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    assert.deepEqual(await snapshot(), initial, `切换 ${label} 时设置框发生位移`);
+  }
+  await page.getByRole("button", { name: "编辑", exact: true }).first().click();
+  const scrollTop = await page.locator(".settings-content").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  assert.ok(scrollTop > 0, "长表单没有在设置内容区内滚动");
+  assert.deepEqual(await snapshot(), initial, "滚动表单时设置头部发生位移");
+  assert.equal(await page.locator(".settings-dialog").evaluate((element) => element.scrollTop), 0);
+  await page.getByRole("button", { name: "外观", exact: true }).click();
+  assert.equal(await page.locator(".settings-content").evaluate((element) => element.scrollTop), 0);
+  await page.getByRole("button", { name: "模型", exact: true }).click();
+  assert.equal(await page.locator(".settings-content").evaluate((element) => element.scrollTop), 0);
+}
+
 async function main() {
   const home = await realpath(await mkdtemp(join(tmpdir(), "camel-desktop-")));
   const desktopRoot = resolve(__dirname, "..");
@@ -99,6 +135,17 @@ async function main() {
     await page.reload();
     await page.getByRole("heading", { name: "今天，想构建些什么？" }).waitFor();
     await page.waitForTimeout(360);
+    await assertConversationAlignment(page);
+    const scrollbarStyle = await page.addStyleTag({ content: "main .messages { scrollbar-gutter: stable; }" });
+    await assertConversationAlignment(page);
+    await scrollbarStyle.evaluate((element) => element.remove());
+    await page.getByRole("button", { name: "收起执行详情", exact: true }).click();
+    await page.getByRole("button", { name: "收起侧栏", exact: true }).click();
+    await page.waitForTimeout(360);
+    assert.equal(await assertConversationAlignment(page), 760);
+    await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
+    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    await page.waitForTimeout(360);
     const welcomeBounds = await page.getByRole("button", { name: "创建空会话", exact: true }).boundingBox();
     const messageBounds = await page.locator("main .messages").boundingBox();
     assert.ok(welcomeBounds.y + welcomeBounds.height <= messageBounds.y + messageBounds.height, `欢迎操作被输入区遮挡：${JSON.stringify({ welcomeBounds, messageBounds })}`);
@@ -122,6 +169,7 @@ async function main() {
     await sidebarDivider.press("End");
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 840));
     await page.waitForFunction(() => document.querySelector("main").getBoundingClientRect().width >= 420);
+    await assertConversationAlignment(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
     await sidebarDivider.dblclick();
@@ -161,6 +209,7 @@ async function main() {
     await page.getByRole("complementary", { name: "工具详情" }).waitFor();
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 640));
     await page.getByRole("complementary", { name: "工具详情" }).waitFor({ state: "hidden" });
+    await assertConversationAlignment(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
     await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
     await page.getByRole("dialog", { name: "执行详情面板" }).waitFor();
@@ -172,6 +221,9 @@ async function main() {
     await page.keyboard.press("Escape");
     await page.getByRole("dialog", { name: "执行详情面板" }).waitFor({ state: "hidden" });
     assert.equal(await page.getByRole("button", { name: "展开执行详情", exact: true }).evaluate((element) => element === document.activeElement), true);
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await assertSettingsLayout(page);
+    await page.getByRole("button", { name: "关闭设置" }).click();
     await application.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].setSize(1280, 840);
       BrowserWindow.getAllWindows()[0].webContents.send("desktop:action", "toggle-sidebar");
@@ -181,6 +233,7 @@ async function main() {
     await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
     await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
     await page.getByRole("button", { name: "设置", exact: true }).click();
+    await assertSettingsLayout(page);
     await page.getByRole("button", { name: "外观", exact: true }).click();
     for (let index = 0; index < 10; index++) {
       await page.keyboard.press("Tab");
@@ -188,6 +241,10 @@ async function main() {
     }
     await page.getByLabel("界面主题").selectOption("dark");
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+    if (process.argv[3]) {
+      await page.waitForTimeout(160);
+      await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-settings.png"), fullPage: true });
+    }
     await page.getByRole("button", { name: "关闭设置" }).click();
     await page.waitForTimeout(360);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-dark.png"), fullPage: true });

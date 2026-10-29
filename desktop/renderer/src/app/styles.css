@@ -68,14 +68,17 @@ h1, h2, h3, p { margin-top: 0; }
 .error-toast { position: fixed; right: 28px; bottom: 24px; z-index: 60; display: flex; align-items: flex-start; gap: 12px; max-width: min(560px, calc(100vw - 48px)); padding: 16px 18px; border: 1px solid var(--danger-border); border-radius: 12px; color: var(--danger); background: var(--danger-bg); box-shadow: var(--shadow-dialog); animation: message-in var(--motion-base) var(--ease-out); }
 .error-toast > span { overflow-wrap: anywhere; }.error-toast button { padding: 2px; color: inherit; }
 
-.settings-dialog { width: 820px; overflow: hidden; }
-.settings-header { padding: 24px 26px 20px; border-bottom: 1px solid var(--border); }
-.settings-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 0; }
-.settings-nav { display: flex; flex-direction: column; gap: 5px; padding: 20px 12px; background: var(--surface-subtle); border-right: 1px solid var(--border); }
-.settings-nav-item { min-height: 39px; padding: 9px 12px; border-radius: 8px; color: var(--secondary); text-align: left; font-size: 13px; }
+.settings-dialog { width: 820px; height: min(680px, calc(100dvh - 96px)); margin: 48px auto; overflow: hidden; }
+.settings-dialog[open] { display: flex; flex-direction: column; }
+.settings-header { flex: 0 0 auto; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.settings-header h2 { margin: 0; font-size: 18px; }
+.settings-body { display: grid; grid-template-columns: 150px minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; padding: 20px 12px; min-height: 0; overflow-y: auto; background: var(--surface-subtle); border-right: 1px solid var(--border); }
+.settings-nav-item { min-height: 34px; padding: 6px 10px; border-radius: 4px; color: var(--secondary); text-align: left; font-size: 13px; }
 .settings-nav-item:hover { background: var(--surface-hover); }
-.settings-nav-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
-.settings-content { padding: 24px 26px; max-height: min(620px, calc(100dvh - 150px)); overflow-y: auto; }
+.settings-nav-item.active { color: var(--text); background: var(--surface-hover); font-weight: 550; }
+.settings-nav-item:active:not(:disabled) { transform: none; }
+.settings-content { min-width: 0; min-height: 0; padding: 24px 26px; overflow-y: auto; scrollbar-gutter: stable; }
 .settings-empty { margin: 0; padding: 32px; color: var(--secondary); }
 .settings-section-heading, .settings-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .settings-section-heading h3, .settings-editor-head h3, .settings-placeholder h3, .appearance-settings h3 { margin: 0; font-size: 15px; font-weight: 600; }
