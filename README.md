@@ -1,9 +1,10 @@
 # Camel Harness
 
-受 pi-agent 启发的轻量 Python Agent Runtime，用于在本地工作区读取、修改代码并执行任务。
-通过 Electron 桌面客户端提供本地交互，React 渲染界面与内置 Python 后端由桌面工程统一管理。
+面向本地项目的桌面编程助手，可读取、修改代码并执行任务。底层是受 pi-agent 启发的轻量 Python Agent Runtime，Electron 负责窗口、React 界面与内置 Python 后端。
 
-桌面预览版支持 macOS Apple Silicon、macOS Intel 和 Windows x64，内置 Python 后端。下载安装、源码运行与打包见 [桌面客户端说明](desktop/README.md)。预览安装包需由维护者完成原生平台验证后发布。
+当前为 **1.1.0 桌面预览开发版**，源码位于 [`desktop-dev`](https://github.com/Camelovee/Camel-Harness/tree/desktop-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.1.0 安装包尚未发布，可先按下文从源码运行。
+
+打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64；本机已验证 Apple Silicon 应用，Intel Mac 和 Windows 的原生安装仍待验证。下载安装、源码开发及打包见 [桌面客户端说明](desktop/README.md)。
 
 ## 核心能力
 
@@ -17,11 +18,18 @@
 
 简洁三栏工作台的浅色与深色界面，左右分隔线支持拖动调整宽度。截图来自临时项目和本机模拟服务，未使用真实密钥或外部模型。
 
+- 左侧按工作区管理会话，点击工作区名称可展开或收起，保留当前对话、草稿和运行状态。
+- 中间采用与聊天记录等宽的紧凑输入框，多行草稿自动增高；支持模型、思考强度和权限选择。
+- 右侧展示真实执行状态、Token 用量、文件和工具活动，可进一步查看工具或子任务详情。
+- 设置页固定头部与分类栏，内容独立滚动；主题支持浅色、深色和跟随系统，并响应“减少动态效果”偏好。
+
 ![Camel Harness 桌面浅色主题](docs/images/desktop-light.png)
 
 ![Camel Harness 桌面深色主题](docs/images/desktop-dark.png)
 
-## 快速启动
+[设置界面预览](docs/images/desktop-settings.png) · [操作与快捷键](desktop/README.md#工作台操作)
+
+## 从源码启动
 
 需要 Python 3.11+、Node.js 24 和 [uv](https://docs.astral.sh/uv/)。
 
@@ -30,7 +38,7 @@ Windows 可在 PowerShell 中执行以下命令，无需安装 `fcntl` 或使用
 先获取项目，后续命令均在仓库根目录执行：
 
 ```bash
-git clone https://github.com/Camelovee/Camel-Harness.git
+git clone --branch desktop-dev https://github.com/Camelovee/Camel-Harness.git
 cd Camel-Harness
 ```
 
@@ -96,7 +104,7 @@ MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制
 
 ## 开发与验证
 
-回归覆盖与维护原则见 [测试说明](tests/README.md)。
+桌面、Backend 接入和打包工作在 `desktop-dev` 进行，独立 Harness 核心能力在 `harness-dev` 开发，再整合到桌面分支。源码分层和资源所有权见 [项目架构](docs/项目架构.md)，回归覆盖与维护原则见 [测试说明](tests/README.md)。
 
 ```bash
 uv run ruff check src tests scripts desktop/backend_entry.py
@@ -114,7 +122,7 @@ git diff --check
 
 - [项目架构](docs/项目架构.md)：当前桌面端、Backend 与 Harness 的职责、依赖和运行流程。
 - [路书](docs/路书.md)：已实现能力、待验证事项及按需扩展范围。
-- 方案设计：[上下文管理](docs/方案设计/上下文管理设计.md)、[工具安全](docs/方案设计/工具安全设计.md)、[会话](docs/方案设计/会话系统设计.md)、[上下文压缩](docs/方案设计/上下文压缩设计.md)、[记忆](docs/方案设计/记忆系统设计.md)。
+- 方案设计：[桌面客户端](docs/方案设计/桌面客户端设计.md)、[上下文管理](docs/方案设计/上下文管理设计.md)、[工具安全](docs/方案设计/工具安全设计.md)、[会话](docs/方案设计/会话系统设计.md)、[上下文压缩](docs/方案设计/上下文压缩设计.md)、[记忆](docs/方案设计/记忆系统设计.md)。
 - [会话性能基准](docs/会话性能基准.md)：本机全量重放测量方式及环境限制。
 
 个人简历模板和面试准备位于本机 `docs/学习/`，整个目录已由 Git 忽略，不随仓库发布。

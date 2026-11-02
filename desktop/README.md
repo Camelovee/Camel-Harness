@@ -1,10 +1,10 @@
 # Camel Harness 桌面预览版
 
-Electron 是唯一产品入口，工程内包含 React 渲染界面和 Python/FastAPI 后端集成，提供 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。
+Electron 是唯一产品入口，工程内包含 React 渲染界面和 Python/FastAPI 后端集成。当前开发分支为 `desktop-dev`，版本为 1.1.0 预览版；打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64。
 
 ## 下载安装
 
-从 [GitHub Releases](https://github.com/Camelovee/Camel-Harness/releases) 选择对应安装包；维护者尚未发布时可从源码构建。
+截至 2026-11-02，1.1.0 桌面安装包尚未发布，已有的 1.0.1 Release 不包含桌面客户端。当前请从 `desktop-dev` [运行源码或构建安装包](#源码开发与打包)。维护者完成平台验证并发布后，可从 [GitHub Releases](https://github.com/Camelovee/Camel-Harness/releases) 选择以下安装包。
 
 | 系统 | 文件 |
 | --- | --- |
@@ -27,9 +27,19 @@ Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Win
 
 配置和会话仍位于 `~/.camel/config.json`、`~/.camel/sessions/`，Windows 对应 `%USERPROFILE%\.camel\`。更新和卸载程序不主动删除这些文件。主题写入配置的 `theme` 字段，支持 `system`、`light`、`dark`。
 
-界面采用暖白 / 中性夜色的简洁三栏布局：左侧工作区与会话、中间对话和输入、右侧真实执行概览。拖动两条分隔线可调整宽度，双击复位；聚焦后可用方向键微调，点击可打开宽度操作。宽度在当前应用会话内保留，两侧可独立收起；窄窗口的详情作为模态面板打开。动效响应系统“减少动态效果”偏好，欢迎建议只填写草稿。
+## 工作台操作
 
-输入框与聊天记录等宽，侧栏按钮采用紧凑的平面反馈。设置弹窗保持顶部位置和高度，标题与分类固定，内容独立滚动；切换分类不会上下跳动。
+界面采用暖白 / 中性夜色的简洁三栏布局，两侧可独立收起。动效响应系统“减少动态效果”偏好。
+
+| 区域 | 操作与行为 |
+| --- | --- |
+| 工作区与会话 | 点击当前工作区名称展开或收起，不切换会话、不清空草稿，也不停止任务；切换或新建会话时重新展示对应分组 |
+| 分隔线 | 拖动调整两侧宽度，双击复位；方向键每次微调 16 px，Shift 加方向键为 32 px；点击可打开缩小、增大及重置操作 |
+| 输入框 | 默认单行紧凑显示，与聊天记录等宽；多行草稿自动增高至 180 px 后内部滚动。Enter 发送，Shift + Enter 换行，中文输入法确认候选词不会直接发送 |
+| 执行详情 | 展示真实状态、用量和工具活动；点击文件或子任务查看详情。窄窗口使用可按 Escape 关闭的模态面板 |
+| 设置 | 头部和左侧分类固定，右侧内容独立滚动；切换分类回到内容顶部，弹窗不重新居中移动 |
+
+分栏宽度只在本次应用会话内保留；主题写入用户配置并在下次启动继续使用。欢迎页建议只填写草稿，不自动发起任务。
 
 [查看设置界面预览](../docs/images/desktop-settings.png)
 
@@ -39,7 +49,14 @@ Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Win
 
 ## 源码开发与打包
 
-在仓库根目录执行，需要 Python 3.11+、Node.js 24 和 uv：
+需要 Python 3.11+、Node.js 24 和 uv。首次获取桌面分支：
+
+```bash
+git clone --branch desktop-dev https://github.com/Camelovee/Camel-Harness.git
+cd Camel-Harness
+```
+
+后续命令在仓库根目录执行：
 
 ```bash
 uv sync --locked --extra dev --extra desktop --python 3.11
@@ -82,9 +99,13 @@ node desktop/scripts/smoke.cjs "desktop/release/win-unpacked/Camel Harness.exe"
 
 ## GitHub 发布
 
-2026-10-28 桌面工程收敛后本机验证：Apple Silicon Mac 已完成独立后端构建、DMG 生成、只读挂载、复制到带中文和空格的临时安装目录，以及移除开发工具路径后的真实应用验收。Anthropic/OpenAI 均使用本机协议替身，审批写入、主题、详情缩放、取消退出、确认退出和未完成响应不落盘通过。Windows、Intel Mac 的原生构建及实际安装尚待对应平台验证，不能视为已通过。
+本机验证覆盖 Apple Silicon Mac 的独立后端构建、DMG 生成、只读挂载、复制到带中文和空格的临时安装目录，以及移除开发工具路径后的真实应用验收。最新界面回归包含紧凑输入区、多行伸缩与清空恢复、分栏拖动、工作区折叠、消息输入等宽、设置分类及长表单滚动时的头部稳定。
+
+Anthropic/OpenAI 均使用本机协议替身，审批写入、主题、详情缩放、取消退出、确认退出和未完成响应不落盘通过。Windows、Intel Mac 的原生构建及实际安装尚待对应平台验证，不能视为已通过。
 
 Desktop 工作流在三个原生 runner 上检查、打包并验证真实应用。PR 和手动运行只上传 Actions 产物。维护者推送与工程版本一致的 `v<版本>` 标签后，工作流汇总安装包和摘要，创建 **draft + prerelease**，等待维护者检查后发布，不自动改写已发布的 Release。
+
+普通分支推送只触发 CI，不上传安装包或创建 Release。三平台打包需通过 Desktop 工作流的手动入口、匹配路径的 PR 或版本标签触发；工作流定义见 [desktop.yml](../.github/workflows/desktop.yml)。
 
 取得证书后另行接入 macOS Developer ID 签名、公证和 Windows 签名。发布前应补齐三个平台的实际安装检查，不能以其他系统的模拟结果代替。
 
