@@ -2,6 +2,7 @@
 
 ## 1.1.0 — 2026-10-28（桌面预览，待发布）
 
+- **分支统一（2026-11-03）**：将本地及 GitHub 的 `desktop-dev` 重命名为 `camel-harness-dev`，统一承载桌面、Backend 与 Harness 开发；移除已完全合入开发线的本地 `harness-dev`，保留 `main` 稳定主线，同步开发约定和源码获取入口。
 - **文档同步（2026-11-02）**：明确桌面源码从 `desktop-dev` 获取，更新分栏、工作区折叠、紧凑输入和设置操作说明，区分本机验证、三平台构建与尚未发布的安装包。
 - **桌面入口**：新增 Electron/TypeScript 工程，自动管理内置 Python 后端、动态端口、单实例、原生目录选择和故障重启；保留 HTTP/SSE 业务协议。
 - **桌面收敛**：将 React 源码与界面回归迁入 `desktop/`，统一 npm 依赖、构建与 CI；删除独立 Web 工程、`camel-harness-web` 命令、CORS、公开 API 文档和 Python 目录选择，目录与菜单仅使用原生桥接。

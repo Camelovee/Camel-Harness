@@ -1,10 +1,10 @@
 # Camel Harness 桌面预览版
 
-Electron 是唯一产品入口，工程内包含 React 渲染界面和 Python/FastAPI 后端集成。当前开发分支为 `desktop-dev`，版本为 1.1.0 预览版；打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64。
+Electron 是唯一产品入口，工程内包含 React 渲染界面和 Python/FastAPI 后端集成。当前统一开发分支为 `camel-harness-dev`，稳定主线为 `main`，版本为 1.1.0 预览版；打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64。
 
 ## 下载安装
 
-截至 2026-11-02，1.1.0 桌面安装包尚未发布，已有的 1.0.1 Release 不包含桌面客户端。当前请从 `desktop-dev` [运行源码或构建安装包](#源码开发与打包)。维护者完成平台验证并发布后，可从 [GitHub Releases](https://github.com/Camelovee/Camel-Harness/releases) 选择以下安装包。
+截至 2026-11-02，1.1.0 桌面安装包尚未发布，已有的 1.0.1 Release 不包含桌面客户端。当前请从 `camel-harness-dev` [运行源码或构建安装包](#源码开发与打包)。维护者完成平台验证并发布后，可从 [GitHub Releases](https://github.com/Camelovee/Camel-Harness/releases) 选择以下安装包。
 
 | 系统 | 文件 |
 | --- | --- |
@@ -52,7 +52,7 @@ Release 附带 `SHA256SUMS.txt`。macOS 使用 `shasum -a 256 <安装包>`，Win
 需要 Python 3.11+、Node.js 24 和 uv。首次获取桌面分支：
 
 ```bash
-git clone --branch desktop-dev https://github.com/Camelovee/Camel-Harness.git
+git clone --branch camel-harness-dev https://github.com/Camelovee/Camel-Harness.git
 cd Camel-Harness
 ```
 

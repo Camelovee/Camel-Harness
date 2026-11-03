@@ -2,7 +2,7 @@
 
 面向本地项目的桌面编程助手，可读取、修改代码并执行任务。底层是受 pi-agent 启发的轻量 Python Agent Runtime，Electron 负责窗口、React 界面与内置 Python 后端。
 
-当前为 **1.1.0 桌面预览开发版**，源码位于 [`desktop-dev`](https://github.com/Camelovee/Camel-Harness/tree/desktop-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.1.0 安装包尚未发布，可先按下文从源码运行。
+当前为 **1.1.0 桌面预览开发版**，源码位于 [`camel-harness-dev`](https://github.com/Camelovee/Camel-Harness/tree/camel-harness-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.1.0 安装包尚未发布，可先按下文从源码运行。
 
 打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64；本机已验证 Apple Silicon 应用，Intel Mac 和 Windows 的原生安装仍待验证。下载安装、源码开发及打包见 [桌面客户端说明](desktop/README.md)。
 
@@ -38,7 +38,7 @@ Windows 可在 PowerShell 中执行以下命令，无需安装 `fcntl` 或使用
 先获取项目，后续命令均在仓库根目录执行：
 
 ```bash
-git clone --branch desktop-dev https://github.com/Camelovee/Camel-Harness.git
+git clone --branch camel-harness-dev https://github.com/Camelovee/Camel-Harness.git
 cd Camel-Harness
 ```
 
@@ -104,7 +104,7 @@ MCP 是可选集成；需要时将 [.mcp.example.json](.mcp.example.json) 复制
 
 ## 开发与验证
 
-桌面、Backend 接入和打包工作在 `desktop-dev` 进行，独立 Harness 核心能力在 `harness-dev` 开发，再整合到桌面分支。源码分层和资源所有权见 [项目架构](docs/项目架构.md)，回归覆盖与维护原则见 [测试说明](tests/README.md)。
+长期维护 `main` 与 `camel-harness-dev`：前者为稳定主线，后者统一集成桌面、Backend、Harness 和打包发布相关开发。较大功能可使用短期分支，完成后合回开发线；跨层需求在同一功能分支中联合验证。源码分层和资源所有权见 [项目架构](docs/项目架构.md)，回归覆盖与维护原则见 [测试说明](tests/README.md)。
 
 ```bash
 uv run ruff check src tests scripts desktop/backend_entry.py
