@@ -62,14 +62,15 @@ def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
 - 提交前运行 Ruff、Mypy、Pytest、Import Linter、桌面测试与 build 和 `git diff --check`。
 - 版本更新在 `CHANGELOG.md` 中按版本号记录变更；架构变化更新 `docs/项目架构.md`，计划变化更新 `docs/路书.md`；方案设计放在 `docs/方案设计/`。
 
-## Git 提交
+## Git 管理
 
-- 使用中文提交描述，格式为 `<type>(<scope>): <subject>`。
-- 开发、修复功能时在分支中进行，每完成一个任务就在分支中提交。
-- 长期分支固定为 `main` 与 `camel-harness-dev`：`main` 为稳定主线，`camel-harness-dev` 为统一开发线。
-- Electron、React、Backend、Harness 及打包发布相关开发统一在 `camel-harness-dev` 集成，不按模块拆分长期分支；跨层需求在同一功能分支完成并联合验证。
-- 较大功能可使用短期分支，默认采用 `codex/` 前缀，完成后合回 `camel-harness-dev` 并删除短期分支。
-- main分支的合并和提交远程git仓库需要用户命令，不擅自提交。
+- 前端、Backend、Harness Runtime 与打包发布使用同一仓库，保持模块边界，跨层需求在同一任务分支完成并联合验证。
+- 长期分支固定为 `main`（稳定与发布）和 `camel-harness-dev`（统一开发与集成）。
+- 每项开发、修复从最新开发线创建 `codex/<任务名>` 短期分支。并行任务使用独立 worktree，集成操作依次进行。
+- 每完成一个任务就在任务分支提交，使用中文描述，格式为 `<type>(<scope>): <subject>`。已有未提交改动须明确归属后再暂存。
+- 任务通过 PR、CI 后以 Squash merge 合入开发线，发布通过普通 Merge commit 将开发线合入 `main`。紧急修复从 `main` 创建分支，合入后同步回开发线。
+- 远程两条长期分支启用 PR 与必需 CI 检查，禁止强推和删除。已合入变更通过 revert 撤销，任务合入后清理短期分支和干净的 worktree。
+- 本地同步使用 `git pull --ff-only`，出现分叉先检查原因。推送远程、合并 `main`、创建发布标签和正式发布均须用户明确指令，`v*` 标签指向已进入 `main` 的提交。
 
 ## MCP 集成
 
