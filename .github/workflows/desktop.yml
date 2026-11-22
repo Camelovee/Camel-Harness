@@ -35,6 +35,8 @@ jobs:
             arch: x64
             executable: desktop/release/win-unpacked/Camel Harness.exe
     runs-on: ${{ matrix.runner }}
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
