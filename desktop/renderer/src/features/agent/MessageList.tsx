@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Bug, CaretRight, CheckCircle, Code, Compass, WarningCircle, Wrench } from "@phosphor-icons/react";
+import { ArrowRight, Bug, CaretRight, CheckCircle, Code, Compass, WarningCircle, Wrench } from "@phosphor-icons/react";
 import { CamelMark } from "../../shared/CamelMark";
 
 import type { ApprovalStatus, Message, Session, SubagentView } from "../../shared/model";
@@ -11,7 +11,6 @@ import {
 
 type Props = {
   activeSession: Session | undefined;
-  activeWorkspace: string | null;
   messages: Message[];
   running: boolean;
   streamAssistantId: string | null;
@@ -27,7 +26,6 @@ type Props = {
 
 export function MessageList({
   activeSession,
-  activeWorkspace,
   messages,
   running,
   streamAssistantId,
@@ -75,7 +73,7 @@ export function MessageList({
     >
       <div className="messages-inner">
         {!activeSession && (
-          <Welcome activeWorkspace={activeWorkspace} onStart={onStart} onSuggest={onSuggest} />
+          <Welcome onStart={onStart} onSuggest={onSuggest} />
         )}
         {messages.map((message) => {
           if (message.role === "toolResult") {
@@ -124,26 +122,19 @@ export function MessageList({
 }
 
 function Welcome({
-  activeWorkspace,
   onStart,
   onSuggest,
 }: {
-  activeWorkspace: string | null;
   onStart: () => void;
   onSuggest?: (prompt: string) => void;
-  showToolCalls?: boolean;
-  subagents?: SubagentView[];
-  onOpenSubagent?: (sessionId: string) => void;
 }) {
   return (
     <div className="welcome">
       <CamelMark className="welcome-camel" />
-      <h2>今天，想构建些什么？</h2>
-      <p>输入想法，或从{activeWorkspace ? "这个工作区" : "本地项目"}开始。</p>
       {onSuggest && <div className="welcome-prompts">
-        <button onClick={() => onSuggest("帮我理解这个项目的结构和主要运行流程")}><Compass size={18} aria-hidden="true" /><span>理解项目<small>找到清晰的起点</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
-        <button onClick={() => onSuggest("帮我排查项目中的问题，先分析原因，再给出修复建议")}><Bug size={18} aria-hidden="true" /><span>定位问题<small>一起解开症结</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
-        <button onClick={() => onSuggest("我想实现一个新功能，请先分析现有代码并和我确认方案")}><Code size={18} aria-hidden="true" /><span>实现想法<small>从下一步开始</small></span><ArrowUpRight size={14} aria-hidden="true" /></button>
+        <button onClick={() => onSuggest("帮我理解这个项目的结构和主要运行流程")}><Compass size={18} aria-hidden="true" /><span>理解项目</span></button>
+        <button onClick={() => onSuggest("帮我排查项目中的问题，先分析原因，再给出修复建议")}><Bug size={18} aria-hidden="true" /><span>定位问题</span></button>
+        <button onClick={() => onSuggest("我想实现一个新功能，请先分析现有代码并和我确认方案")}><Code size={18} aria-hidden="true" /><span>开发功能</span></button>
       </div>}
       <button className="welcome-action" onClick={onStart}>
         创建空会话 <ArrowRight size={14} aria-hidden="true" />
@@ -165,7 +156,7 @@ function ConversationMessage({
   const reasoning = reasoningFromBlocks(message.content);
   return (
     <article className={`message ${message.role}`}>
-      {message.role === "assistant" && (content || reasoning || streaming) && <div className="assistant-identity"><span><CamelMark /></span><strong>Camel</strong><small>与你协作</small></div>}
+      {message.role === "assistant" && (content || reasoning || streaming) && <div className="assistant-identity"><span><CamelMark /></span><strong>Camel</strong></div>}
       {streaming && <div className="message-meta">正在输出…</div>}
       <div className="message-content">
         {message.role === "assistant" && reasoning && (

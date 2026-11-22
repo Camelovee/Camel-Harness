@@ -29,7 +29,7 @@ export function RenameSessionDialog({
     <ModalDialog className="modal-card" labelledBy="rename-session-title" onClose={onCancel}>
       <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <div className="modal-header">
-          <div><span className="eyebrow">RENAME SESSION</span><h2 id="rename-session-title">重命名会话</h2></div>
+          <h2 id="rename-session-title">重命名会话</h2>
           <button type="button" className="modal-close icon-button" onClick={onCancel} aria-label="关闭"><X size={20} aria-hidden="true" /></button>
         </div>
         <label htmlFor="session-name">会话名称</label>
@@ -73,10 +73,7 @@ export function DeleteSessionDialog({
     <ModalDialog className="modal-card" labelledBy="delete-session-title" onClose={onCancel}>
       <div>
         <div className="modal-header">
-          <div>
-            <span className="eyebrow">DELETE SESSION</span>
-            <h2 id="delete-session-title">确认删除会话</h2>
-          </div>
+          <h2 id="delete-session-title">确认删除会话</h2>
           <button className="modal-close icon-button" onClick={onCancel} aria-label="关闭删除确认">
             <X size={20} aria-hidden="true" />
           </button>

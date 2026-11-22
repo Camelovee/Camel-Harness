@@ -31,7 +31,7 @@ export function SubagentPanel({ child, workspace, resolvingApprovalId, onResolve
   const running = child.status === "running" || child.status === "waiting_approval";
   return <aside className="detail-panel subagent-panel" aria-label="子任务详情">
     <header className="subagent-panel-head">
-      <div><span className="eyebrow">DELEGATED TASK</span><strong>{child.agent_type} 子任务</strong><p>{child.task}</p></div>
+      <div><strong>{child.agent_type} 子任务</strong><p>{child.task}</p></div>
       <button className="icon-button" ref={closeRef} aria-label="关闭子任务详情" title="返回执行概览" onClick={onClose}><ArrowLeft size={19} aria-hidden="true" /></button>
     </header>
     <div className="subagent-phase" role="status">{child.phase}{child.turn > 0 ? ` · 第 ${child.turn} 轮` : ""}</div>
@@ -39,7 +39,7 @@ export function SubagentPanel({ child, workspace, resolvingApprovalId, onResolve
     {child.error && <p className="subagent-notice error">{child.error}</p>}
     <MessageList activeSession={{ session_id: child.session_id, name: "子任务", workspace: workspace ?? "",
       updated_at: "", message_count: messages.length, archived: false, model_id: null }}
-      activeWorkspace={workspace} messages={messages} running={running}
+      messages={messages} running={running}
       streamAssistantId={child.streamAssistantId} resolvingApprovalId={resolvingApprovalId}
       onResolveApproval={onResolveApproval} onStart={() => undefined} showToolCalls />
     {child.task_outcome && <footer className="subagent-outcome">

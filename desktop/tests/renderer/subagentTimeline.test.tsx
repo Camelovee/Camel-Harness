@@ -20,7 +20,7 @@ function conversation(messages: Message[], subagents: SubagentView[], onOpenSuba
   return <MessageList
     activeSession={{ session_id: "parent", name: "父会话", workspace: "/workspace", updated_at: "",
       message_count: messages.length, archived: false, model_id: null }}
-    activeWorkspace="/workspace" messages={messages} subagents={subagents}
+    messages={messages} subagents={subagents}
     running={subagents.some((view) => view.status === "running")} streamAssistantId={null}
     resolvingApprovalId={null} onResolveApproval={vi.fn()} onStart={vi.fn()}
     onOpenSubagent={onOpenSubagent}

@@ -10,7 +10,7 @@ import type { AgentEvent, Message, ToolExecutionStatus } from "../../renderer/sr
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function showMessages(messages: Message[]) {
-  return render(<MessageList messages={messages} activeSession={undefined} activeWorkspace={null}
+  return render(<MessageList messages={messages} activeSession={undefined}
     running={false} streamAssistantId={null} resolvingApprovalId={null}
     onResolveApproval={vi.fn()} onStart={vi.fn()} />);
 }

@@ -15,6 +15,22 @@ async function assertConversationAlignment(page) {
   return bounds[0].width;
 }
 
+async function assertInfoTip(page, label) {
+  const trigger = page.getByRole("button", { name: label, exact: true });
+  await trigger.click();
+  const triggerBounds = await trigger.boundingBox();
+  const popover = page.locator(".info-tip-content:popover-open");
+  await popover.waitFor({ state: "visible" });
+  const bounds = await popover.boundingBox();
+  const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+  assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height,
+    `说明浮层超出窗口：${label}`);
+  assert.ok(bounds.y <= triggerBounds.y + triggerBounds.height + 16 && bounds.y + bounds.height >= triggerBounds.y - 16,
+    `说明浮层远离触发按钮：${label}`);
+  await page.keyboard.press("Escape");
+  await popover.waitFor({ state: "hidden" });
+}
+
 async function assertSettingsLayout(page) {
   await page.waitForTimeout(240);
   const snapshot = () => page.evaluate(() => [".settings-dialog", ".settings-header", ".settings-nav"].map((selector) => {
@@ -27,7 +43,19 @@ async function assertSettingsLayout(page) {
     await page.getByRole("button", { name: label, exact: true }).click();
     assert.deepEqual(await snapshot(), initial, `切换 ${label} 时设置框发生位移`);
   }
-  await page.getByRole("button", { name: "编辑", exact: true }).first().click();
+  await assertInfoTip(page, "默认模型说明");
+  await page.getByRole("button", { name: /^编辑模型 / }).first().click();
+  assert.equal(await page.locator(".settings-advanced").evaluate((element) => element.open), false);
+  await assertInfoTip(page, "密钥保存说明");
+  if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-models.png"), fullPage: true });
+  await page.getByText("高级参数", { exact: true }).click();
+  const contextWindow = page.getByLabel("上下文窗口 Token");
+  const originalWindow = await contextWindow.inputValue();
+  await contextWindow.fill("1");
+  await page.getByText("高级参数", { exact: true }).click();
+  await page.getByRole("button", { name: "保存模型", exact: true }).click();
+  await contextWindow.waitFor({ state: "visible" });
+  await contextWindow.fill(originalWindow);
   const scrollTop = await page.locator(".settings-content").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
     return element.scrollTop;
@@ -133,7 +161,9 @@ async function main() {
     }, modelBaseUrl);
     assert.equal(createdModel, 201);
     await page.reload();
-    await page.getByRole("heading", { name: "今天，想构建些什么？" }).waitFor();
+    await page.getByRole("button", { name: "理解项目", exact: true }).waitFor();
+    await assertInfoTip(page, "上下文输入说明");
+    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
     await page.waitForTimeout(360);
     await assertConversationAlignment(page);
     const composerHeight = await page.locator(".composer-box").evaluate((element) => element.getBoundingClientRect().height);

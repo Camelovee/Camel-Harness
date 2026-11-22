@@ -8,7 +8,7 @@ export function PlaceholderPanel({ title, description }: Props) {
     <div className="settings-placeholder">
       <h3>{title}</h3>
       <p>{description}</p>
-      <small>此面板为预留入口，配置能力将在后续版本提供。</small>
+      <small>请通过配置文件管理。</small>
     </div>
   );
 }

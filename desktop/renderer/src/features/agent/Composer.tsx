@@ -103,7 +103,7 @@ export function Composer({
               void submit();
             }
           }}
-          placeholder={!active ? "正在准备本地工作区" : selectedModelId ? "输入消息，开始与 Agent 协作…" : "请先在设置中配置模型"}
+          placeholder={!active ? "正在准备本地工作区" : selectedModelId ? "输入消息…" : "请先在设置中配置模型"}
           rows={1}
         />
         <div className="composer-toolbar">
@@ -141,13 +141,14 @@ export function Composer({
             </select>
             <select
               aria-label="权限模式"
+              aria-describedby={permissionMode === "yolo" ? "permission-warning" : undefined}
               value={permissionMode}
               onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
               disabled={!active || running}
             >
-              <option value="default">默认权限</option>
-              <option value="plan">Plan Mode</option>
-              <option value="yolo">YOLO</option>
+              <option value="default">默认审批</option>
+              <option value="plan">只读计划</option>
+              <option value="yolo">自动允许</option>
             </select>
             <button
               type="button"
@@ -184,9 +185,12 @@ export function Composer({
           </div>
         </div>
       </div>
+      {permissionMode === "yolo" && <p id="permission-warning" className="permission-warning" role="status">
+        工具操作将自动允许，可能修改文件或执行命令。
+      </p>}
       <div className="composer-hint">
         <span id="composer-shortcuts"><kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行</span>
-        <span className={running ? "status-running" : ""}>{status}</span>
+        {status !== "准备就绪" && <span className={`composer-status ${running ? "status-running" : ""}`}>{status}</span>}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { CaretRight, ChatCircle, Folder, FolderOpen, GearSix, PencilSimple, Plus, ShieldCheck, Trash, SpinnerGap } from "@phosphor-icons/react";
+import { CaretRight, ChatCircle, Folder, FolderOpen, GearSix, PencilSimple, Plus, Trash, SpinnerGap } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { SessionIndicator, Workspace } from "../../shared/model";
 import { workspaceName } from "../../shared/presentation";
@@ -28,13 +28,12 @@ export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, select
   useEffect(() => setCollapsed(false), [activeWorkspace, activeId]);
 
   return <aside className="sidebar" aria-label="工作区与会话">
-    <div className="sidebar-heading"><span className="eyebrow">工作空间</span><span className="count-badge">{workspaces.length}</span></div>
     <button aria-label="新对话" className="new-chat" onClick={onNewChat} disabled={newChatDisabled}><Plus size={18} aria-hidden="true" />新对话<span className="shortcut-key" aria-hidden="true">⌘ N / Ctrl N</span></button>
     <button className="new-workspace" disabled={selectingWorkspace} onClick={onSelectWorkspace}>
       {selectingWorkspace ? <SpinnerGap className="spin" size={18} aria-hidden="true" /> : <FolderOpen size={18} aria-hidden="true" />}
       {selectingWorkspace ? "正在选择…" : "选择本地工作区"}
     </button>
-    <div className="workspace-heading"><span>工作区与会话</span><span className="sidebar-section-rule" /></div>
+    <h2 className="workspace-heading">工作区<span className="sidebar-section-rule" /></h2>
     <nav className="workspace-list" aria-label="工作区导航">
       {workspaces.map((workspace) => {
         const active = workspace.workspace === activeWorkspace;
@@ -68,9 +67,8 @@ export function WorkspaceSidebar({ workspaces, activeWorkspace, activeId, select
           </div>;
         })}</div>}
       </div>; })}
-      {!workspaces.length && <div className="empty-workspaces"><FolderOpen size={28} aria-hidden="true" /><strong>为想法找个落脚点</strong><p>选择本地项目，<br />你的会话会按工作区整理。</p></div>}
+      {!workspaces.length && <p className="empty-workspaces">尚无工作区</p>}
     </nav>
-    <div className="sidebar-local-note"><ShieldCheck size={16} aria-hidden="true" /><span>会话历史保存在本机</span></div>
-    <footer className="sidebar-footer"><button className="settings-entry" onClick={onOpenSettings}><GearSix size={19} aria-hidden="true" />设置</button><span className="sidebar-note">CAMEL / DESKTOP</span></footer>
+    <footer className="sidebar-footer"><button className="settings-entry" onClick={onOpenSettings}><GearSix size={19} aria-hidden="true" />设置</button></footer>
   </aside>;
 }

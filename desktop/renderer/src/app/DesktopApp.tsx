@@ -6,7 +6,6 @@ import { ExecutionPanel } from "../features/agent/ExecutionPanel";
 import { RunStatus, type RunState } from "../features/agent/RunStatus";
 import { CamelMark } from "../shared/CamelMark";
 import { ModalDialog } from "../shared/ModalDialog";
-import { workspaceName } from "../shared/presentation";
 import { usePanelMotion } from "./usePanelMotion";
 import { PanelDivider } from "./PanelDivider";
 import { defaultPanelWidths, usePanelSizes } from "./usePanelSizes";
@@ -161,9 +160,7 @@ export default function DesktopApp() {
       <a className="skip-link" href="#conversation">跳到对话</a>
       <header className="app-topbar" inert={modalInspector}>
         <div className="app-brand"><span className="app-brand-mark"><CamelMark /></span><strong>Camel <span>Harness</span></strong></div>
-        <div className="app-breadcrumb" title={chatWorkspace ?? ""}><span>/</span>{chatWorkspace ? workspaceName(chatWorkspace) : "你的工作空间"}</div>
         <div className="topbar-actions">
-          <span className="local-indicator"><span />本机工作区</span>
           <button ref={sidebarToggleRef} className="icon-button" aria-controls="workspace-navigation" aria-expanded={!sidebarCollapsed}
             aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} title="切换侧栏（⌘ / Ctrl + B）"
             onClick={() => transition(() => setSidebarCollapsed((collapsed) => !collapsed))}><SidebarSimple size={20} aria-hidden="true" /></button>
@@ -210,11 +207,11 @@ export default function DesktopApp() {
           </header>
 
           {settingsState.settings && !selectedModel && <div className="model-onboarding" role="region" aria-label="开始使用">
-            <div><strong>先连接你的模型</strong><p>配置完成后，选择项目即可开始。</p></div>
+            <strong>添加模型后即可发送消息</strong>
             <button className="primary-button" onClick={() => setSettingsOpen(true)}>配置模型</button>
           </div>}
 
-          <MessageList key={`messages-${workspace.activeId ?? "new-chat"}`} activeSession={workspace.activeSession} activeWorkspace={chatWorkspace}
+          <MessageList key={`messages-${workspace.activeId ?? "new-chat"}`} activeSession={workspace.activeSession}
             messages={agent.messages} running={agent.running} streamAssistantId={agent.streamAssistantId}
             resolvingApprovalId={agent.resolvingApprovalId} onResolveApproval={(requestId, approved) => void agent.resolveApproval(requestId, approved)}
             onStart={start} subagents={Object.values(agent.subagents)} onOpenSubagent={openSubagent} onOpenTool={openTool}

@@ -17,7 +17,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("默认展示三栏，快速收起与展开详情不依赖动画结束", async () => {
   render(<DesktopApp />);
-  await screen.findByText("今天，想构建些什么？");
+  await screen.findByRole("button", { name: "理解项目" });
   expect(screen.getByRole("complementary", { name: "工作区与会话" })).toBeTruthy();
   expect(screen.getByRole("main")).toBeTruthy();
   expect(screen.getByRole("complementary", { name: "执行详情", exact: true })).toBeTruthy();
@@ -33,7 +33,7 @@ it("减少动态效果时，布局操作即时完成且不创建位置动画", a
   const matchMedia = window.matchMedia;
   vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ ...matchMedia(query), matches: query === "(prefers-reduced-motion: reduce)" })));
   render(<DesktopApp />);
-  await screen.findByText("今天，想构建些什么？");
+  await screen.findByRole("button", { name: "理解项目" });
   fireEvent.click(screen.getByRole("button", { name: "收起侧栏" }));
   expect(screen.queryByRole("complementary", { name: "工作区与会话" })).toBeNull();
   expect(Element.prototype.animate).not.toHaveBeenCalled();
@@ -48,9 +48,20 @@ it("欢迎建议只填写草稿并聚焦输入，不创建会话或调用模型"
   expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
 
+it("自动允许模式保留操作后果提示，切回默认审批后关闭提示", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  const permissionMode = screen.getByLabelText("权限模式");
+  fireEvent.change(permissionMode, { target: { value: "yolo" } });
+  const warning = screen.getByText("工具操作将自动允许，可能修改文件或执行命令。");
+  expect(permissionMode.getAttribute("aria-describedby")).toBe(warning.id);
+  fireEvent.change(permissionMode, { target: { value: "default" } });
+  expect(screen.queryByText("工具操作将自动允许，可能修改文件或执行命令。")).toBeNull();
+});
+
 it("分隔线可通过键盘调整两侧宽度，并在收起后转移焦点", async () => {
   render(<DesktopApp />);
-  await screen.findByText("今天，想构建些什么？");
+  await screen.findByRole("button", { name: "理解项目" });
   const sidebar = screen.getByRole("separator", { name: "侧栏宽度" });
   const inspector = screen.getByRole("separator", { name: "执行详情宽度" });
   fireEvent.keyDown(sidebar, { key: "ArrowRight" });

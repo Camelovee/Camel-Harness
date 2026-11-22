@@ -52,7 +52,10 @@ it("输入占比来自真实用量与窗口，输出和本轮总量分别显示"
   const usage = screen.getByRole("region", { name: "Token 用量" });
   expect(within(usage).getByText("1,200")).toBeTruthy();
   expect(within(usage).getByText("43,200")).toBeTruthy();
-  expect(within(usage).getByText("最近一次请求的输入占比，不含输出预算。")).toBeTruthy();
+  const help = within(usage).getByRole("button", { name: "上下文输入说明" });
+  const explanation = document.getElementById(help.getAttribute("aria-describedby")!);
+  expect(explanation?.textContent).toBe("最近一次请求的输入占比，不含输出预算。");
+  expect(explanation?.getAttribute("popover")).toBe("auto");
 });
 
 it("未知用量保持未知，不把它显示成零用量或零占比", () => {

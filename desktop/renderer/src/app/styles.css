@@ -16,10 +16,43 @@ a { color: var(--accent); text-underline-offset: 3px; }
 kbd, code, pre, .mono { font-family: var(--font-mono); }
 .mono { font-variant-numeric: tabular-nums; }
 h1, h2, h3, p { margin-top: 0; }
-.eyebrow { font-size: 10px; font-weight: 650; letter-spacing: .14em; color: var(--muted); }
+
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: var(--control-radius); color: var(--secondary); }
 .icon-button:hover { background: var(--surface-hover); color: var(--text); }
 .icon-button.is-active { color: var(--accent); background: var(--surface-hover); }
+.info-tip {
+  display: inline-flex;
+  anchor-scope: --info-trigger;
+}
+.info-tip-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--secondary);
+  anchor-name: --info-trigger;
+}
+.info-tip-trigger:hover { background: var(--surface-hover); }
+.info-tip-content {
+  position: fixed;
+  position-anchor: --info-trigger;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block, flip-inline;
+  width: min(280px, calc(100vw - 48px));
+  margin: 6px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  color: var(--secondary);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-dialog);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
 .count-badge { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 6px; font: 11px/1 var(--font-mono); color: var(--muted); background: var(--surface-subtle); }
 .primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 14px; border: 1px solid transparent; border-radius: var(--control-radius); font-size: 13px; font-weight: 550; }
 .primary-button { background: var(--accent); color: var(--on-accent); }
@@ -82,8 +115,8 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-empty { margin: 0; padding: 32px; color: var(--secondary); }
 .settings-section-heading, .settings-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .settings-section-heading h3, .settings-editor-head h3, .settings-placeholder h3, .appearance-settings h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.settings-section-heading p, .settings-placeholder p { margin: 5px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.7; }
-.settings-section-heading > p { max-width: 240px; text-align: right; }
+.settings-placeholder p { margin: 5px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.7; }
+
 .settings-field { display: grid; gap: 7px; margin-top: 18px; color: var(--secondary); font-size: 12px; font-weight: 550; }
 .settings-field em { margin-left: 5px; font-style: normal; font-weight: 400; color: var(--muted); }
 .settings-field input, .settings-field select { width: 100%; min-height: 40px; padding: 8px 11px; border: 1px solid var(--control-border); border-radius: 8px; color: var(--text); background: var(--surface-raised); font-size: 13px; font-weight: 400; }
@@ -93,15 +126,32 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-add:hover { background: var(--accent-soft); }
 .settings-model-list { display: grid; gap: 10px; margin-top: 16px; }
 .settings-model-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
-.settings-model-badge { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font: 600 14px var(--font-mono); }
+
 .settings-model-info { display: grid; gap: 3px; flex: 1; min-width: 0; }.settings-model-info strong { font-size: 13px; }.settings-model-info small { font-size: 12px; color: var(--secondary); overflow-wrap: anywhere; }
 .settings-model-status { font-size: 12px; color: var(--warning); }.settings-model-status.ready { color: var(--success); }
-.settings-model-actions { display: flex; flex: 0 0 auto; gap: 2px; }.settings-model-actions button { min-height: 30px; padding: 4px 7px; border-radius: 6px; color: var(--secondary); font-size: 12px; }.settings-model-actions button:hover { background: var(--surface-hover); }.settings-model-actions .settings-confirm-delete { color: var(--danger); }
+.settings-model-actions { display: flex; flex: 0 0 auto; gap: 2px; }.settings-model-actions button { min-height: 30px; padding: 4px 7px; border-radius: 6px; color: var(--secondary); font-size: 12px; }.settings-model-actions button:hover { background: var(--surface-hover); }
 .settings-footnote, .settings-placeholder small { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .settings-editor { margin-top: 22px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-subtle); animation: message-in var(--motion-base) var(--ease-out); }.settings-editor-head { align-items: center; }
 .settings-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .settings-clear-key { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 12px; }.settings-clear-key input { accent-color: var(--accent); }
 .settings-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.settings-field-heading, .section-title { display: flex; align-items: center; gap: 4px; }
+.settings-advanced { margin-top: 20px; border-top: 1px solid var(--border); }
+.settings-advanced > summary {
+  padding: 14px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-delete-confirmation {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 8px;
+  background: var(--danger-bg);
+}
+.settings-delete-confirmation p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.settings-delete-confirmation > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .shortcut-list { display: grid; grid-template-columns: 1fr auto; gap: 16px; margin: 26px 0 0; padding-top: 22px; border-top: 1px solid var(--border); font-size: 13px; }.shortcut-list dd { margin: 0; color: var(--secondary); font-family: var(--font-mono); font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

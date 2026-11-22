@@ -79,7 +79,6 @@ export function SettingsDialog({
                       <option value="dark">深色</option>
                     </select>
                   </label>
-                  <p className="settings-footnote">主题保存在本机配置中，下次打开应用时继续使用。</p>
                   <dl className="shortcut-list">
                     <dt>新建对话</dt><dd>⌘ / Ctrl + N</dd>
                     <dt>打开项目</dt><dd>⌘ / Ctrl + O</dd>

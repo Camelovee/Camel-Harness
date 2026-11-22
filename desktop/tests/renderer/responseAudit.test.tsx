@@ -39,7 +39,7 @@ it("实时完整消息保留审计信息和文件引用", () => {
   events.forEach((event) => projectAgentEvent(event, assistantIds, context));
   expect(messages[0]).toMatchObject({ provider: "anthropic", model: "requested", response_model: "actual", usage });
   expect(messages[1].content[0].details?.content_ref).toEqual(reference);
-  render(<MessageList messages={messages} activeSession={undefined} activeWorkspace={null}
+  render(<MessageList messages={messages} activeSession={undefined}
     running={false} streamAssistantId={null} resolvingApprovalId={null}
     onResolveApproval={vi.fn()} onStart={vi.fn()} />);
   expect(screen.getByText(/anthropic \/ actual/).textContent).toContain("输入 0");
