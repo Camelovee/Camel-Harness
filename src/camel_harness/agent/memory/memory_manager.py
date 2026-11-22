@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
 
 from ..config import MemorySettings
 from .memory_store import (
@@ -16,7 +15,6 @@ from .memory_store import (
     serialize_entries,
 )
 from .types import (
-    MemoryAction,
     MemoryAmbiguousMatchError,
     MemoryDocument,
     MemoryLimitError,
@@ -105,11 +103,11 @@ class MemoryManager:
         entry = self._validate_entry(target, content)
 
         def plan(entries: tuple[str, ...]) -> MemoryWritePlan[tuple[bool, bool, tuple[str, ...]]]:
-            updated, changed, duplicate = _apply_mutation(entries, "add", entry, None)
-            if changed:
-                self._ensure_within_limit(target, entries, updated)
-            # 无变化或重复时 entries=None 表示不写盘，但仍返回当前状态。
-            return MemoryWritePlan(updated if changed else None, (changed, duplicate, updated))
+            if entry in entries:
+                return MemoryWritePlan(None, (False, True, entries))
+            updated = (*entries, entry)
+            self._ensure_within_limit(target, entries, updated)
+            return MemoryWritePlan(updated, (True, False, updated))
 
         changed, duplicate, updated = await self._store.transact(target, plan)
         return MemoryMutation("add", changed, duplicate, self._document(target, updated))
@@ -120,10 +118,14 @@ class MemoryManager:
         entry = self._validate_entry(target, content)
 
         def plan(entries: tuple[str, ...]) -> MemoryWritePlan[tuple[bool, bool, tuple[str, ...]]]:
-            updated, changed, duplicate = _apply_mutation(entries, "replace", entry, old_text)
-            if changed:
-                self._ensure_within_limit(target, entries, updated)
-            return MemoryWritePlan(updated if changed else None, (changed, duplicate, updated))
+            index = _match_entry(entries, old_text)
+            if entries[index] == entry:
+                return MemoryWritePlan(None, (False, False, entries))
+            if entry in entries:
+                raise MemoryValidationError("替换后的内容与已有条目重复，未执行修改")
+            updated = (*entries[:index], entry, *entries[index + 1 :])
+            self._ensure_within_limit(target, entries, updated)
+            return MemoryWritePlan(updated, (True, False, updated))
 
         changed, duplicate, updated = await self._store.transact(target, plan)
         return MemoryMutation("replace", changed, duplicate, self._document(target, updated))
@@ -134,9 +136,10 @@ class MemoryManager:
         self._ensure_enabled(target)
 
         def plan(entries: tuple[str, ...]) -> MemoryWritePlan[tuple[bool, bool, tuple[str, ...]]]:
-            updated, changed, duplicate = _apply_mutation(entries, "remove", None, old_text)
+            index = _match_entry(entries, old_text)
+            updated = (*entries[:index], *entries[index + 1 :])
             # 删除只会让条目变少，不需要再做聚合上限检查。
-            return MemoryWritePlan(updated if changed else None, (changed, duplicate, updated))
+            return MemoryWritePlan(updated, (True, False, updated))
 
         changed, duplicate, updated = await self._store.transact(target, plan)
         return MemoryMutation("remove", changed, duplicate, self._document(target, updated))
@@ -243,33 +246,6 @@ class MemoryManager:
         return serialize_entries(selected) + ENTRY_SEPARATOR + _TRUNCATION_MARKER
 
 
-def _apply_mutation(
-    entries: tuple[str, ...],
-    action: MemoryAction,
-    content: str | None,
-    old_text: str | None,
-) -> tuple[tuple[str, ...], bool, bool]:
-    """在锁内计算新条目；重复添加与无变化替换不写文件。"""
-
-    # 回调在持久化锁内执行，重复 add 是幂等的，replace 相同内容不算变更。
-    if action == "add":
-        assert content is not None
-        if content in entries:
-            return entries, False, True
-        return (*entries, content), True, False
-    assert old_text is not None
-    index = _match_entry(entries, old_text)
-    if action == "remove":
-        return (*entries[:index], *entries[index + 1 :]), True, False
-    assert content is not None
-    if entries[index] == content:
-        return entries, False, False
-    if content in entries:
-        raise MemoryValidationError("替换后的内容与已有条目重复，未执行修改")
-    updated = (*entries[:index], content, *entries[index + 1 :])
-    return updated, True, False
-
-
 def _match_entry(entries: tuple[str, ...], old_text: str) -> int:
     """old_text 必须在恰好一个条目中；返回条目下标。"""
 
@@ -290,19 +266,3 @@ def _match_entry(entries: tuple[str, ...], old_text: str) -> int:
 def _preview(entry: str, limit: int = 80) -> str:
     first_line = entry.splitlines()[0].strip() if entry.splitlines() else entry
     return first_line if len(first_line) <= limit else first_line[:limit] + "…"
-
-
-def memory_target(value: str) -> MemoryTarget:
-    """在工具边界把参数收窄为受限目标。"""
-
-    if value not in ("memory", "user"):
-        raise MemoryValidationError("记忆目标必须是 memory 或 user")
-    return cast(MemoryTarget, value)
-
-
-def memory_action(value: str) -> MemoryAction:
-    """在工具边界把参数收窄为受支持的操作。"""
-
-    if value not in ("add", "replace", "remove"):
-        raise MemoryValidationError("记忆操作必须是 add、replace 或 remove")
-    return cast(MemoryAction, value)

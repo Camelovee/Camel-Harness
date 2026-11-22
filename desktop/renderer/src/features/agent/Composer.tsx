@@ -1,0 +1,197 @@
+import { useEffect, useRef } from "react";
+import { ArrowUp, ArrowBendDownRight, CaretDown, FolderOpen, Play, Square } from "@phosphor-icons/react";
+import type { Dispatch, SetStateAction } from "react";
+
+import type { ModelProfile, PermissionMode, ThinkingEffort } from "../../shared/model";
+import { workspaceName } from "../../shared/presentation";
+
+type Props = {
+  active: boolean;
+  activeWorkspace: string | null;
+  running: boolean;
+  switchingModel: boolean;
+  status: string;
+  prompt: string;
+  onPromptChange: Dispatch<SetStateAction<string>>;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (value: PermissionMode) => void;
+  starting: boolean;
+  models: ModelProfile[];
+  selectedModelId: string;
+  effort: ThinkingEffort;
+  onEffortChange: (effort: ThinkingEffort) => void;
+  onModelChange: (modelId: string) => void;
+  choosingWorkspace: boolean;
+  onChooseWorkspace: () => void;
+  onSend: (
+    prompt: string,
+    permissionMode: PermissionMode,
+    effort: ThinkingEffort,
+    modelId: string,
+  ) => Promise<boolean>;
+  canResume: boolean;
+  onAbort: () => Promise<void>;
+  onResume: (permissionMode: PermissionMode, effort: ThinkingEffort, modelId: string) => Promise<void>;
+};
+
+export function Composer({
+  active,
+  activeWorkspace,
+  running,
+  switchingModel,
+  status,
+  prompt,
+  onPromptChange,
+  permissionMode,
+  onPermissionModeChange,
+  starting,
+  models,
+  selectedModelId,
+  effort,
+  onEffortChange,
+  onModelChange,
+  choosingWorkspace,
+  onChooseWorkspace,
+  onSend,
+  canResume,
+  onAbort,
+  onResume,
+}: Props) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
+  const ignoreEnterRef = useRef(false);
+
+  useEffect(() => {
+    const element = inputRef.current;
+    if (!element) return;
+    element.style.height = "0px";
+    element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+  }, [prompt]);
+
+  async function submit() {
+    const value = prompt.trim();
+    if (!value || !active || !selectedModelId || switchingModel || starting) return;
+    const submittedPrompt = prompt;
+    if (await onSend(value, permissionMode, effort, selectedModelId)) {
+      onPromptChange((current) => current === submittedPrompt ? "" : current);
+    }
+  }
+
+  return (
+    <div className="composer-area">
+      <div className={`composer-box ${!active ? "disabled" : ""}`}>
+        <textarea
+          id="message-input"
+          aria-label={running ? "继续引导这个任务" : "向 Camel 发送消息"}
+          aria-describedby="composer-shortcuts"
+          ref={inputRef}
+          disabled={!active || !selectedModelId}
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+            ignoreEnterRef.current = true;
+            window.setTimeout(() => { ignoreEnterRef.current = false; }, 0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              if (event.nativeEvent.isComposing || composingRef.current || ignoreEnterRef.current || event.keyCode === 229) return;
+              event.preventDefault();
+              void submit();
+            }
+          }}
+          placeholder={!active ? "正在准备本地工作区" : selectedModelId ? "输入消息…" : "请先在设置中配置模型"}
+          rows={1}
+        />
+        <div className="composer-toolbar">
+          <button type="button" className="composer-directory" onClick={onChooseWorkspace} disabled={choosingWorkspace || running} title={`选择新会话的工作目录；当前：${activeWorkspace ?? "用户主目录"}`} aria-label="选择新会话工作目录">
+            <FolderOpen size={16} aria-hidden="true" />
+            <span>{choosingWorkspace ? "正在选择…" : activeWorkspace ? workspaceName(activeWorkspace) : "用户主目录"}</span>
+            <CaretDown size={12} aria-hidden="true" />
+          </button>
+          <div className="composer-right">
+            <select
+              className="model-select"
+              aria-label="选择模型"
+              value={selectedModelId}
+              onChange={(event) => onModelChange(event.target.value)}
+              disabled={!active || running || switchingModel || !models.length}
+              title="选择当前或下一次对话的模型"
+            >
+              {!selectedModelId && <option value="">配置模型</option>}
+              {models.map((profile) => (
+                <option key={profile.id} value={profile.id} disabled={!profile.configured}>
+                  {profile.name} · {profile.model}{!profile.configured ? " · 未配置" : ""}
+                </option>
+              ))}
+            </select>
+            <select
+              value={effort}
+              aria-label="思考强度"
+              title="思考强度：影响模型推理深度与耗时"
+              onChange={(event) => onEffortChange(event.target.value as ThinkingEffort)}
+              disabled={!active || running}
+            >
+              <option value="low">思考 · 低</option>
+              <option value="high">思考 · 中</option>
+              <option value="max">思考 · 高</option>
+            </select>
+            <select
+              aria-label="权限模式"
+              aria-describedby={permissionMode === "yolo" ? "permission-warning" : undefined}
+              value={permissionMode}
+              onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
+              disabled={!active || running}
+            >
+              <option value="default">默认审批</option>
+              <option value="plan">只读计划</option>
+              <option value="yolo">自动允许</option>
+            </select>
+            <button
+              type="button"
+              className="send-button"
+              disabled={!prompt.trim() || !active || !selectedModelId || switchingModel || starting}
+              onClick={() => void submit()}
+              title={running ? "追加运行中输入" : "发送消息"}
+              aria-label={running ? "追加运行中输入" : "发送消息"}
+            >
+              {running ? <ArrowBendDownRight size={19} aria-hidden="true" /> : <ArrowUp size={20} weight="bold" aria-hidden="true" />}
+            </button>
+            {running && (
+              <button
+                type="button"
+                className="stop-button"
+                disabled={starting}
+                onClick={() => void onAbort()}
+                title="暂停当前 Run"
+                aria-label="暂停当前 Run"
+              >
+                <Square size={16} weight="fill" aria-hidden="true" />
+              </button>
+            )}
+            {!running && canResume && (
+              <button
+                type="button"
+                onClick={() => void onResume(permissionMode, effort, selectedModelId)}
+                disabled={!selectedModelId || switchingModel}
+                title="从最后一个完整消息边界继续"
+              >
+                <Play size={14} aria-hidden="true" />继续
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+      {permissionMode === "yolo" && <p id="permission-warning" className="permission-warning" role="status">
+        工具操作将自动允许，可能修改文件或执行命令。
+      </p>}
+      <div className="composer-hint">
+        <span id="composer-shortcuts"><kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行</span>
+        {status !== "准备就绪" && <span className={`composer-status ${running ? "status-running" : ""}`}>{status}</span>}
+      </div>
+    </div>
+  );
+}

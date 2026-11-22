@@ -38,7 +38,7 @@ def create_approvals_router(dependencies: HttpDependencies) -> APIRouter:
     async def resolve_approval(request_id: str, body: ResolveApprovalBody) -> dict[str, bool]:
         approvals = dependencies.approvals()
         if approvals is None:
-            raise HTTPException(status_code=404, detail="当前入口不支持浏览器审批")
+            raise HTTPException(status_code=404, detail="当前入口不支持桌面界面审批")
         resolved = await approvals.resolve(request_id, body.approved)
         if not resolved:
             raise HTTPException(status_code=404, detail="审批请求不存在或已处理")

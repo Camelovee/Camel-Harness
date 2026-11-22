@@ -369,3 +369,37 @@ async def test_file_tools_cannot_modify_managed_memory(
             ToolContext("s", tmp_path),
         )
     assert target.read_text("utf-8") == "旧内容"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"action": "add", "target": "memory"},
+        {"action": "replace", "target": "memory", "content": "新内容"},
+        {"action": "replace", "target": "memory", "old_text": "旧内容"},
+        {"action": "remove", "target": "memory"},
+        {"action": "add", "target": "memory", "content": None},
+        {"action": "add", "target": "memory", "content": 123},
+        {"action": "remove", "target": "memory", "old_text": ""},
+        {"action": "other", "target": "memory", "content": "内容"},
+        {"action": "add", "target": "other", "content": "内容"},
+    ],
+)
+async def test_memory_schema_rejects_invalid_calls_before_service(
+    memory_manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: dict[str, object],
+) -> None:
+    async def unexpected_mutation(*args: object) -> None:
+        pytest.fail("无效参数不应进入记忆服务")
+
+    for method in ("add", "replace", "remove"):
+        monkeypatch.setattr(memory_manager, method, unexpected_mutation)
+    tool_executor = await _executor(memory_manager)
+    tool_result = await tool_executor.execute(
+        ToolCall("invalid", "memory", arguments), ToolContext("session", tmp_path)
+    )
+    assert tool_result.is_error
+    assert tool_result.metadata["execution_status"] == "not_executed"
+    assert not _memory_path(tmp_path).exists()

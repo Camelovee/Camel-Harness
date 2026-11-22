@@ -95,31 +95,6 @@ async def test_session_api_hides_children_and_deletes_them_with_parent(tmp_path:
         assert await session_manager.get("child") is None
 
 
-async def test_workspace_selection_uses_injected_platform_function(tmp_path: Path) -> None:
-    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
-    selected = tmp_path / "selected"
-
-    async def select_workspace() -> Path | None:
-        return selected
-
-    run_service, settings_store = _services(tmp_path, session_manager)
-    dependencies = HttpDependencies(tmp_path)
-    dependencies.bind(
-        run_service=run_service,
-        session_manager=session_manager,
-        session_service=SessionService(
-            session_manager=session_manager, run_service=run_service, settings_store=settings_store
-        ),
-        settings_service=SettingsService(
-            settings_store=settings_store, session_manager=session_manager, run_service=run_service
-        ),
-        settings_store=settings_store,
-        select_workspace=select_workspace,
-    )
-
-    assert await dependencies.select_workspace() == selected
-
-
 async def test_new_chat_without_workspace_uses_local_default(tmp_path: Path) -> None:
     session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
     run_service, settings_store = _services(tmp_path, session_manager)
@@ -150,10 +125,14 @@ async def test_new_chat_without_workspace_uses_local_default(tmp_path: Path) -> 
         assert created.json()["workspace"] == str(tmp_path.resolve())
 
 
-async def test_web_app_defaults_to_user_home() -> None:
-    app = create_app()
+async def test_desktop_app_defaults_to_user_home(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<h1>Camel</h1>", encoding="utf-8")
+    app = create_app(frontend_dist=tmp_path, desktop_token="test-token")
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://127.0.0.1:43210"
+    ) as client:
+        client.headers["X-Camel-Desktop-Token"] = "test-token"
         default = await client.get("/api/workspaces/default")
 
     assert default.status_code == 200

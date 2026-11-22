@@ -24,10 +24,8 @@ def _normalize_with_offsets(text: str) -> tuple[str, list[int]]:
 
 
 def apply_text_edits(content: str, edits: list[dict[str, str]], path: str) -> tuple[str, str]:
-    """所有片段匹配原始快照，验证全部通过后才生成新内容及 diff。"""
+    """对已通过 schema 校验的片段匹配原始快照，全部匹配后才生成新内容及 diff。"""
 
-    if not edits:
-        raise ToolNotExecutedError("edits 至少包含一项替换，未执行修改")
     # 下一行：BOM 剥离后按原文回挂；行尾取文件中第一个换行，混合行尾会被统一成它。
     bom = "\ufeff" if content.startswith("\ufeff") else ""
     original = content[len(bom) :]
@@ -39,8 +37,6 @@ def apply_text_edits(content: str, edits: list[dict[str, str]], path: str) -> tu
         # 模型给的 CRLF 也要归一，否则无法匹配已经规范化的原文。
         old_text = re.sub(r"\r\n?", "\n", edit["old_text"])
         new_text = re.sub(r"\r\n?", "\n", edit["new_text"])
-        if not old_text:
-            raise ToolNotExecutedError(f"edits[{index}].old_text 不能为空，未执行修改")
         start = normalized.find(old_text)
         if start < 0 or normalized.find(old_text, start + 1) >= 0:
             raise ToolNotExecutedError(
@@ -61,19 +57,14 @@ def apply_text_edits(content: str, edits: list[dict[str, str]], path: str) -> tu
         raise ToolNotExecutedError("替换没有产生实际变化，未执行修改")
     # diff 使用规范化文本，避免整文件 CRLF/LF 差异淹没真正的修改。
     normalized_after = re.sub(r"\r\n?", "\n", updated[len(bom) :])
-    return updated, _unified_diff(normalized, normalized_after, path)
-
-
-def _unified_diff(before: str, after: str, path: str) -> str:
-    """显式保留文件末尾缺少换行的信息，避免漏掉仅新增末尾换行的修改。"""
-
+    # 显式保留缺少末尾换行的信息，避免漏掉仅新增末尾换行的修改。
     lines = difflib.unified_diff(
-        before.splitlines(keepends=True),
-        after.splitlines(keepends=True),
+        normalized.splitlines(keepends=True),
+        normalized_after.splitlines(keepends=True),
         fromfile=path,
         tofile=path,
     )
     output: list[str] = []
     for line in lines:
         output.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
-    return "".join(output)
+    return updated, "".join(output)

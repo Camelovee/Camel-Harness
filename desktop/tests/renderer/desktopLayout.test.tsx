@@ -1,0 +1,88 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import DesktopApp from "../../renderer/src/app/DesktopApp";
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    const responses: Record<string, object> = {
+      "/api/settings": { models: [{ id: "model", name: "测试模型", model: "fake", provider: "anthropic", configured: true, context_window_tokens: 128000 }], default_model_id: "model", theme: "light" },
+      "/api/workspaces": { workspaces: [] }, "/api/workspaces/default": { workspace: "/中文 项目" }, "/api/approvals": { approvals: [] },
+    };
+    if (!(url in responses)) throw new Error(`测试中未配置的接口：${url}`);
+    return new Response(JSON.stringify(responses[url]));
+  }));
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+it("默认展示三栏，快速收起与展开详情不依赖动画结束", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  expect(screen.getByRole("complementary", { name: "工作区与会话" })).toBeTruthy();
+  expect(screen.getByRole("main")).toBeTruthy();
+  expect(screen.getByRole("complementary", { name: "执行详情", exact: true })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "收起执行详情", exact: true }));
+  expect(screen.queryByRole("complementary", { name: "执行详情", exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "展开执行详情", exact: true }));
+  expect(screen.getByRole("button", { name: "收起执行详情", exact: true }).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("complementary", { name: "执行详情", exact: true })).toBeTruthy();
+  expect(vi.mocked(Element.prototype.animate).mock.results[0].value.cancel).toHaveBeenCalled();
+});
+
+it("减少动态效果时，布局操作即时完成且不创建位置动画", async () => {
+  const matchMedia = window.matchMedia;
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ ...matchMedia(query), matches: query === "(prefers-reduced-motion: reduce)" })));
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  fireEvent.click(screen.getByRole("button", { name: "收起侧栏" }));
+  expect(screen.queryByRole("complementary", { name: "工作区与会话" })).toBeNull();
+  expect(Element.prototype.animate).not.toHaveBeenCalled();
+});
+
+it("欢迎建议只填写草稿并聚焦输入，不创建会话或调用模型", async () => {
+  render(<DesktopApp />);
+  fireEvent.click(await screen.findByRole("button", { name: /理解项目/ }));
+  const input = screen.getByRole("textbox", { name: "向 Camel 发送消息" });
+  expect((input as HTMLTextAreaElement).value).toBe("帮我理解这个项目的结构和主要运行流程");
+  expect(document.activeElement).toBe(input);
+  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
+
+it("自动允许模式保留操作后果提示，切回默认审批后关闭提示", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  const permissionMode = screen.getByLabelText("权限模式");
+  fireEvent.change(permissionMode, { target: { value: "yolo" } });
+  const warning = screen.getByText("工具操作将自动允许，可能修改文件或执行命令。");
+  expect(permissionMode.getAttribute("aria-describedby")).toBe(warning.id);
+  fireEvent.change(permissionMode, { target: { value: "default" } });
+  expect(screen.queryByText("工具操作将自动允许，可能修改文件或执行命令。")).toBeNull();
+});
+
+it("分隔线可通过键盘调整两侧宽度，并在收起后转移焦点", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  const sidebar = screen.getByRole("separator", { name: "侧栏宽度" });
+  const inspector = screen.getByRole("separator", { name: "执行详情宽度" });
+  fireEvent.keyDown(sidebar, { key: "ArrowRight" });
+  expect(sidebar.getAttribute("aria-valuenow")).toBe("252");
+  fireEvent.keyDown(inspector, { key: "ArrowLeft" });
+  expect(inspector.getAttribute("aria-valuenow")).toBe("296");
+  fireEvent.keyDown(sidebar, { key: "Home" });
+  expect(sidebar.getAttribute("aria-valuenow")).toBe("200");
+  fireEvent.keyDown(sidebar, { key: "Enter" });
+  expect(screen.queryByRole("separator", { name: "侧栏宽度" })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "展开侧栏" }));
+});
+
+it("快速拖动按松开位置提交最终宽度，保留最后一次移动后的距离", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  const divider = screen.getByRole("separator", { name: "侧栏宽度" });
+  Object.defineProperty(divider, "setPointerCapture", { value: vi.fn() });
+  fireEvent.pointerDown(divider, { button: 0, clientX: 240, pointerId: 1 });
+  fireEvent.pointerMove(divider, { clientX: 245, pointerId: 1 });
+  fireEvent.pointerUp(divider, { clientX: 300, pointerId: 1 });
+  expect(divider.getAttribute("aria-valuenow")).toBe("296");
+  expect(divider.getAttribute("data-resizing")).toBe("false");
+});

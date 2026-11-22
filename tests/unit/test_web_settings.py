@@ -82,6 +82,23 @@ async def test_delete_model_rebinds_default_to_next_configured(tmp_path: Path) -
         await settings_store.delete_model(first)
 
 
+async def test_theme_preferences_preserve_models_and_runtime_settings(tmp_path: Path) -> None:
+    """只保存主题时不得清空模型、密钥或非界面配置。"""
+
+    config_path = tmp_path / "config.json"
+    settings_store = _settings_store(config_path, max_duration_seconds=123)
+    await settings_store.add_model(custom_model())
+    model_id = str((await settings_store.snapshot())["default_model_id"])
+    assert (await settings_store.snapshot())["theme"] == "system"
+    await settings_store.update_preferences(theme="dark")
+    await settings_store.update_preferences(default_model_id=model_id)
+    reloaded_settings = AgentSettings.load(config_path)
+    assert reloaded_settings.theme == "dark"
+    assert reloaded_settings.max_duration_seconds == 123
+    assert reloaded_settings.default_model_id == model_id
+    assert reloaded_settings.models[0].api_key == "custom-openai-key"
+
+
 class FakeAgent:
     def __init__(self) -> None:
         self.is_running = False

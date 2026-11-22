@@ -224,3 +224,17 @@ async def test_large_edit_diff_is_archived_without_losing_execution_status(tmp_p
     reference = Path(archived.metadata["content_ref"]["path"])
     assert reference.read_text("utf-8") == result.content
     assert "-旧行" in result.content and "+新行" in result.content
+
+
+async def test_schema_integer_values_are_normalized_for_page_indices(tmp_path: Path) -> None:
+    path = tmp_path / "numeric.txt"
+    path.write_text("第一行\n第二行", encoding="utf-8")
+    tool_result = await _execute(
+        tmp_path, "read_file", {"path": path.name, "start_line": 1.0, "max_lines": 1.0}
+    )
+    assert not tool_result.is_error
+    assert (
+        tool_result.content
+        == "1: 第一行\n[显示第 1–1 行，共 2 行]\n[尚未读完，请使用 start_line=2 继续读取。]"
+    )
+    assert tool_result.metadata["next_start_line"] == 2

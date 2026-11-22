@@ -111,7 +111,7 @@ class ReadFileTool(Tool):
         self._result_path_resolver = result_path_resolver
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        raw_path = str(tool_call.arguments["path"])
+        raw_path = tool_call.arguments["path"]
         try:
             path = resolve_in_workspace(tool_context.workspace, raw_path)
         except ValueError:
@@ -120,6 +120,7 @@ class ReadFileTool(Tool):
             # 结果目录在工作区外，read_file 因此也兼作 content_ref 的读取入口；
             # 解析器仍会校验会话分支登记与符号链接。
             path = await self._result_path_resolver(tool_context.session_id, raw_path)
+        # JSON Schema 的 integer 也接受 1.0；分页索引需要规范为 Python int。
         start = int(tool_call.arguments.get("start_line", 1))
         limit = int(tool_call.arguments.get("max_lines", 400))
         data = await asyncio.to_thread(path.read_bytes)
@@ -130,9 +131,9 @@ def _read_page(tool_call: ToolCall, text: str, start: int, limit: int) -> ToolRe
     """按行与 UTF-8 字节双阈值分页，元信息不占正文额度。"""
 
     lines = text.splitlines()
-    # 空文件只允许 start=1；其余越界或非法 max_lines 都在读取前拒绝。
-    if start < 1 or not 1 <= limit <= 2000 or (start > len(lines) and (lines or start != 1)):
-        raise ToolNotExecutedError("读取行范围越界或 max_lines 不在 1–2000 内")
+    # 参数范围已由 schema 校验；这里只检查依赖文件内容的起始行。
+    if start > len(lines) and (lines or start != 1):
+        raise ToolNotExecutedError("读取行范围越界")
     selected: list[str] = []
     output_bytes = 0
     for line_number in range(start, min(start + limit, len(lines) + 1)):
@@ -188,9 +189,9 @@ class WriteFileTool(Tool):
     risk = ToolRisk.WRITE
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+        path = resolve_in_workspace(tool_context.workspace, tool_call.arguments["path"])
         _check_memory_write(tool_context.workspace, path)
-        content = str(tool_call.arguments["content"])
+        content = tool_call.arguments["content"]
 
         size = await _mutate_file(path, lambda: _atomic_write(path, content))
         return ToolResult(
@@ -234,7 +235,7 @@ class EditFileTool(Tool):
     risk = ToolRisk.WRITE
 
     async def execute(self, tool_call: ToolCall, tool_context: ToolContext) -> ToolResult:
-        path = resolve_in_workspace(tool_context.workspace, str(tool_call.arguments["path"]))
+        path = resolve_in_workspace(tool_context.workspace, tool_call.arguments["path"])
         _check_memory_write(tool_context.workspace, path)
         edits = tool_call.arguments["edits"]
         diff = ""

@@ -9,7 +9,7 @@ from camel_harness.agent.tools.types import ToolCall, ToolContext
 
 
 async def test_web_approval_can_be_resolved_from_pending_queue() -> None:
-    """浏览器审批应挂起工具调用，并在用户决定后恢复。"""
+    """桌面界面审批应挂起工具调用，并在用户决定后恢复。"""
 
     web_approval = WebApproval(timeout_seconds=1)
     permission_request = PermissionRequest(

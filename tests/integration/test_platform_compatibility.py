@@ -19,9 +19,21 @@ from camel_harness.agent.tools.file_result_storage import FileToolResultStorage
 from camel_harness.llm import UserMessage
 
 
-def test_backend_starts_with_isolated_default_config_and_can_create_session(tmp_path, monkeypatch):
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    with TestClient(create_app(tmp_path)) as client:
+def test_backend_starts_with_isolated_default_config_and_can_create_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def isolated_home(cls: type[Path]) -> Path:
+        return tmp_path
+
+    monkeypatch.setattr(Path, "home", classmethod(isolated_home))
+    frontend_dist = tmp_path / "renderer"
+    frontend_dist.mkdir()
+    (frontend_dist / "index.html").write_text("<h1>Camel</h1>", encoding="utf-8")
+    with TestClient(
+        create_app(tmp_path, frontend_dist=frontend_dist, desktop_token="test-token"),
+        base_url="http://127.0.0.1:43210",
+        headers={"X-Camel-Desktop-Token": "test-token"},
+    ) as client:
         assert client.get("/api/health").status_code == 200
         response = client.post("/api/sessions", json={"name": "Windows 启动烟测"})
         assert response.status_code == 201

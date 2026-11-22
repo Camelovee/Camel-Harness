@@ -41,8 +41,8 @@ class DelegateTaskTool(Tool):
             )
         subagent_result = await self._subagent_runner(
             SubagentRequest(
-                task=str(tool_call.arguments["task"]),
-                agent_type=SubagentType(str(tool_call.arguments["agent_type"])),
+                task=tool_call.arguments["task"],
+                agent_type=SubagentType(tool_call.arguments["agent_type"]),
                 workspace=tool_context.workspace,
                 permission_mode=tool_context.permission_mode,
                 parent_session_id=tool_context.session_id,
