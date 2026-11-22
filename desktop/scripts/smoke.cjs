@@ -208,6 +208,12 @@ async function main() {
       await page.mouse.down();
       await page.mouse.move(bounds.x + bounds.width / 2 + movement, bounds.y + 160, { steps: 12 });
       await page.mouse.up();
+      // 输入事件发送完成后，仍需等待 React 提交拖动的最终宽度。
+      await page.waitForFunction(
+        ({ element, expected }) => element.getAttribute("aria-valuenow") === expected &&
+          element.getAttribute("data-resizing") === "false",
+        { element: await divider.elementHandle(), expected: String(expectedWidth) },
+      );
       assert.equal(await divider.getAttribute("aria-valuenow"), String(expectedWidth));
       assert.equal(await divider.getAttribute("data-resizing"), "false");
       assert.equal(await page.locator(".divider-popover:popover-open").count(), 0);

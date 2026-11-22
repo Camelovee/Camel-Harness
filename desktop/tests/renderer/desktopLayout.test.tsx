@@ -74,3 +74,15 @@ it("分隔线可通过键盘调整两侧宽度，并在收起后转移焦点", a
   expect(screen.queryByRole("separator", { name: "侧栏宽度" })).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "展开侧栏" }));
 });
+
+it("快速拖动按松开位置提交最终宽度，保留最后一次移动后的距离", async () => {
+  render(<DesktopApp />);
+  await screen.findByRole("button", { name: "理解项目" });
+  const divider = screen.getByRole("separator", { name: "侧栏宽度" });
+  Object.defineProperty(divider, "setPointerCapture", { value: vi.fn() });
+  fireEvent.pointerDown(divider, { button: 0, clientX: 240, pointerId: 1 });
+  fireEvent.pointerMove(divider, { clientX: 245, pointerId: 1 });
+  fireEvent.pointerUp(divider, { clientX: 300, pointerId: 1 });
+  expect(divider.getAttribute("aria-valuenow")).toBe("296");
+  expect(divider.getAttribute("data-resizing")).toBe("false");
+});

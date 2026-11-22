@@ -19,6 +19,15 @@ export function PanelDivider({ side, width, minimum, maximum, defaultWidth, onRe
   const suppressClick = useRef(false);
   const [resizing, setResizing] = useState(false);
   const [popoverLeft, setPopoverLeft] = useState(0);
+  function resizeDrag(clientX: number) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (!drag.moved && Math.abs(clientX - drag.x) < 3) return;
+    drag.moved = true;
+    setResizing(true);
+    onResize(drag.width + (clientX - drag.x) * direction);
+  }
+
   function finishDrag() {
     if (!dragRef.current) return;
     suppressClick.current = dragRef.current.moved;
@@ -37,15 +46,12 @@ export function PanelDivider({ side, width, minimum, maximum, defaultWidth, onRe
         dragRef.current = { x: event.clientX, width, moved: false };
         suppressClick.current = false;
       }}
-      onPointerMove={(event) => {
-        const drag = dragRef.current;
-        if (!drag) return;
-        if (!drag.moved && Math.abs(event.clientX - drag.x) < 3) return;
-        drag.moved = true;
-        setResizing(true);
-        onResize(drag.width + (event.clientX - drag.x) * direction);
-      }}
-      onPointerUp={finishDrag} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag}
+      onPointerMove={(event) => resizeDrag(event.clientX)}
+      onPointerUp={(event) => {
+        // 快速拖动时移动事件可能合并，松开位置决定最终宽度。
+        resizeDrag(event.clientX);
+        finishDrag();
+      }} onPointerCancel={finishDrag} onLostPointerCapture={finishDrag}
       onClick={(event) => {
         if (suppressClick.current) { suppressClick.current = false; return; }
         setPopoverLeft(Math.max(12, Math.min(event.currentTarget.getBoundingClientRect().left - 90, window.innerWidth - 202)));
