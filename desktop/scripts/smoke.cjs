@@ -25,6 +25,12 @@ async function assertConversationAlignment(page) {
   return bounds[0].width;
 }
 
+async function waitForPanelAnimation(page) {
+  await page.locator("main").evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+}
+
 async function assertInfoTip(page, label) {
   const trigger = page.getByRole("button", { name: label, exact: true });
   await trigger.click();
@@ -42,7 +48,9 @@ async function assertInfoTip(page, label) {
 }
 
 async function assertSettingsLayout(page) {
-  await page.waitForTimeout(240);
+  await page.locator(".settings-dialog").evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
   const snapshot = () => page.evaluate(() => [".settings-dialog", ".settings-header", ".settings-nav"].map((selector) => {
     const rectangle = document.querySelector(selector).getBoundingClientRect();
     return { x: rectangle.x, y: rectangle.y, width: rectangle.width, height: rectangle.height };
@@ -191,11 +199,11 @@ async function main() {
     await scrollbarStyle.evaluate((element) => element.remove());
     await page.getByRole("button", { name: "收起执行详情", exact: true }).click();
     await page.getByRole("button", { name: "收起侧栏", exact: true }).click();
-    await page.waitForTimeout(360);
+    await waitForPanelAnimation(page);
     assert.equal(await assertConversationAlignment(page), 760);
     await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
     await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
-    await page.waitForTimeout(360);
+    await waitForPanelAnimation(page);
     const welcomeBounds = await page.getByRole("button", { name: "创建空会话", exact: true }).boundingBox();
     const messageBounds = await page.locator("main .messages").boundingBox();
     assert.ok(welcomeBounds.y + welcomeBounds.height <= messageBounds.y + messageBounds.height, `欢迎操作被输入区遮挡：${JSON.stringify({ welcomeBounds, messageBounds })}`);
