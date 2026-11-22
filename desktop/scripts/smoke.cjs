@@ -5,6 +5,16 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const assert = require("node:assert/strict");
 
+async function resizeWindow(application, page, width, height) {
+  const contentHeight = await application.evaluate(({ BrowserWindow }, size) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    mainWindow.setSize(size.width, size.height);
+    return size.height - (mainWindow.getBounds().height - mainWindow.getContentBounds().height);
+  }, { width, height });
+  // macOS 虚拟屏幕可能限制原生窗口大小，渲染视口显式覆盖所有待验收的宽窄布局。
+  await page.setViewportSize({ width, height: contentHeight });
+}
+
 async function assertConversationAlignment(page) {
   const bounds = await page.evaluate(() => ["main .messages-inner", ".composer-box"].map((selector) => {
     const rectangle = document.querySelector(selector).getBoundingClientRect();
@@ -131,6 +141,7 @@ async function main() {
       timeout: 45_000,
     });
     const page = await application.firstWindow();
+    await resizeWindow(application, page, 1280, 840);
     await page.getByRole("button", { name: "重新启动后端" }).waitFor({ state: "visible", timeout: 45_000 });
     await writeFile(join(home, ".camel/config.json"), "{}");
     await page.getByRole("button", { name: "重新启动后端" }).click();
@@ -206,11 +217,11 @@ async function main() {
     assert.equal(await inspectorDivider.getAttribute("aria-valuenow"), "356");
     await inspectorDivider.press("End");
     await sidebarDivider.press("End");
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 840));
+    await resizeWindow(application, page, 1180, 840);
     await page.waitForFunction(() => document.querySelector("main").getBoundingClientRect().width >= 420);
     await assertConversationAlignment(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 840));
+    await resizeWindow(application, page, 1280, 840);
     await sidebarDivider.dblclick();
     await inspectorDivider.dblclick();
     assert.equal(await sidebarDivider.getAttribute("aria-valuenow"), "236");
@@ -246,7 +257,7 @@ async function main() {
     await page.locator(".tool-message > summary").click();
     await page.getByRole("button", { name: "在侧栏查看" }).click();
     await page.getByRole("complementary", { name: "工具详情" }).waitFor();
-    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 640));
+    await resizeWindow(application, page, 960, 640);
     await page.getByRole("complementary", { name: "工具详情" }).waitFor({ state: "hidden" });
     await assertConversationAlignment(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
@@ -263,10 +274,8 @@ async function main() {
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await assertSettingsLayout(page);
     await page.getByRole("button", { name: "关闭设置" }).click();
-    await application.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0].setSize(1280, 840);
-      BrowserWindow.getAllWindows()[0].webContents.send("desktop:action", "toggle-sidebar");
-    });
+    await resizeWindow(application, page, 1280, 840);
+    await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send("desktop:action", "toggle-sidebar"));
     await page.getByRole("button", { name: "展开侧栏" }).waitFor();
     await page.getByRole("button", { name: "展开侧栏" }).click();
     await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
