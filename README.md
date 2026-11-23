@@ -2,7 +2,7 @@
 
 面向本地项目的桌面编程助手，可读取、修改代码并执行任务。底层是受 pi-agent 启发的轻量 Python Agent Runtime，Electron 负责窗口、React 界面与内置 Python 后端。
 
-当前为 **1.1.0 桌面预览开发版**，源码位于 [`camel-harness-dev`](https://github.com/Camelovee/Camel-Harness/tree/camel-harness-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.1.0 安装包尚未发布，可先按下文从源码运行。
+当前为 **1.2.0 桌面预览版**，源码位于 [`camel-harness-dev`](https://github.com/Camelovee/Camel-Harness/tree/camel-harness-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.2.0 安装包以 Releases 的实际发布状态为准，仍未正式签名。
 
 打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64；本机已验证 Apple Silicon 应用，Intel Mac 和 Windows 的原生安装仍待验证。下载安装、源码开发及打包见 [桌面客户端说明](desktop/README.md)。
 
