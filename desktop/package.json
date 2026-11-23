@@ -1,7 +1,7 @@
 {
   "name": "camel-harness-desktop",
   "productName": "Camel Harness",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Camel Harness 本地编程助手",
   "author": "Camel Harness contributors",

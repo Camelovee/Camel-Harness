@@ -759,7 +759,9 @@ async def test_failed_compaction_keeps_persisted_history_and_emits_one_terminal_
     await agent.run("继续", model=_MODEL)
     entries = await session.entries()
     assert entries[: len(previous)] == previous
-    assert len(entries) == len(previous) + 1
+    # 失败运行仍会提交一条用户消息和一条 Run 摘要。
+    assert len(entries) == len(previous) + 2
+    assert entries[-1].type == "run"
     assert not any(entry.type == "compaction" for entry in entries)
     terminal = [event for event in events if event.type == "agent_end"]
     assert len(terminal) == 1

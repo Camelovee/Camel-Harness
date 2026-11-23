@@ -2,7 +2,7 @@
 
 面向本地项目的桌面编程助手，可读取、修改代码并执行任务。底层是受 pi-agent 启发的轻量 Python Agent Runtime，Electron 负责窗口、React 界面与内置 Python 后端。
 
-当前为 **1.1.0 桌面预览开发版**，源码位于 [`camel-harness-dev`](https://github.com/Camelovee/Camel-Harness/tree/camel-harness-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.1.0 安装包尚未发布，可先按下文从源码运行。
+当前为 **1.2.0 桌面预览版**，源码位于 [`camel-harness-dev`](https://github.com/Camelovee/Camel-Harness/tree/camel-harness-dev)。GitHub 已发布的 1.0.1 不包含此桌面客户端；1.2.0 安装包以 Releases 的实际发布状态为准，仍未正式签名。
 
 打包目标为 macOS Apple Silicon、macOS Intel 和 Windows x64；本机已验证 Apple Silicon 应用，Intel Mac 和 Windows 的原生安装仍待验证。下载安装、源码开发及打包见 [桌面客户端说明](desktop/README.md)。
 
@@ -121,7 +121,8 @@ git diff --check
 ## 项目文档
 
 - [项目架构](docs/项目架构.md)：当前桌面端、Backend 与 Harness 的职责、依赖和运行流程。
-- [路书](docs/路书.md)：已实现能力、待验证事项及按需扩展范围。
+- [Harness Runtime 路书](docs/路书-Harness.md)：运行时与入口层的已实现能力、待验证事项及按需扩展。
+- [前端路书](docs/路书-前端.md)：Electron、React 界面与分发的计划、验收和扩展。
 - 方案设计：[桌面客户端](docs/方案设计/桌面客户端设计.md)、[上下文管理](docs/方案设计/上下文管理设计.md)、[工具安全](docs/方案设计/工具安全设计.md)、[会话](docs/方案设计/会话系统设计.md)、[上下文压缩](docs/方案设计/上下文压缩设计.md)、[记忆](docs/方案设计/记忆系统设计.md)。
 - [会话性能基准](docs/会话性能基准.md)：本机全量重放测量方式及环境限制。
 
@@ -135,7 +136,7 @@ git diff --check
 - Provider 首事件前的上下文超限，每 Run 最多强制压缩并重发一次；压缩关闭、没有安全切点或仍超限时明确结束，不递归重试摘要请求。
 - 上下文 token 为估算；会话格式不提供旧版本运行时兼容。不要提交密钥或个人会话。
 
-[项目架构](docs/项目架构.md) · [路书](docs/路书.md) · [变更记录](CHANGELOG.md)
+[项目架构](docs/项目架构.md) · [Harness 路书](docs/路书-Harness.md) · [前端路书](docs/路书-前端.md) · [变更记录](CHANGELOG.md)
 
 ## 许可证
 

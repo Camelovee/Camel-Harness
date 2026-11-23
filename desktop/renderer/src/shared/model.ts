@@ -123,6 +123,31 @@ export type Message = AssistantAudit & {
   role: "user" | "assistant" | "toolResult" | "approval";
   content: ContentBlock[];
   approval?: Approval;
+  timestamp?: string;
+};
+
+export type RunApproval = {
+  request_id: string;
+  tool_name: string;
+  approved: boolean;
+  decided_at: string;
+};
+
+export type RunSummary = {
+  run_id: string;
+  started_at: string;
+  finished_at: string;
+  status: "completed" | "failed" | "cancelled";
+  stop_reason: string | null;
+  provider: string | null;
+  model: string | null;
+  total_tokens: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  files: string[];
+  approvals: RunApproval[];
+  subagent_ids: string[];
+  tool_failures: number;
 };
 
 export type TokenUsage = {
@@ -132,8 +157,13 @@ export type TokenUsage = {
 };
 
 export type WireMessage =
-  | { role: "user"; content: string }
-  | (AssistantAudit & { role: "assistant"; content: ContentBlock[]; stop_reason: string })
+  | { role: "user"; content: string; timestamp?: string }
+  | (AssistantAudit & {
+      role: "assistant";
+      content: ContentBlock[];
+      stop_reason: string;
+      timestamp?: string;
+    })
   | {
       role: "toolResult";
       tool_call_id: string;
@@ -141,6 +171,7 @@ export type WireMessage =
       content: string;
       is_error: boolean;
       details?: ToolResultDetails;
+      timestamp?: string;
     };
 
 export type AssistantStreamEvent =

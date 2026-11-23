@@ -20,12 +20,12 @@ it("默认展示三栏，快速收起与展开详情不依赖动画结束", asyn
   await screen.findByRole("button", { name: "理解项目" });
   expect(screen.getByRole("complementary", { name: "工作区与会话" })).toBeTruthy();
   expect(screen.getByRole("main")).toBeTruthy();
-  expect(screen.getByRole("complementary", { name: "执行详情", exact: true })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "收起执行详情", exact: true }));
-  expect(screen.queryByRole("complementary", { name: "执行详情", exact: true })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "展开执行详情", exact: true }));
-  expect(screen.getByRole("button", { name: "收起执行详情", exact: true }).getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByRole("complementary", { name: "执行详情", exact: true })).toBeTruthy();
+  expect(screen.getByRole("complementary", { name: "运行账本", exact: true })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "收起运行账本", exact: true }));
+  expect(screen.queryByRole("complementary", { name: "运行账本", exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "展开运行账本", exact: true }));
+  expect(screen.getByRole("button", { name: "收起运行账本", exact: true }).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("complementary", { name: "运行账本", exact: true })).toBeTruthy();
   expect(vi.mocked(Element.prototype.animate).mock.results[0].value.cancel).toHaveBeenCalled();
 });
 
@@ -63,7 +63,7 @@ it("分隔线可通过键盘调整两侧宽度，并在收起后转移焦点", a
   render(<DesktopApp />);
   await screen.findByRole("button", { name: "理解项目" });
   const sidebar = screen.getByRole("separator", { name: "侧栏宽度" });
-  const inspector = screen.getByRole("separator", { name: "执行详情宽度" });
+  const inspector = screen.getByRole("separator", { name: "运行账本宽度" });
   fireEvent.keyDown(sidebar, { key: "ArrowRight" });
   expect(sidebar.getAttribute("aria-valuenow")).toBe("252");
   fireEvent.keyDown(inspector, { key: "ArrowLeft" });

@@ -280,7 +280,9 @@ async def test_agent_uses_selected_branch_not_sibling_history(tmp_path) -> None:
     await agent.run("走新方案", model=_MODEL)
     assert adapter.requests[0].messages == (UserMessage("共同问题"), UserMessage("走新方案"))
     entries = await session.entries()
-    assert entries[-2].parent_id == root
+    assert entries[-3].parent_id == root
+    assert entries[-2].parent_id == entries[-3].id
+    assert entries[-1].type == "run"
     assert entries[-1].parent_id == entries[-2].id
-    assert len(entries) == 4
+    assert len(entries) == 5
     assert len(await session.messages()) == 3

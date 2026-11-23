@@ -158,7 +158,7 @@ async function main() {
     assert.equal(await page.evaluate(() => typeof window.require), "undefined");
     const info = await page.evaluate(() => window.camelDesktop.appInfo());
     assert.ok(info.version);
-    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
+    await page.getByRole("complementary", { name: "运行账本", exact: true }).waitFor();
     const columns = await page.evaluate(() => [".sidebar-container", ".main-area", ".inspector-host"].map((selector) => {
       const rectangle = document.querySelector(selector).getBoundingClientRect();
       return { left: rectangle.left, right: rectangle.right, width: rectangle.width };
@@ -182,7 +182,7 @@ async function main() {
     await page.reload();
     await page.getByRole("button", { name: "理解项目", exact: true }).waitFor();
     await assertInfoTip(page, "上下文输入说明");
-    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
+    await page.getByRole("complementary", { name: "运行账本", exact: true }).waitFor();
     await page.waitForTimeout(360);
     await assertConversationAlignment(page);
     const composerHeight = await page.locator(".composer-box").evaluate((element) => element.getBoundingClientRect().height);
@@ -197,19 +197,19 @@ async function main() {
     const scrollbarStyle = await page.addStyleTag({ content: "main .messages { scrollbar-gutter: stable; }" });
     await assertConversationAlignment(page);
     await scrollbarStyle.evaluate((element) => element.remove());
-    await page.getByRole("button", { name: "收起执行详情", exact: true }).click();
+    await page.getByRole("button", { name: "收起运行账本", exact: true }).click();
     await page.getByRole("button", { name: "收起侧栏", exact: true }).click();
     await waitForPanelAnimation(page);
     assert.equal(await assertConversationAlignment(page), 760);
     await page.getByRole("button", { name: "展开侧栏", exact: true }).click();
-    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    await page.getByRole("button", { name: "展开运行账本", exact: true }).click();
     await waitForPanelAnimation(page);
     const welcomeBounds = await page.getByRole("button", { name: "创建空会话", exact: true }).boundingBox();
     const messageBounds = await page.locator("main .messages").boundingBox();
     assert.ok(welcomeBounds.y + welcomeBounds.height <= messageBounds.y + messageBounds.height, `欢迎操作被输入区遮挡：${JSON.stringify({ welcomeBounds, messageBounds })}`);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]).replace(/\.png$/, "-welcome.png"), fullPage: true });
     const sidebarDivider = page.getByRole("separator", { name: "侧栏宽度", exact: true });
-    const inspectorDivider = page.getByRole("separator", { name: "执行详情宽度", exact: true });
+    const inspectorDivider = page.getByRole("separator", { name: "运行账本宽度", exact: true });
     for (const [divider, movement, expectedWidth] of [[sidebarDivider, 60, 296], [inspectorDivider, -60, 340]]) {
       const bounds = await divider.boundingBox();
       await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 160);
@@ -246,7 +246,7 @@ async function main() {
     await page.getByRole("button", { name: "重置侧栏宽度", exact: true }).click();
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".divider-popover:popover-open").count(), 0);
-    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
+    await page.getByRole("complementary", { name: "运行账本", exact: true }).waitFor();
     await page.getByRole("button", { name: "选择本地工作区", exact: false }).click();
     await page.waitForFunction((projectPath) => document.querySelector(".main-header-sub")?.textContent === projectPath, project);
     await page.getByRole("textbox").fill("在临时项目中写入验收文件");
@@ -275,16 +275,16 @@ async function main() {
     await page.getByRole("complementary", { name: "工具详情" }).waitFor({ state: "hidden" });
     await assertConversationAlignment(page);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
-    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
-    await page.getByRole("dialog", { name: "执行详情面板" }).waitFor();
+    await page.getByRole("button", { name: "展开运行账本", exact: true }).click();
+    await page.getByRole("dialog", { name: "运行账本面板" }).waitFor();
     assert.equal(await page.locator("main").evaluate((element) => element.inert), true);
     for (let index = 0; index < 8; index++) {
       await page.keyboard.press("Tab");
       assert.equal(await page.evaluate(() => document.querySelector(".inspector-host").contains(document.activeElement)), true);
     }
     await page.keyboard.press("Escape");
-    await page.getByRole("dialog", { name: "执行详情面板" }).waitFor({ state: "hidden" });
-    assert.equal(await page.getByRole("button", { name: "展开执行详情", exact: true }).evaluate((element) => element === document.activeElement), true);
+    await page.getByRole("dialog", { name: "运行账本面板" }).waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "展开运行账本", exact: true }).evaluate((element) => element === document.activeElement), true);
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await assertSettingsLayout(page);
     await page.getByRole("button", { name: "关闭设置" }).click();
@@ -292,8 +292,8 @@ async function main() {
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send("desktop:action", "toggle-sidebar"));
     await page.getByRole("button", { name: "展开侧栏" }).waitFor();
     await page.getByRole("button", { name: "展开侧栏" }).click();
-    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
-    await page.getByRole("complementary", { name: "执行详情", exact: true }).waitFor();
+    await page.getByRole("button", { name: "展开运行账本", exact: true }).click();
+    await page.getByRole("complementary", { name: "运行账本", exact: true }).waitFor();
     await page.getByRole("button", { name: "设置", exact: true }).click();
     await assertSettingsLayout(page);
     await page.getByRole("button", { name: "外观", exact: true }).click();
@@ -318,9 +318,9 @@ async function main() {
     await page.waitForTimeout(360);
     if (process.argv[3]) await page.screenshot({ path: resolve(process.argv[3]), fullPage: true });
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.getByRole("button", { name: "收起执行详情", exact: true }).click();
+    await page.getByRole("button", { name: "收起运行账本", exact: true }).click();
     assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
-    await page.getByRole("button", { name: "展开执行详情", exact: true }).click();
+    await page.getByRole("button", { name: "展开运行账本", exact: true }).click();
     assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
     await page.emulateMedia({ reducedMotion: "no-preference" });
     const providerModels = await page.evaluate(async (baseUrl) => {

@@ -18,7 +18,7 @@ from camel_harness.llm import (
     UserMessage,
 )
 
-from .types import SCHEMA_VERSION, SessionMetadata, TaskOutcome
+from .types import SCHEMA_VERSION, ApprovalDecision, RunSummary, SessionMetadata, TaskOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +73,15 @@ class SessionCompactionEvent(SessionEntryBase):
 
 
 @dataclass(frozen=True, slots=True)
+class SessionRunEvent(SessionEntryBase):
+    """一次 Run 的审计摘要；不参与模型上下文。"""
+
+    timestamp: str
+    summary: RunSummary
+    type: Literal["run"] = field(default="run", init=False)
+
+
+@dataclass(frozen=True, slots=True)
 class SessionInfoEvent(SessionEntryBase):
     """元数据更新快照，不参与模型上下文。"""
 
@@ -86,9 +95,15 @@ class SessionInfoEvent(SessionEntryBase):
 
 
 SessionEvent: TypeAlias = (
-    SessionHeaderEvent | SessionMessageEvent | SessionCompactionEvent | SessionInfoEvent
+    SessionHeaderEvent
+    | SessionMessageEvent
+    | SessionCompactionEvent
+    | SessionRunEvent
+    | SessionInfoEvent
 )
-SessionEntry: TypeAlias = SessionMessageEvent | SessionCompactionEvent | SessionInfoEvent
+SessionEntry: TypeAlias = (
+    SessionMessageEvent | SessionCompactionEvent | SessionRunEvent | SessionInfoEvent
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +220,8 @@ def project_metadata(events: Iterable[SessionEvent]) -> SessionMetadata:
             message_count += 1
             last_message_type = event.message.role
             updated_at = event.timestamp
+        elif isinstance(event, SessionRunEvent):
+            updated_at = event.timestamp
         elif isinstance(event, SessionInfoEvent):
             task_outcome = event.task_outcome
             name, workspace = event.name, event.workspace
@@ -253,6 +270,8 @@ def event_to_dict(event: SessionEvent) -> dict[str, Any]:
         )
         if event.usage is not None:
             result["usage"] = asdict(event.usage)
+    elif isinstance(event, SessionRunEvent):
+        result["summary"] = run_summary_to_dict(event.summary)
     elif isinstance(event, SessionInfoEvent):
         result.update(
             name=event.name, cwd=event.workspace, modelId=event.model_id, archived=event.archived
@@ -260,6 +279,70 @@ def event_to_dict(event: SessionEvent) -> dict[str, Any]:
         if event.task_outcome is not None:
             result["taskOutcome"] = asdict(event.task_outcome)
     return result
+
+
+def run_summary_to_dict(summary: RunSummary) -> dict[str, Any]:
+    """Run 摘要使用稳定的小写下划线字段，审批决定保持独立数组。"""
+
+    result = asdict(summary)
+    result["files"] = list(summary.files)
+    result["subagent_ids"] = list(summary.subagent_ids)
+    result["approvals"] = [asdict(item) for item in summary.approvals]
+    return result
+
+
+def run_summary_from_dict(data: dict[str, Any]) -> RunSummary:
+    """解析外部 JSONL 中的 Run 摘要，字段类型错误直接判为日志损坏。"""
+
+    def string_tuple(name: str) -> tuple[str, ...]:
+        value = data.get(name, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"Run 摘要 {name} 必须是字符串数组")
+        return tuple(value)
+
+    for key in ("stop_reason", "provider", "model"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"Run 摘要 {key} 必须是字符串或空值")
+    raw_approvals = data.get("approvals", [])
+    if not isinstance(raw_approvals, list):
+        raise ValueError("Run 摘要 approvals 必须是数组")
+    approvals: list[ApprovalDecision] = []
+    for item in raw_approvals:
+        if not isinstance(item, dict):
+            raise ValueError("Run 审批决定必须是对象")
+        request_id = item.get("request_id")
+        tool_name = item.get("tool_name")
+        decided_at = item.get("decided_at")
+        approved = item.get("approved")
+        if not (
+            isinstance(request_id, str)
+            and request_id
+            and isinstance(tool_name, str)
+            and tool_name
+            and isinstance(decided_at, str)
+            and decided_at
+        ):
+            raise ValueError("Run 审批决定缺少字符串字段")
+        if type(approved) is not bool:
+            raise ValueError("Run 审批决定 approved 必须是布尔值")
+        approvals.append(ApprovalDecision(request_id, tool_name, approved, decided_at))
+    return RunSummary(
+        run_id=data["run_id"],
+        started_at=data["started_at"],
+        finished_at=data["finished_at"],
+        status=data["status"],
+        stop_reason=data.get("stop_reason"),
+        provider=data.get("provider"),
+        model=data.get("model"),
+        total_tokens=data.get("total_tokens", 0),
+        input_tokens=data.get("input_tokens"),
+        output_tokens=data.get("output_tokens"),
+        files=string_tuple("files"),
+        approvals=tuple(approvals),
+        subagent_ids=string_tuple("subagent_ids"),
+        tool_failures=data.get("tool_failures", 0),
+    )
 
 
 def event_from_dict(data: dict[str, Any]) -> SessionEvent:
@@ -306,6 +389,10 @@ def event_from_dict(data: dict[str, Any]) -> SessionEvent:
         )
     if event_type == "message":
         return SessionMessageEvent(timestamp, message_from_dict(data["message"]), **coordinates)
+    if event_type == "run":
+        if not isinstance(data.get("summary"), dict):
+            raise ValueError("Run 事件必须包含摘要对象")
+        return SessionRunEvent(timestamp, run_summary_from_dict(data["summary"]), **coordinates)
     if event_type == "compaction":
         if not isinstance(data["summary"], str) or not isinstance(data["firstKeptEntryId"], str):
             raise ValueError("压缩摘要及保留条目 ID 必须是字符串")

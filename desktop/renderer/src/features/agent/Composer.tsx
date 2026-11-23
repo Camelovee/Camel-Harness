@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
-import { ArrowUp, ArrowBendDownRight, CaretDown, FolderOpen, Play, Square } from "@phosphor-icons/react";
+import { ArrowUp, ArrowBendDownRight, Brain, CaretDown, Cpu, FolderOpen, Play, ShieldCheck, Square } from "@phosphor-icons/react";
 import type { Dispatch, SetStateAction } from "react";
 
 import type { ModelProfile, PermissionMode, ThinkingEffort } from "../../shared/model";
+import { InfoTip } from "../../shared/InfoTip";
 import { workspaceName } from "../../shared/presentation";
 
 type Props = {
@@ -113,43 +114,52 @@ export function Composer({
             <CaretDown size={12} aria-hidden="true" />
           </button>
           <div className="composer-right">
-            <select
-              className="model-select"
-              aria-label="选择模型"
-              value={selectedModelId}
-              onChange={(event) => onModelChange(event.target.value)}
-              disabled={!active || running || switchingModel || !models.length}
-              title="选择当前或下一次对话的模型"
-            >
-              {!selectedModelId && <option value="">配置模型</option>}
-              {models.map((profile) => (
-                <option key={profile.id} value={profile.id} disabled={!profile.configured}>
-                  {profile.name} · {profile.model}{!profile.configured ? " · 未配置" : ""}
-                </option>
-              ))}
-            </select>
-            <select
-              value={effort}
-              aria-label="思考强度"
-              title="思考强度：影响模型推理深度与耗时"
-              onChange={(event) => onEffortChange(event.target.value as ThinkingEffort)}
-              disabled={!active || running}
-            >
-              <option value="low">思考 · 低</option>
-              <option value="high">思考 · 中</option>
-              <option value="max">思考 · 高</option>
-            </select>
-            <select
-              aria-label="权限模式"
-              aria-describedby={permissionMode === "yolo" ? "permission-warning" : undefined}
-              value={permissionMode}
-              onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
-              disabled={!active || running}
-            >
-              <option value="default">默认审批</option>
-              <option value="plan">只读计划</option>
-              <option value="yolo">自动允许</option>
-            </select>
+            <span className="composer-chip">
+              <Cpu size={14} aria-hidden="true" />
+              <select
+                className="model-select"
+                aria-label="选择模型"
+                value={selectedModelId}
+                onChange={(event) => onModelChange(event.target.value)}
+                disabled={!active || running || switchingModel || !models.length}
+                title="选择当前或下一次对话的模型"
+              >
+                {!selectedModelId && <option value="">配置模型</option>}
+                {models.map((profile) => (
+                  <option key={profile.id} value={profile.id} disabled={!profile.configured}>
+                    {profile.name} · {profile.model}{!profile.configured ? " · 未配置" : ""}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <span className="composer-chip">
+              <Brain size={14} aria-hidden="true" />
+              <select
+                value={effort}
+                aria-label="思考强度"
+                title="思考强度：影响模型推理深度与耗时"
+                onChange={(event) => onEffortChange(event.target.value as ThinkingEffort)}
+                disabled={!active || running}
+              >
+                <option value="low">低</option>
+                <option value="high">中</option>
+                <option value="max">高</option>
+              </select>
+            </span>
+            <span className="composer-chip">
+              <ShieldCheck size={14} aria-hidden="true" />
+              <select
+                aria-label="权限模式"
+                aria-describedby={permissionMode === "yolo" ? "permission-warning" : undefined}
+                value={permissionMode}
+                onChange={(event) => onPermissionModeChange(event.target.value as PermissionMode)}
+                disabled={!active || running}
+              >
+                <option value="default">默认审批</option>
+                <option value="plan">只读计划</option>
+                <option value="yolo">自动允许</option>
+              </select>
+            </span>
             <button
               type="button"
               className="send-button"
@@ -189,7 +199,8 @@ export function Composer({
         工具操作将自动允许，可能修改文件或执行命令。
       </p>}
       <div className="composer-hint">
-        <span id="composer-shortcuts"><kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行</span>
+        <span id="composer-shortcuts" className="sr-only">Enter 发送，Shift + Enter 换行</span>
+        <InfoTip label="快捷键说明"><kbd>Enter</kbd> 发送，<kbd>Shift + Enter</kbd> 换行</InfoTip>
         {status !== "准备就绪" && <span className={`composer-status ${running ? "status-running" : ""}`}>{status}</span>}
       </div>
     </div>

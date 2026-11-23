@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +25,7 @@ from .events import (
     Unsubscribe,
     _EventDispatcher,
 )
+from .run_ledger import RunLedger
 from .session import Session, analyze_resume
 from .session_committer import SessionCommitter
 from .state import (
@@ -39,6 +41,7 @@ from .tools import PermissionMode, ToolExecutor
 from .turn_runner import TurnRunner
 
 CloseHandler = Callable[[], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 class AgentBusyError(RuntimeError):
@@ -76,6 +79,7 @@ class Agent:
         self._context_manager = context_manager
         self._on_close = on_close
         self._run_control: RunControl | None = None
+        self._ledger: RunLedger | None = None
         self._run_lock = asyncio.Lock()
         self._event_dispatcher = _EventDispatcher()
         self._closed = False
@@ -266,6 +270,8 @@ class Agent:
     async def _emit(self, agent_event: AgentEvent) -> None:
         """按订阅顺序交付事件，使慢消费者形成明确背压。"""
 
+        if self._ledger is not None:
+            self._ledger.observe(agent_event)
         await self._event_dispatcher.emit(agent_event)
 
     async def _execute_run(
@@ -282,6 +288,7 @@ class Agent:
 
         agent_run = run_control.agent_run
         agent_run.start()
+        self._ledger = RunLedger(agent_run.run_id, model.provider, model.model)
         committer = SessionCommitter(self._session, agent_run, self._emit)
         turn_runner = TurnRunner(
             session=self._session,
@@ -366,6 +373,23 @@ class Agent:
                     status = "completed"
                 elif agent_run.status is RunStatus.CANCELLED:
                     status = "cancelled"
+                if self._ledger is not None:
+                    ledger, self._ledger = self._ledger, None
+                    try:
+                        await self._session.append_run(
+                            ledger.finish(
+                                status=status,
+                                stop_reason=(
+                                    agent_run.stop_reason.value
+                                    if agent_run.stop_reason is not None
+                                    else None
+                                ),
+                                total_tokens=agent_run.total_tokens,
+                            )
+                        )
+                    except Exception as exc:
+                        # 审计摘要属于附加信息：写入失败不能替换真实终态或阻断终态事件。
+                        logger.warning("运行摘要保存失败：%s", type(exc).__name__)
                 await self._emit(
                     AgentEndEvent(
                         session_id=agent_run.session_id,

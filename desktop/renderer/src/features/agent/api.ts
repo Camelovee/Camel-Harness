@@ -4,6 +4,7 @@ import type {
   Approval,
   Message,
   PermissionMode,
+  RunSummary,
   ThinkingEffort,
   WireMessage,
   SubagentSnapshot,
@@ -16,12 +17,18 @@ export async function fetchConversation(sessionId: string): Promise<Message[]> {
     .filter((message): message is Message => message !== null);
 }
 
+export async function fetchRunSummaries(sessionId: string): Promise<RunSummary[]> {
+  const result = await apiJson<{ runs: RunSummary[] }>(`/sessions/${sessionId}/runs`);
+  return result.runs;
+}
+
 function projectStoredMessage(message: WireMessage, index: number): Message | null {
   if (message.role === "user") {
     return {
       id: `user-${index}-${message.content.length}`,
       role: "user",
       content: [{ type: "text", text: message.content }],
+      timestamp: message.timestamp,
     };
   }
   if (message.role === "assistant") {
@@ -33,6 +40,7 @@ function projectStoredMessage(message: WireMessage, index: number): Message | nu
       model: message.model,
       response_model: message.response_model,
       usage: message.usage,
+      timestamp: message.timestamp,
     };
   }
   if (message.role === "toolResult") {
@@ -49,6 +57,7 @@ function projectStoredMessage(message: WireMessage, index: number): Message | nu
           details: message.details,
         },
       ],
+      timestamp: message.timestamp,
     };
   }
   return null;

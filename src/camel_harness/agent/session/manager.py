@@ -7,7 +7,7 @@ from camel_harness.llm import LlmUsage, Message, ToolResultMessage
 
 from .events import ContextSnapshot, SessionCompactionEvent, SessionEntry
 from .jsonl import JsonlSessionStorage, _finish_commit
-from .types import SessionMetadata, TaskOutcome
+from .types import RunSummary, SessionMetadata, TaskOutcome
 
 
 class Session:
@@ -38,9 +38,34 @@ class Session:
 
         return await _finish_commit(commit())
 
+    async def append_run(self, summary: RunSummary) -> str:
+        """追加一次 Run 的审计摘要；不改变模型可见上下文。"""
+
+        async def commit() -> str:
+            entry_id = await self._session_storage.append_run(
+                self._session_id, summary, leaf_id=self._leaf_id, use_latest=self._use_latest
+            )
+            if not self._use_latest:
+                self._leaf_id = entry_id
+            return entry_id
+
+        return await _finish_commit(commit())
+
     async def messages(self) -> tuple[Message, ...]:
         """读取当前分支的原始完整消息；全树审计使用 entries。"""
         return await self._session_storage.messages(
+            self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+
+    async def message_records(self) -> tuple[tuple[str, Message], ...]:
+        """读取当前分支的消息与写入时间，供界面切分每次 Run。"""
+        return await self._session_storage.message_records(
+            self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
+        )
+
+    async def runs(self) -> tuple[RunSummary, ...]:
+        """读取当前分支的 Run 摘要。"""
+        return await self._session_storage.runs(
             self._session_id, leaf_id=self._leaf_id, use_latest=self._use_latest
         )
 

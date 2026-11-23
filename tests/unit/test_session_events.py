@@ -4,12 +4,15 @@ from typing import get_args
 import pytest
 
 from camel_harness.agent.session import (
+    ApprovalDecision,
     ContextSnapshot,
+    RunSummary,
     SessionCompactionEvent,
     SessionEvent,
     SessionHeaderEvent,
     SessionInfoEvent,
     SessionMessageEvent,
+    SessionRunEvent,
 )
 from camel_harness.agent.session.events import (
     event_from_dict,
@@ -151,6 +154,27 @@ def test_compaction_on_one_branch_never_changes_sibling_context() -> None:
             ),
         ),
         SessionCompactionEvent("now", "摘要", "m1", 100, LlmUsage(10, 5), id="c1", parent_id="m2"),
+        SessionRunEvent(
+            "finished",
+            RunSummary(
+                run_id="run-1",
+                started_at="started",
+                finished_at="finished",
+                status="completed",
+                stop_reason="model_completed",
+                provider="anthropic",
+                model="model",
+                total_tokens=42,
+                input_tokens=30,
+                output_tokens=12,
+                files=("src/app.py",),
+                approvals=(ApprovalDecision("req-1", "write_file", True, "decided"),),
+                subagent_ids=("sub-1",),
+                tool_failures=1,
+            ),
+            id="r1",
+            parent_id="m2",
+        ),
         SessionInfoEvent("updated", "新名称", "/workspace", "new-model", True),
     ],
 )
@@ -170,15 +194,26 @@ def test_session_events_roundtrip_tree_jsonl_shape(event: SessionEvent) -> None:
         assert payload["firstKeptEntryId"] == "m1"
         assert payload["tokensBefore"] == 100
         assert payload["summary"] == "摘要"
+    if isinstance(event, SessionRunEvent):
+        assert payload["summary"]["run_id"] == "run-1"
+        assert payload["summary"]["approvals"] == [
+            {
+                "request_id": "req-1",
+                "tool_name": "write_file",
+                "approved": True,
+                "decided_at": "decided",
+            }
+        ]
 
 
 def test_session_events_are_distinct_from_runtime_events() -> None:
     variants = get_args(SessionEvent)
-    assert len(variants) == 4
+    assert len(variants) == 5
     assert {cls.__dataclass_fields__["type"].default for cls in variants} == {
         "session",
         "message",
         "compaction",
+        "run",
         "session_info",
     }
     for cls in variants:

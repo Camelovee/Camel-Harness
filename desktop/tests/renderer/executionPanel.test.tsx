@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ExecutionPanel } from "../../renderer/src/features/agent/ExecutionPanel";
+import { RunLedgerPanel } from "../../renderer/src/features/agent/RunLedgerPanel";
 import { projectToolActivity } from "../../renderer/src/features/agent/executionProjection";
 import type { Approval, Message, ModelProfile, TokenUsage } from "../../renderer/src/shared/model";
 
@@ -19,9 +19,9 @@ const messages: Message[] = [
 ];
 
 function panel(usage: TokenUsage = { input: 42000, output: 1200, runTotal: 43200 }, onOpenTool = vi.fn()) {
-  return <ExecutionPanel messages={messages} approvals={[]} subagents={[]} running={false} state="completed" phase="回答完成"
-    usage={usage} model={model} permissionMode="default" effort="low" workspace="/中文 项目"
-    onOpenTool={onOpenTool} onOpenSubagent={vi.fn()} onClose={vi.fn()} />;
+  return <RunLedgerPanel messages={messages} approvals={[]} subagents={[]} running={false} state="completed" phase="回答完成"
+    usage={usage} model={model} workspace="/中文 项目" runs={[]} selectedRunId={null}
+    onSelectRun={vi.fn()} onOpenTool={onOpenTool} onOpenSubagent={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />;
 }
 
 it("文件活动按调用 ID 关联乱序结果，保留失败与未知的执行语义", () => {

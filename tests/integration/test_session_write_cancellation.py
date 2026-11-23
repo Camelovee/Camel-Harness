@@ -19,14 +19,14 @@ async def test_cancelled_append_waits_for_worker_before_releasing_session_lock(
     if branched:
         await session.branch(None)
     started, release = threading.Event(), threading.Event()
-    append = session_storage._append_sync
+    append = session_storage._append_entry_sync
 
     def gated_append(*args):
         started.set()
         release.wait(timeout=5)
         return append(*args)
 
-    monkeypatch.setattr(session_storage, "_append_sync", gated_append)
+    monkeypatch.setattr(session_storage, "_append_entry_sync", gated_append)
     write = asyncio.create_task(session.append_message(UserMessage("完整消息")))
     while not started.is_set():
         await asyncio.sleep(0)

@@ -12,7 +12,7 @@ type Props = {
 };
 
 export function PanelDivider({ side, width, minimum, maximum, defaultWidth, onResize, onCollapse }: Props) {
-  const label = side === "sidebar" ? "侧栏" : "执行详情";
+  const label = side === "sidebar" ? "侧栏" : "运行账本";
   const direction = side === "sidebar" ? 1 : -1;
   const popoverRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; width: number; moved: boolean } | null>(null);

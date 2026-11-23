@@ -42,7 +42,8 @@ it("实时完整消息保留审计信息和文件引用", () => {
   render(<MessageList messages={messages} activeSession={undefined}
     running={false} streamAssistantId={null} resolvingApprovalId={null}
     onResolveApproval={vi.fn()} onStart={vi.fn()} />);
-  expect(screen.getByText(/anthropic \/ actual/).textContent).toContain("输入 0");
-  expect(screen.getByText(/anthropic \/ actual/).textContent).toContain("输出 未知");
+  const meta = screen.getByText(/anthropic \/ actual/);
+  expect(meta.getAttribute("title")).toContain("输入 0");
+  expect(meta.getAttribute("title")).toContain("输出 未知");
   expect(screen.getByText(/完整结果：/).textContent).toContain(reference.path);
 });

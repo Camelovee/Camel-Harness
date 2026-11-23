@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRight, Bug, CaretRight, CheckCircle, Code, Compass, WarningCircle, Wrench } from "@phosphor-icons/react";
+import { ArrowRight, ArrowUpRight, Bug, CaretRight, CheckCircle, Code, Compass, WarningCircle, Wrench } from "@phosphor-icons/react";
 import { CamelMark } from "../../shared/CamelMark";
 
 import type { ApprovalStatus, Message, Session, SubagentView } from "../../shared/model";
@@ -110,7 +110,8 @@ export function MessageList({
                   onClick={() => onOpenSubagent?.(child.session_id)}>
                   <strong>{child.agent_type} 子任务</strong>
                   <span>{child.task}</span>
-                  <small>{child.task_outcome ? outcomeLabels[child.task_outcome.status] : child.phase}{child.approvals.length > 0 ? ` · ${child.approvals.length} 项待审批` : ""} · 查看过程 ›</small>
+                  <small>{child.task_outcome ? outcomeLabels[child.task_outcome.status] : child.phase}{child.approvals.length > 0 ? ` · ${child.approvals.length} 项待审批` : ""}</small>
+                  <ArrowUpRight className="subagent-open" size={15} aria-hidden="true" />
                 </button>)}
               </div>}
             </Fragment>
@@ -130,7 +131,7 @@ function Welcome({
 }) {
   return (
     <div className="welcome">
-      <CamelMark className="welcome-camel" />
+      <span className="welcome-mark" aria-hidden="true"><CamelMark className="welcome-camel" /></span>
       {onSuggest && <div className="welcome-prompts">
         <button onClick={() => onSuggest("帮我理解这个项目的结构和主要运行流程")}><Compass size={18} aria-hidden="true" /><span>理解项目</span></button>
         <button onClick={() => onSuggest("帮我排查项目中的问题，先分析原因，再给出修复建议")}><Bug size={18} aria-hidden="true" /><span>定位问题</span></button>
@@ -183,12 +184,10 @@ function ConversationMessage({
         </details>
       ))}
       {message.role === "assistant" && !streaming && (message.model || message.usage) && (
-        <div className="message-meta">
+        <div className="message-meta" title={message.usage
+          ? `输入 ${message.usage.input_tokens?.toLocaleString() ?? "未知"} · 输出 ${message.usage.output_tokens?.toLocaleString() ?? "未知"} Token`
+          : undefined}>
           {[message.provider, message.response_model ?? message.model].filter(Boolean).join(" / ")}
-          {message.usage && (
-            <> · 输入 {message.usage.input_tokens?.toLocaleString() ?? "未知"}
-              {" · 输出 "}{message.usage.output_tokens?.toLocaleString() ?? "未知"} Token</>
-          )}
         </div>
       )}
     </article>

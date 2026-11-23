@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from camel_harness.agent.session import SessionMetadata
+from camel_harness.agent.session import RunSummary, SessionMetadata
 
 
 class SessionCreateBody(BaseModel):
@@ -94,6 +94,50 @@ class SessionMessagesResponse(BaseModel):
 
     messages: list[dict[str, Any]]
     session_id: str
+
+
+class RunSummaryResponse(BaseModel):
+    """一次 Run 的审计摘要投影。"""
+
+    run_id: str
+    started_at: str
+    finished_at: str
+    status: str
+    stop_reason: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    total_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    files: list[str] = Field(default_factory=list)
+    approvals: list[dict[str, Any]] = Field(default_factory=list)
+    subagent_ids: list[str] = Field(default_factory=list)
+    tool_failures: int = 0
+
+    @classmethod
+    def from_summary(cls, summary: RunSummary) -> RunSummaryResponse:
+        return cls(
+            run_id=summary.run_id,
+            started_at=summary.started_at,
+            finished_at=summary.finished_at,
+            status=summary.status,
+            stop_reason=summary.stop_reason,
+            provider=summary.provider,
+            model=summary.model,
+            total_tokens=summary.total_tokens,
+            input_tokens=summary.input_tokens,
+            output_tokens=summary.output_tokens,
+            files=list(summary.files),
+            approvals=[asdict(item) for item in summary.approvals],
+            subagent_ids=list(summary.subagent_ids),
+            tool_failures=summary.tool_failures,
+        )
+
+
+class SessionRunsResponse(BaseModel):
+    """会话当前分支的 Run 摘要列表。"""
+
+    runs: list[RunSummaryResponse]
 
 
 class WorkspaceGroupResponse(BaseModel):
