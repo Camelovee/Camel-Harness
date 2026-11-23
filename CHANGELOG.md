@@ -49,4 +49,4 @@
 - 提供旧平铺 JSONL 的预览式复制迁移脚本；项目采用 MIT 许可证。
 - 修复 Windows 旧版 pywin32 未导出 `FILE_FLAG_OPEN_REPARSE_POINT` 导致安全文件打开崩溃：按文档常量值 `0x00200000` 补齐。
 
-架构与计划见 [项目架构](docs/项目架构.md) 与 [路书](docs/路书.md)。
+架构与计划见 [项目架构](docs/项目架构.md) 与 [Harness Runtime 路书](docs/路书-Harness.md)、[前端路书](docs/路书-前端.md)。
