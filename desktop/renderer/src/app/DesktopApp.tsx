@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SidebarSimple, PencilSimple, SlidersHorizontal } from "@phosphor-icons/react";
 
-import { ExecutionPanel } from "../features/agent/ExecutionPanel";
+import { RunLedgerPanel } from "../features/agent/RunLedgerPanel";
 import { RunStatus, type RunState } from "../features/agent/RunStatus";
 import { CamelMark } from "../shared/CamelMark";
 import { ModalDialog } from "../shared/ModalDialog";
@@ -13,6 +13,7 @@ import { Composer } from "../features/agent/Composer";
 import { SubagentPanel } from "../features/agent/SubagentPanel";
 import { MessageList } from "../features/agent/MessageList";
 import { useAgentTurn } from "../features/agent/useAgentTurn";
+import { useRunLedger } from "../features/agent/useRunLedger";
 import { ToolDetailsPanel } from "../features/agent/ToolDetailsPanel";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { useSettings } from "../features/settings/useSettings";
@@ -66,6 +67,7 @@ export default function DesktopApp() {
     },
     refreshWorkspaces: workspace.refresh,
   });
+  const ledger = useRunLedger(workspace.activeId, agent.running, onError);
   const closeTool = useCallback(() => {
     transition(() => setSelectedTool(null));
     inspectorToggleRef.current?.focus();
@@ -150,10 +152,11 @@ export default function DesktopApp() {
             : agent.selectedSubagentId && agent.subagents[agent.selectedSubagentId] ?
               <SubagentPanel child={agent.subagents[agent.selectedSubagentId]} workspace={chatWorkspace} resolvingApprovalId={agent.resolvingApprovalId}
                 onClose={closeSubagentPanel} onResolveApproval={(requestId, approved) => void agent.resolveApproval(requestId, approved)} />
-            : <ExecutionPanel messages={agent.messages} approvals={agent.approvals} subagents={Object.values(agent.subagents)}
+            : <RunLedgerPanel messages={agent.messages} approvals={agent.approvals} subagents={Object.values(agent.subagents)}
                 running={agent.running} state={runState} phase={agent.status} usage={agent.usage} model={selectedModel}
-                permissionMode={agent.permissionMode} effort={agent.effort} workspace={chatWorkspace}
-                onOpenTool={openTool} onOpenSubagent={openSubagent} onClose={closeInspector} />);
+                workspace={chatWorkspace} runs={ledger.runs} selectedRunId={ledger.selectedRunId}
+                onSelectRun={ledger.selectRun} onOpenTool={openTool} onOpenSubagent={openSubagent}
+                onClose={closeInspector} onError={onError} />);
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${inspectorOpen ? "inspector-open" : ""}`}
       style={{ "--sidebar-width": `${panelSizes.sidebarWidth}px`, "--inspector-width": `${panelSizes.inspectorWidth}px` } as React.CSSProperties}>
@@ -165,7 +168,7 @@ export default function DesktopApp() {
             aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} title="切换侧栏（⌘ / Ctrl + B）"
             onClick={() => transition(() => setSidebarCollapsed((collapsed) => !collapsed))}><SidebarSimple size={20} aria-hidden="true" /></button>
           <button ref={inspectorToggleRef} className={`icon-button ${inspectorOpen ? "is-active" : ""}`} aria-controls={inspectorOpen ? "execution-inspector" : undefined} aria-expanded={inspectorOpen}
-            aria-label={inspectorOpen ? "收起执行详情" : "展开执行详情"} title="切换执行详情"
+            aria-label={inspectorOpen ? "收起运行账本" : "展开运行账本"} title="切换运行账本"
             onClick={() => {
               if (inspectorOpen) closeInspector();
               else transition(() => setInspectorOpen(true));
@@ -203,7 +206,7 @@ export default function DesktopApp() {
               </div>
               <div className="main-header-sub" title={chatWorkspace ?? ""}>{chatWorkspace ?? "正在获取默认工作区…"}</div>
             </div>
-            <RunStatus state={runState} announce />
+            {runState !== "idle" && <RunStatus state={runState} announce />}
           </header>
 
           {settingsState.settings && !selectedModel && <div className="model-onboarding" role="region" aria-label="开始使用">
@@ -238,7 +241,7 @@ export default function DesktopApp() {
 
         {inspectorOpen && (modalInspector ?
           <ModalDialog id="execution-inspector" className="inspector-host inspector-drawer" labelledBy="inspector-dialog-title" onClose={closeInspector}>
-            <h2 id="inspector-dialog-title" className="sr-only">执行详情面板</h2>{inspectorContent}
+            <h2 id="inspector-dialog-title" className="sr-only">运行账本面板</h2>{inspectorContent}
           </ModalDialog> : <div className="inspector-host" id="execution-inspector">{inspectorContent}</div>)}
 
       </div>

@@ -9,15 +9,18 @@ from .events import (
     SessionHeaderEvent,
     SessionInfoEvent,
     SessionMessageEvent,
+    SessionRunEvent,
     message_from_dict,
     message_to_dict,
 )
 from .manager import Session, SessionManager
 from .resume import ResumePlan, analyze_resume
-from .types import SessionMetadata
+from .types import ApprovalDecision, RunSummary, SessionMetadata
 
 __all__ = [
     "Session",
+    "ApprovalDecision",
+    "RunSummary",
     "ContextNode",
     "ContextSnapshot",
     "SessionEvent",
@@ -25,6 +28,7 @@ __all__ = [
     "SessionHeaderEvent",
     "SessionMessageEvent",
     "SessionCompactionEvent",
+    "SessionRunEvent",
     "SessionInfoEvent",
     "SessionManager",
     "SessionMetadata",

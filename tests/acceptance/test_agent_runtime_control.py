@@ -130,6 +130,11 @@ async def test_steering_is_injected_after_current_turn(tmp_path) -> None:
     assert isinstance(messages[2], UserMessage)
     assert messages[2].content == "改为只给结论"
     assert runtime.requests[1].messages[-1] == messages[2]
+    runs = await session_manager.bind("session-steer").runs()
+    assert len(runs) == 1
+    assert runs[0].run_id == events[0].run_id
+    assert (runs[0].status, runs[0].stop_reason) == ("completed", "model_completed")
+    assert (runs[0].provider, runs[0].model) == ("fake", "fake-model")
 
 
 async def test_abort_emits_cancelled_end_without_persisting_partial_assistant(tmp_path) -> None:
@@ -150,6 +155,8 @@ async def test_abort_emits_cancelled_end_without_persisting_partial_assistant(tm
     assert [message.role for message in await session_manager.bind("session-abort").messages()] == [
         "user"
     ]
+    runs = await session_manager.bind("session-abort").runs()
+    assert (runs[0].status, runs[0].stop_reason) == ("cancelled", "cancelled")
     assert not agent.is_running
 
 

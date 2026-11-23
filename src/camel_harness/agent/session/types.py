@@ -34,6 +34,52 @@ class TaskOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    """一次审批的最终决定，只保留审计需要的身份与结果。"""
+
+    request_id: str
+    tool_name: str
+    approved: bool
+    decided_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunSummary:
+    """一次 Run 的审计摘要；不参与模型上下文，也不替代消息历史。"""
+
+    run_id: str
+    started_at: str
+    finished_at: str
+    status: str
+    stop_reason: str | None
+    provider: str | None
+    model: str | None
+    total_tokens: int
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    files: tuple[str, ...] = ()
+    approvals: tuple[ApprovalDecision, ...] = ()
+    subagent_ids: tuple[str, ...] = ()
+    tool_failures: int = 0
+
+    def __post_init__(self) -> None:
+        if self.status not in {"completed", "failed", "cancelled"}:
+            raise ValueError("Run 终态无效")
+        for name in ("started_at", "finished_at", "run_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"Run 摘要 {name} 必须是非空字符串")
+        for name in ("total_tokens", "tool_failures"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"Run 摘要 {name} 必须是非负整数")
+        for name in ("input_tokens", "output_tokens"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"Run 摘要 {name} 必须是非负整数或空值")
+
+
+@dataclass(frozen=True, slots=True)
 class SessionMetadata:
     """一个会话唯一对应的元数据。"""
 

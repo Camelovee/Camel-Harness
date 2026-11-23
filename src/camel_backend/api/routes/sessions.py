@@ -6,9 +6,11 @@ from fastapi import APIRouter
 from camel_harness.agent.session import message_to_dict
 
 from ..contracts import (
+    RunSummaryResponse,
     SessionCreateBody,
     SessionMessagesResponse,
     SessionResponse,
+    SessionRunsResponse,
     SessionsResponse,
     SessionUpdateBody,
 )
@@ -70,10 +72,21 @@ def create_sessions_router(dependencies: HttpDependencies) -> APIRouter:
         manager = dependencies.require_sessions()
         if await manager.get(session_id) is None:
             raise KeyError("会话不存在")
-        messages = await manager.bind(session_id).messages()
+        records = await manager.bind(session_id).message_records()
         return SessionMessagesResponse(
-            messages=[message_to_dict(message) for message in messages],
+            messages=[
+                {**message_to_dict(message), "timestamp": timestamp}
+                for timestamp, message in records
+            ],
             session_id=session_id,
         )
+
+    @router.get("/sessions/{session_id}/runs")
+    async def session_runs(session_id: str) -> SessionRunsResponse:
+        manager = dependencies.require_sessions()
+        if await manager.get(session_id) is None:
+            raise KeyError("会话不存在")
+        runs = await manager.bind(session_id).runs()
+        return SessionRunsResponse(runs=[RunSummaryResponse.from_summary(item) for item in runs])
 
     return router

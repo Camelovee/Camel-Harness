@@ -24,13 +24,14 @@ from .events import (
     SessionHeaderEvent,
     SessionInfoEvent,
     SessionMessageEvent,
+    SessionRunEvent,
     build_branch,
     event_from_dict,
     event_to_dict,
     project_context,
     project_metadata,
 )
-from .types import SessionMetadata, TaskOutcome
+from .types import RunSummary, SessionMetadata, TaskOutcome
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 logger = logging.getLogger(__name__)
@@ -95,9 +96,26 @@ class JsonlSessionStorage:
     ) -> str:
         async with self._lock(session_id):
             return await _complete_write(
-                self._append_sync,
+                self._append_entry_sync,
                 self._path(session_id),
-                message,
+                lambda: SessionMessageEvent(_now(), message),
+                leaf_id,
+                use_latest,
+            )
+
+    async def append_run(
+        self,
+        session_id: str,
+        summary: RunSummary,
+        *,
+        leaf_id: str | None = None,
+        use_latest: bool = True,
+    ) -> str:
+        async with self._lock(session_id):
+            return await _complete_write(
+                self._append_entry_sync,
+                self._path(session_id),
+                lambda: SessionRunEvent(_now(), summary),
                 leaf_id,
                 use_latest,
             )
@@ -135,6 +153,30 @@ class JsonlSessionStorage:
         self, session_id: str, *, leaf_id: str | None = None, use_latest: bool = True
     ) -> ContextSnapshot:
         return project_context(await self._events(session_id), leaf_id, use_latest=use_latest)
+
+    async def message_records(
+        self, session_id: str, *, leaf_id: str | None = None, use_latest: bool = True
+    ) -> tuple[tuple[str, Message], ...]:
+        """按当前分支返回消息及其写入时间，供运行账本切分归属。"""
+
+        events = await self._events(session_id)
+        return tuple(
+            (event.timestamp, event.message)
+            for event in build_branch(events, leaf_id, use_latest=use_latest)
+            if isinstance(event, SessionMessageEvent)
+        )
+
+    async def runs(
+        self, session_id: str, *, leaf_id: str | None = None, use_latest: bool = True
+    ) -> tuple[RunSummary, ...]:
+        """按当前分支返回 Run 摘要，不混入兄弟分支或子会话。"""
+
+        events = await self._events(session_id)
+        return tuple(
+            event.summary
+            for event in build_branch(events, leaf_id, use_latest=use_latest)
+            if isinstance(event, SessionRunEvent)
+        )
 
     async def entries(self, session_id: str) -> tuple[SessionEntry, ...]:
         return tuple(
@@ -301,7 +343,12 @@ class JsonlSessionStorage:
             pass
 
     @staticmethod
-    def _append_sync(path: Path, message: Message, leaf_id: str | None, use_latest: bool) -> str:
+    def _append_entry_sync(
+        path: Path,
+        make_event: Callable[[], SessionEntry],
+        leaf_id: str | None,
+        use_latest: bool,
+    ) -> str:
         if not path.exists():
             raise KeyError(f"会话不存在：{path.parent.name}")
         with path.open("r+", encoding="utf-8") as stream:
@@ -311,7 +358,7 @@ class JsonlSessionStorage:
                 snapshot = project_context(
                     JsonlSessionStorage._iter_events(stream, path), leaf_id, use_latest=use_latest
                 )
-                event = SessionMessageEvent(_now(), message, parent_id=snapshot.leaf_id)
+                event = replace(make_event(), parent_id=snapshot.leaf_id)
                 stream.seek(0, os.SEEK_END)
                 _write_event(stream, event)
                 return event.id

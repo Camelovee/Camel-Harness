@@ -509,7 +509,7 @@ async def test_recovery_uses_selected_branch_and_does_not_merge_siblings(tmp_pat
     assert sibling not in await session.messages()
     assert all(sibling not in request.messages for request in adapter.requests)
     assert "兄弟分支秘密" not in adapter.summaries[0].messages[0].content
-    assert len(await session.entries()) == 11  # 兄弟原始条目仍留在全树中。
+    assert len(await session.entries()) == 12  # 兄弟原始条目与本次 Run 摘要仍留在全树中。
 
 
 async def test_stale_recovery_plan_is_rejected_without_retrying_provider(tmp_path, monkeypatch):

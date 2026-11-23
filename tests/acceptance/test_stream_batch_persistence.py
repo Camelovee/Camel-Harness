@@ -108,7 +108,8 @@ async def test_stream_is_emitted_before_llm_events_are_batch_persisted(tmp_path)
     assert persisted[-1].response_model is None
     assert persisted[-1].usage is None
     stored_lines = (root / "session-1" / "session.jsonl").read_text("utf-8").splitlines()
-    assert len(stored_lines) == 3
+    assert len(stored_lines) == 4
+    assert '"type":"run"' in stored_lines[-1]
     assert all("stream_event_recorded" not in line for line in stored_lines)
     metadata = await session_manager.get("session-1")
     assert metadata is not None

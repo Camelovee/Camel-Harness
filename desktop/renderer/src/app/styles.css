@@ -14,10 +14,11 @@ svg { flex: 0 0 auto; vertical-align: middle; }
 ::selection { color: var(--text); background: var(--accent-soft); }
 a { color: var(--accent); text-underline-offset: 3px; }
 kbd, code, pre, .mono { font-family: var(--font-mono); }
+kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-subtle); font-size: .92em; }
 .mono { font-variant-numeric: tabular-nums; }
 h1, h2, h3, p { margin-top: 0; }
 
-.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: var(--control-radius); color: var(--secondary); }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 9px; color: var(--secondary); }
 .icon-button:hover { background: var(--surface-hover); color: var(--text); }
 .icon-button.is-active { color: var(--accent); background: var(--surface-hover); }
 .info-tip {
@@ -30,11 +31,11 @@ h1, h2, h3, p { margin-top: 0; }
   width: 24px;
   height: 24px;
   padding: 0;
-  border-radius: 4px;
-  color: var(--secondary);
+  border-radius: 6px;
+  color: var(--muted);
   anchor-name: --info-trigger;
 }
-.info-tip-trigger:hover { background: var(--surface-hover); }
+.info-tip-trigger:hover { color: var(--text); background: var(--surface-hover); }
 .info-tip-content {
   position: fixed;
   position-anchor: --info-trigger;
@@ -54,8 +55,8 @@ h1, h2, h3, p { margin-top: 0; }
   overflow-wrap: anywhere;
 }
 .count-badge { display: inline-grid; place-items: center; min-width: 21px; height: 21px; padding: 0 6px; border-radius: 6px; font: 11px/1 var(--font-mono); color: var(--muted); background: var(--surface-subtle); }
-.primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 14px; border: 1px solid transparent; border-radius: var(--control-radius); font-size: 13px; font-weight: 550; }
-.primary-button { background: var(--accent); color: var(--on-accent); }
+.primary-button, .secondary-button, .danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 14px; border: 1px solid transparent; border-radius: 9px; font-size: 13px; font-weight: 550; }
+.primary-button { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-card); }
 .primary-button:hover { filter: brightness(1.08); }
 .secondary-button { color: var(--secondary); }
 .secondary-button:hover { background: var(--surface-hover); }

@@ -90,7 +90,7 @@ it("同一父消息中的多个子任务按工具调用顺序显示，状态更�
   ], openSubagent));
   expect(screen.getByRole("button", { name: /第一个委派任务/ })).toBe(firstCard);
   expect(screen.getByRole("button", { name: /第二个委派任务/ })).toBe(secondCard);
-  expect(screen.getAllByRole("button", { name: /委派任务.*查看过程/ })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: /委派任务/ })).toHaveLength(2);
   expect(secondCard.textContent).toContain("1 项待审批");
   expectInOrder([firstCard, secondCard, screen.getByText("第一个任务的返回结果"), screen.getByText("继续下一步")]);
 });

@@ -4,7 +4,12 @@ import stat
 
 import pytest
 
-from camel_harness.agent.session import SessionManager, SessionMetadata
+from camel_harness.agent.session import (
+    ApprovalDecision,
+    RunSummary,
+    SessionManager,
+    SessionMetadata,
+)
 from camel_harness.agent.session.jsonl import JsonlSessionStorage
 from camel_harness.llm import (
     AssistantMessage,
@@ -278,6 +283,52 @@ async def test_concurrent_metadata_updates_preserve_independent_fields(tmp_path)
     assert metadata is not None
     assert metadata.name == "新名称"
     assert metadata.archived is True
+
+
+async def test_run_summary_is_appended_without_entering_model_context(tmp_path) -> None:
+    session_manager = SessionManager(JsonlSessionStorage(tmp_path / "sessions"))
+    await session_manager.create("session-1", tmp_path, "运行账本")
+    session = session_manager.bind("session-1")
+    await session.append_message(UserMessage("修复问题"))
+    summary = RunSummary(
+        run_id="run-1",
+        started_at="started",
+        finished_at="finished",
+        status="completed",
+        stop_reason="model_completed",
+        provider="anthropic",
+        model="claude-test",
+        total_tokens=42,
+        input_tokens=30,
+        output_tokens=12,
+        files=("src/app.py",),
+        approvals=(ApprovalDecision("approval-1", "write_file", True, "decided"),),
+        subagent_ids=("sub-1",),
+        tool_failures=1,
+    )
+
+    await session.append_run(summary)
+    await session.append_message(AssistantMessage((TextBlock("完成"),), LlmStopReason.STOP))
+
+    assert await session.messages() == (
+        UserMessage("修复问题"),
+        AssistantMessage((TextBlock("完成"),), LlmStopReason.STOP),
+    )
+    assert await session.runs() == (summary,)
+    records = await session.message_records()
+    assert [message for _, message in records] == [
+        UserMessage("修复问题"),
+        AssistantMessage((TextBlock("完成"),), LlmStopReason.STOP),
+    ]
+    assert all(timestamp for timestamp, _ in records)
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "sessions" / "session-1" / "session.jsonl")
+        .read_text("utf-8")
+        .splitlines()
+    ]
+    assert [row["type"] for row in rows] == ["session", "message", "run", "message"]
+    assert rows[2]["summary"]["run_id"] == "run-1"
 
 
 async def test_bound_session_isolated_and_missing_binding_does_not_create(tmp_path) -> None:
